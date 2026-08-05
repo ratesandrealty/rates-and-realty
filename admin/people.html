@@ -1210,6 +1210,133 @@ function applyFilters() {
   renderActiveFilters();
   updateFilterBadge();
   renderView();
+  /* One choke point. Every chip, tab, pill, keystroke and Clear All ends up
+     here, so the URL cannot drift from the UI by construction -- there is no
+     second place to forget to update. */
+  writeFiltersToUrl();
+}
+
+
+/* ====== FILTER STATE IN THE URL ==============================================
+ *
+ * Rene sets filters, opens a lead, comes back, filters are gone. The URL is the
+ * fix rather than localStorage:
+ *   - browser Back from a lead restores it for free
+ *   - the view is shareable and bookmarkable
+ *   - nothing survives into a session he has forgotten about, so there is no
+ *     "why is my list filtered" mystery at next login
+ *
+ * replaceState, never pushState: applyFilters() runs on every keystroke in the
+ * search box, and pushState would put one history entry per character between
+ * him and the page he came from.
+ *
+ * Table-driven so another list page can adopt it by supplying its own FIELDS
+ * array -- pipeline, lenders and inbox have the same problem and none of them
+ * has any URL-state machinery at all.
+ *
+ * NOT included, deliberately:
+ *   - referral_partner_id — a pre-existing INBOUND deep link from the referral
+ *     partners page, read into _rpFilterId and applied by hard-filtering
+ *     _allPeople. It is a different mechanism from the panel's partner picker
+ *     (_filterReferralPartner, serialised here as `partner`), and rewriting it
+ *     would break those links. It is read at boot and preserved untouched.
+ *   - _currentView (table/card) and _activeViewId — presentation and saved-view
+ *     selection, not filters. Round-tripping the saved view id would fight the
+ *     explicit filters whenever both are present.
+ */
+var URL_FILTER_FIELDS = [
+  { k:'tab',            get:function(){ return _currentTab; },              set:function(v){ _currentTab = v || 'all'; },            def:'all' },
+  { k:'type',           get:function(){ return _currentType; },             set:function(v){ _currentType = v || 'all'; },           def:'all' },
+  { k:'q',              get:function(){ return _searchQ; },                 set:function(v){ _searchQ = v || ''; },                  def:'' },
+  { k:'tags',           get:function(){ return _filterTagIds; },            set:function(v){ _filterTagIds = v; },                   arr:true },
+  { k:'source',         get:function(){ return _filterSources; },           set:function(v){ _filterSources = v; },                  arr:true },
+  { k:'loan_type',      get:function(){ return _filterLoanTypes; },         set:function(v){ _filterLoanTypes = v; },                arr:true },
+  { k:'pipeline',       get:function(){ return _filterPipelines; },         set:function(v){ _filterPipelines = v; },                arr:true },
+  { k:'temp',           get:function(){ return _filterTemps; },             set:function(v){ _filterTemps = v; },                    arr:true },
+  { k:'shared',         get:function(){ return _filterShared; },            set:function(v){ _filterShared = v || ''; },             def:'' },
+  { k:'partner',        get:function(){ return _filterReferralPartner; },   set:function(v){ _filterReferralPartner = v || null; },  def:'' },
+  { k:'portal',         get:function(){ return _filterPortal; },            set:function(v){ _filterPortal = v || 'any'; },          def:'any' },
+  { k:'stale_days',     get:function(){ return _filterStaleDays; },         set:function(v){ _filterStaleDays = Number(v) || 0; },   def:0 },
+  { k:'exclude_closed', get:function(){ return _filterExcludeClosed ? 1 : ''; }, set:function(v){ _filterExcludeClosed = (v === '1'); }, def:'' },
+  { k:'sort',           get:function(){ return _sortCol; },                 set:function(v){ if (v) _sortCol = v; },                 def:'created_at' },
+  { k:'dir',            get:function(){ return _sortDir; },                 set:function(v){ if (v) _sortDir = v; },                 def:'desc' },
+  // DOM-held inputs. Read straight off the element so there is one source of
+  // truth -- these filters have no backing variable.
+  { k:'score_min',      dom:'fpScoreMin',        def:'' },
+  { k:'score_max',      dom:'fpScoreMax',        def:'' },
+  { k:'never_contacted',dom:'fpNeverContacted',  def:'', check:true },
+  { k:'lc_from',        dom:'fpLastContactFrom', def:'' },
+  { k:'lc_to',          dom:'fpLastContactTo',   def:'' },
+  { k:'added_from',     dom:'fpAddedFrom',       def:'' },
+  { k:'added_to',       dom:'fpAddedTo',         def:'' },
+];
+
+function _ufVal(f) {
+  if (f.dom) {
+    var el = document.getElementById(f.dom);
+    if (!el) return '';
+    return f.check ? (el.checked ? '1' : '') : (el.value || '');
+  }
+  var v = f.get();
+  if (f.arr) return (v && v.length) ? v.join(',') : '';
+  return (v === null || v === undefined) ? '' : String(v);
+}
+
+function writeFiltersToUrl() {
+  try {
+    var qs = new URLSearchParams();
+    // Preserve the inbound deep link so referral-partner links keep working.
+    if (_rpFilterId) qs.set('referral_partner_id', _rpFilterId);
+    if (_rpFilterName) qs.set('referral_partner_name', _rpFilterName);
+    URL_FILTER_FIELDS.forEach(function (f) {
+      var v = _ufVal(f);
+      if (v !== '' && v !== '0' && String(v) !== String(f.def)) qs.set(f.k, v);
+    });
+    var q = qs.toString();
+    history.replaceState(null, '', window.location.pathname + (q ? '?' + q : ''));
+  } catch (e) { console.warn('[url-state] write failed', e); }
+}
+
+function readFiltersFromUrl() {
+  try {
+    var qs = new URLSearchParams(window.location.search);
+    URL_FILTER_FIELDS.forEach(function (f) {
+      if (!qs.has(f.k)) return;
+      var raw = qs.get(f.k);
+      if (f.dom) {
+        var el = document.getElementById(f.dom);
+        if (!el) return;
+        if (f.check) el.checked = (raw === '1'); else el.value = raw;
+        return;
+      }
+      if (f.arr) { f.set(raw ? raw.split(',').filter(Boolean) : []); return; }
+      f.set(raw);
+    });
+    var si = document.getElementById('searchInput');
+    if (si) si.value = _searchQ;
+  } catch (e) { console.warn('[url-state] read failed', e); }
+}
+
+/* Push restored state back onto the controls. Without this the list would be
+   filtered correctly while every chip looked unset -- filtered with no visible
+   reason, which is the confusion this whole feature exists to remove. */
+function syncControlsToFilters() {
+  try {
+    document.querySelectorAll('.tab-pill').forEach(function (t) {
+      t.classList.toggle('active', t.getAttribute('data-tab') === _currentTab);
+    });
+    document.querySelectorAll('.filter-chip[id^="fc-"]').forEach(function (c) { c.classList.remove('active'); });
+    var typeEl = document.getElementById('fc-' + _currentType);
+    if (typeEl) typeEl.classList.add('active');
+    document.querySelectorAll('#fpTempToggles .fp-toggle').forEach(function (b) {
+      b.classList.toggle('selected', _filterTemps.indexOf(b.getAttribute('data-val')) >= 0);
+    });
+    if (typeof renderShareFilterPills === 'function') renderShareFilterPills();
+    if (typeof setReferralFilter === 'function' && _filterReferralPartner) {
+      var chip = document.getElementById('fc-partner-open');
+      if (chip) chip.classList.add('active');
+    }
+  } catch (e) { console.warn('[url-state] control sync failed', e); }
 }
 
 /* ====== SORTING ====== */
@@ -2700,7 +2827,13 @@ function _ensureVaMode(attempt) {
 }
 
 /* ====== BOOT ====== */
+/* Restore before the loaders run, so the first applyFilters() already has the
+   right state and the list never flashes unfiltered. */
+readFiltersFromUrl();
+syncControlsToFilters();
+
 Promise.all([loadPeople(), loadTags(), loadSavedViews(), loadReferralPartners(), loadPeopleStats(), loadSharedContactIds()]).then(function() {
+  syncControlsToFilters();
   if (_rpFilterId) {
     _allPeople = _allPeople.filter(function(p) { return p.referral_partner_id === _rpFilterId; });
     updateTabCounts();

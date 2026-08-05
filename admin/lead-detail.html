@@ -1764,7 +1764,7 @@
 
 <!-- ── ACTION BAR (single row) ── -->
 <div class="action-bar" id="action-bar">
-  <button class="ab-back" onclick="goBack()" style="flex-shrink:0;">
+  <button class="ab-back" onclick="goBackToList()" style="flex-shrink:0;">
     <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
       <path d="M13 16l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
@@ -19740,8 +19740,37 @@ function toggleTheme() {
 }
 
 /* ── NAVIGATION ── */
+/* Hard fallback. Used by the two "Go Back" buttons on the error screens
+   ("No Contact Selected", "Could Not Load Contact"), where history.back() is
+   the WRONG move: the previous entry is often the same broken URL, so it would
+   bounce straight back into the failure. Those want a known-good destination. */
 function goBack() {
   window.location.href = '/admin/people';
+}
+
+/* The header Back button. Returns to the exact list view he came from —
+   including its filters, which now live in the query string — but only when we
+   can prove that is where he came from.
+   history.back() alone is wrong for arrivals from a notification, a bell link,
+   an SMS or a bookmark: there is either no history to go back to, or the entry
+   behind belongs to something else entirely. So: same-origin referrer pointing
+   at a known list page, or the hardcoded fallback. */
+var _BACK_LIST_PATHS = ['/admin/people', '/admin/pipeline', '/admin/qualifying', '/dashboard/admin'];
+
+function goBackToList() {
+  try {
+    var ref = document.referrer;
+    if (ref) {
+      var u = new URL(ref, window.location.href);
+      if (u.origin === window.location.origin
+          && _BACK_LIST_PATHS.indexOf(u.pathname.replace(/\.html$/, '')) >= 0
+          && window.history.length > 1) {
+        window.history.back();
+        return;
+      }
+    }
+  } catch (e) { /* fall through to the known-good destination */ }
+  goBack();
 }
 
 /* ── CONTACT ACTIONS ── */
