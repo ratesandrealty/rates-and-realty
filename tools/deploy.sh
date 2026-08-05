@@ -85,3 +85,14 @@ npx wrangler deploy
 echo
 echo "── 6/6 verify live ──────────────────────────────────────"
 node tools/verify-deploy.mjs "$HOST"
+
+# ── observation, not a gate ──────────────────────────────────
+# Postgres functions have no drift check. This records what the function layer
+# looked like at each deploy, into a gitignored scratch dir, so a week of real
+# use tells us how noisy a diff would be before anything is gated on it.
+#
+# Deliberately LAST, deliberately non-blocking: it runs only after the deploy
+# has already succeeded, and `|| true` means a network hiccup here can never
+# fail a deploy that worked. It is also why this is durable — it rides on real
+# activity rather than a scheduler that dies with a session.
+node tools/observe-db-functions.mjs 2>/dev/null | grep -E '^\[observe\]' || true
