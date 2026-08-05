@@ -1,0 +1,67 @@
+-- create_fee_sheet_snapshot(p_contact_id uuid)
+-- language: plpgsql   SECURITY DEFINER
+-- Captured from production 2026-08-05. This layer had NO git history:
+-- check-function-drift.mjs compares deployed EDGE functions and never
+-- opens the database, so 5 of 307 were recorded and the rest existed only
+-- in production. Re-capture after any change.
+
+CREATE OR REPLACE FUNCTION public.create_fee_sheet_snapshot(p_contact_id uuid)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_role text; v_data jsonb; v_slug text; v_name text; v_url text; v_tries int := 0;
+  v_people jsonb;
+begin
+  v_role := coalesce(nullif(current_setting('request.jwt.claims', true),'')::jsonb->>'role','');
+  if not (public.is_admin() or v_role='service_role'
+          or coalesce(public.current_app_role(),'') in ('va','loa','agent','staff')) then
+    raise exception 'staff only';
+  end if;
+
+  select data into v_data from public.fee_sheet_drafts where contact_id = p_contact_id;
+  if v_data is null then raise exception 'no fee sheet draft for this contact — build/save one first'; end if;
+
+  select nullif(trim(coalesce(first_name,'')||' '||coalesce(last_name,'')),'')
+    into v_name from public.contacts where id = p_contact_id;
+  v_name := coalesce(v_name, 'Borrower');
+
+  -- freeze the connected people (co-borrowers etc.) into the snapshot so the public
+  -- page can list them without a live DB lookup. Primary contact first, then relations.
+  select jsonb_agg(x order by x.ord, x.name) into v_people
+  from (
+    select 0 as ord, v_name as name, 'Primary'::text as relationship
+    union all
+    select 1 as ord,
+           nullif(trim(coalesce(c.first_name,'')||' '||coalesce(c.last_name,'')),'') as name,
+           coalesce(cr.relationship_type,'Co-borrower') as relationship
+    from public.contact_relationships cr
+    join public.contacts c on c.id = cr.related_contact_id
+    where cr.contact_id = p_contact_id
+  ) x
+  where x.name is not null;
+
+  -- attach frozen people list into the snapshot data (non-destructive)
+  v_data := jsonb_set(v_data, '{_people}', coalesce(v_people, '[]'::jsonb), true);
+
+  loop
+    v_slug := public.gen_feesheet_slug();
+    exit when not exists (select 1 from public.fee_sheet_snapshots where slug = v_slug)
+          and not exists (select 1 from public.short_links where slug = v_slug);
+    v_tries := v_tries + 1;
+    if v_tries > 12 then raise exception 'could not allocate slug'; end if;
+  end loop;
+
+  insert into public.fee_sheet_snapshots(slug, contact_id, data, borrower_name, created_by)
+  values (v_slug, p_contact_id, v_data, v_name, auth.uid());
+
+  v_url := 'https://homes.ratesandrealty.com/fee/' || v_slug;
+  insert into public.short_links(slug, destination_url, contact_id)
+  values (v_slug, v_url, p_contact_id)
+  on conflict (slug) do nothing;
+
+  return jsonb_build_object('slug', v_slug, 'url', v_url, 'borrower_name', v_name,
+                            'people', coalesce(v_people,'[]'::jsonb));
+end; $function$;
