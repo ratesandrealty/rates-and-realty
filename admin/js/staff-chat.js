@@ -121,8 +121,14 @@
     var sb = await client();
     if (_channel) { try { sb.removeChannel(_channel); } catch (_) {} _channel = null; }
     _channel = sb.channel('staff-chat-' + threadId)
+      /* '*' not 'INSERT'. A soft delete is an UPDATE, so an INSERT-only
+         subscription would leave the message sitting on the other person's
+         screen until they switched threads or reloaded — and "removes it for
+         everyone" was the explicit decision. The 25s poll below only refreshes
+         the thread LIST, not the open message list, so it would not have
+         covered this either. */
       .on('postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'staff_messages', filter: 'thread_id=eq.' + threadId },
+        { event: '*', schema: 'public', table: 'staff_messages', filter: 'thread_id=eq.' + threadId },
         function () {
           if (_active === threadId) { reloadActive(); rpc('staff_thread_mark_read', { p_thread: threadId }).catch(function () {}); }
           loadThreads();
@@ -166,14 +172,50 @@
     if (!_msgs.length) return '<div class="sc-empty">No messages yet — say hi 👋</div>';
     return _msgs.map(function (m) {
       var mine = !!m.mine;
+
+      /* TOMBSTONE. A deleted message keeps its place rather than vanishing: a
+         thread that silently loses messages leaves the other person reading a
+         conversation with holes in it. The server already blanked the body and
+         attachments, so there is nothing here to leak — only the fact that
+         something was removed. No deleter name: one shared login means naming
+         it would add nothing true. */
+      if (m.is_deleted) {
+        return '<div class="sc-msg' + (mine ? ' mine' : '') + ' sc-msg-deleted">'
+          + (mine ? '' : '<div class="sc-msg-who">' + esc(localPart(m.sender_email)) + '</div>')
+          + '<div class="sc-msgbubble sc-tombstone">message deleted</div>'
+          + '<div class="sc-msg-time">' + esc(rel(m.created_at)) + '</div></div>';
+      }
+
       var atts = Array.isArray(m.attachments) ? m.attachments : [];
       var bodyHtml = m.body ? '<div class="sc-msgbubble">' + esc(m.body) + '</div>' : '';
       var attHtml = atts.length ? '<div class="sc-att-wrap">' + atts.map(attPlaceholderHtml).join('') + '</div>' : '';
+      /* Delete is offered only on the admin's OWN messages. The button is a
+         convenience, not the control — staff_message_delete() raises 'admin
+         only' regardless of what the page renders. */
+      var canDelete = mine && role() === 'admin';
+      var menuHtml = canDelete
+        ? '<button type="button" class="sc-msg-menu" data-sc-del="' + esc(m.id) + '" title="Delete message" aria-label="Delete message">⋯</button>'
+        : '';
       return '<div class="sc-msg' + (mine ? ' mine' : '') + '">'
         + (mine ? '' : '<div class="sc-msg-who">' + esc(localPart(m.sender_email)) + '</div>')
-        + bodyHtml + attHtml
+        + menuHtml + bodyHtml + attHtml
         + '<div class="sc-msg-time">' + esc(rel(m.created_at)) + '</div></div>';
     }).join('');
+  }
+
+  /* Delete is destructive from the other person's point of view — it removes the
+     message from THEIR view too — so it asks first. */
+  async function deleteMessage(id) {
+    if (!window.confirm('Delete this message for everyone? It will show as "message deleted".')) return;
+    try {
+      await rpc('staff_message_delete', { p_id: id });
+      await reloadActive();
+      loadThreads();
+    } catch (e) {
+      var msg = (e && (e.message || e.hint)) || 'Delete failed';
+      scToast('Could not delete: ' + msg);
+      console.warn('[staff-chat] delete failed:', e);
+    }
   }
   function renderMessages() {
     ['sc-messages', 'sc-full-messages'].forEach(function (id) { var h = document.getElementById(id); if (h) { h.innerHTML = messagesHtml(); h.scrollTop = h.scrollHeight; } });
@@ -840,7 +882,7 @@
       '.sc-messages{padding:12px 14px;display:flex;flex-direction:column;gap:8px}',
       '.sc-msg{display:flex;flex-direction:column;align-items:flex-start;max-width:82%}',
       '.sc-msg.mine{align-self:flex-end;align-items:flex-end}',
-      '.sc-msg-who{font-size:10px;color:#C9A84C;font-weight:700;margin-bottom:2px}',
+      '.sc-msg-who{font-size:10px;color:#C9A84C;font-weight:700;margin-bottom:2px}.sc-msg{position:relative}.sc-msg-menu{position:absolute;top:-2px;right:-4px;display:none;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.16);color:#bbb;border-radius:6px;cursor:pointer;font:700 12px/1 inherit;padding:3px 6px}.sc-msg:hover .sc-msg-menu{display:block}.sc-msg-menu:hover{color:#F07878;border-color:rgba(240,120,120,.5)}.sc-tombstone{background:transparent;border:1px dashed rgba(255,255,255,.18);color:#777;font-style:italic}',
       '.sc-msgbubble{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);color:#e6e6e6;padding:7px 11px;border-radius:4px 12px 12px 12px;font-size:13px;line-height:1.4;word-break:break-word;white-space:pre-wrap}',
       '.sc-msg.mine .sc-msgbubble{background:rgba(201,168,76,.16);border-color:rgba(201,168,76,.3);color:#fff;border-radius:12px 4px 12px 12px}',
       '.sc-msg-time{font-size:9px;color:#666;margin-top:2px}',
@@ -1092,6 +1134,8 @@
       if (e.target.closest('[data-sc-close]')) { setOpen(false); return; }
       var tabBtn = e.target.closest('[data-sc-tab]'); if (tabBtn) { scSetTab(tabBtn.getAttribute('data-sc-tab')); return; }
       if (e.target.closest('[data-sc-size]')) { scToggleExpanded(); return; }
+      var delBtn = e.target.closest('[data-sc-del]');
+      if (delBtn) { deleteMessage(delBtn.getAttribute('data-sc-del')); return; }
       // On-demand morning briefing (header button + starter chip). Does NOT touch the
       // once/day auto-brief guard — the user can always pull the briefing up.
       if (e.target.closest('[data-cop-brief]')) { copSend(COP_BRIEF_PROMPT, { briefing: true }); return; }
