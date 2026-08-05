@@ -41,6 +41,8 @@
   var WATCH_BASE = 'https://ratesandrealty.com';
   var _rec = null;                                   // active recording/session state
   var _opts = {};                                    // caller options for the open session
+  var _armed = null;                                 // loom: screen picked, awaiting the Start click — see startLoom
+  var _pipWin = null;                                // Document PiP camera preview, loom mode only
 
   function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
@@ -106,6 +108,7 @@
       '.lr-label{font-size:11px;color:#8f8f8f;font-weight:600}',
       '.lr-msg{padding:22px 16px;color:#e6c9a0;font-size:13px;line-height:1.55;text-align:center}',
       '.lr-err{color:#f2a5a7;font-size:12.5px;text-align:center;min-height:16px}',
+      '.lr-note{color:#bdb3a0;font-size:12.5px;line-height:1.5;text-align:center;padding:2px 4px}',
       '.lr-spin{display:inline-block;width:13px;height:13px;border:2px solid rgba(17,17,17,.35);border-top-color:#111;border-radius:50%;animation:lr-spin .7s linear infinite;vertical-align:middle;margin-right:6px}',
       '@keyframes lr-spin{to{transform:rotate(360deg)}}',
       '.lr-foot{display:flex;align-items:center;gap:10px;padding:13px 16px;border-top:1px solid rgba(255,255,255,.08);flex-shrink:0}'
@@ -207,7 +210,8 @@
 
     // Composite draw loop (screen full-frame + camera circle, bottom-left).
     function drawFrame() {
-      if (!_rec || _rec.stopped) return;
+      // Also runs while armed (before _rec exists) so the Ready screen is live.
+      if (!_armed && (!_rec || _rec.stopped)) return;
       try { ctx.drawImage(screenVid, 0, 0, canvas.width, canvas.height); } catch (e) {}
       if (camVid.videoWidth) {
         /* Bottom-left, Loom-style. The anchor was already bottom-left, but at
@@ -231,14 +235,80 @@
       }
     }
 
+    /* Stop here and wait for an explicit Start, for LOOM MODE ONLY. Plain
+     * screen, camera and audio modes still auto-start as before.
+     *
+     * This is forced by gesture accounting, not preference. getDisplayMedia()
+     * and documentPictureInPicture.requestWindow() BOTH require transient user
+     * activation and both consume it, so one click cannot do both — and
+     * activation expires after ~5s anyway, which the screen picker outlives. So
+     * the floating preview needs a second gesture no matter what.
+     *
+     * Picker first, then Start, means displaySurface is known BEFORE we decide
+     * whether to float anything: the whole-screen case never opens a window it
+     * would immediately have to destroy, which would read as a bug. And because
+     * the Start click supplies the activation, the preview is up from frame one
+     * rather than arriving seconds into the take (recorder.start() itself needs
+     * no gesture, so one click drives both). */
+    var surface = '';
+    try { surface = screenStream.getVideoTracks()[0].getSettings().displaySurface || ''; } catch (e) {}
+    /* Anything that is not explicitly a window or a tab is treated as the whole
+     * screen, including displaySurface being absent. Failing that way round
+     * means the worst case is a missing preview WITH an explanation, never a
+     * preview silently baked into the recording. */
+    var canFloat = (surface === 'window' || surface === 'browser') && ('documentPictureInPicture' in window);
+
+    _armed = {
+      screenStream: screenStream, camStream: camStream, screenVid: screenVid, camVid: camVid,
+      canvas: canvas, drawFrame: drawFrame, canFloat: canFloat, raf: null
+    };
+    _armed.raf = setInterval(drawFrame, 100);   // 10fps is plenty for a framing check
+    drawFrame();
+    renderArmedUi(canFloat);
+    // If he ends the share from Chrome's bar before pressing Start, bail cleanly.
+    try {
+      var vt0 = screenStream.getVideoTracks()[0];
+      if (vt0) vt0.addEventListener('ended', function () {
+        if (_armed) permError('loom', 'Screen sharing ended before recording started.');
+      });
+    } catch (e) {}
+  }
+
+  function renderArmedUi(canFloat) {
+    setHead('Ready to record');
+    body().innerHTML = '<div class="lr-stage" id="lr-stage"></div>'
+      + '<div class="lr-note">' + (canFloat
+        ? '🪟 Your camera will float on top so you can see your framing.'
+        : '🚫 Preview hidden — you’re sharing your whole screen, so it would appear in the recording.')
+      + '</div>'
+      + '<div class="lr-ctrl">'
+      + '<button type="button" class="lr-btn ghost" data-lr-menu>← Back</button>'
+      + '<button type="button" class="lr-btn" data-lr-go style="flex:1">▶ Start recording</button>'
+      + '</div>';
+    var stage = document.getElementById('lr-stage');
+    if (stage && _armed) stage.appendChild(_armed.canvas);
+  }
+
+  /* The Start click: its activation is what Document PiP needs, so requestWindow
+   * must be reached before anything awaits. */
+  async function startArmedLoom() {
+    if (!_armed) return;
+    var a = _armed;
+    if (a.canFloat) { try { await openPip(a.camStream); } catch (e) {} }
+    if (_armed !== a) { closePip(); return; }   // torn down while the PiP window opened
+    if (a.raf) { clearInterval(a.raf); a.raf = null; }
+    _armed = null;
+
+    var canvas = a.canvas;
     var canvasStream = canvas.captureStream(30);
     // Mix the mic audio in.
-    try { camStream.getAudioTracks().forEach(function (t) { canvasStream.addTrack(t); }); } catch (e) {}
+    try { a.camStream.getAudioTracks().forEach(function (t) { canvasStream.addTrack(t); }); } catch (e) {}
 
     // extraStreams get torn down on stop; the live canvas is the preview.
     beginRecorder(canvasStream, canvasStream, 'loom', false, {
-      screenStream: screenStream, camStream: camStream, screenVid: screenVid, camVid: camVid
+      screenStream: a.screenStream, camStream: a.camStream, screenVid: a.screenVid, camVid: a.camVid
     });
+    if (!_rec) { closePip(); return; }   // beginRecorder bailed and already showed the error
     /* Drive the composite off a timer, NOT requestAnimationFrame.
      *
      * rAF is suspended while the document is hidden or occluded — and "hidden"
@@ -253,10 +323,75 @@
      * setInterval is throttled when backgrounded (to ~1/sec) but never
      * suspended, so a backgrounded recording degrades to a choppy video instead
      * of an empty one. */
-    _rec.raf = setInterval(drawFrame, 33);
-    drawFrame();
+    _rec.raf = setInterval(a.drawFrame, 33);
+    a.drawFrame();
     renderRecordingUi('loom', false, null, canvas);
-    watchScreenEnd(screenStream);
+    watchScreenEnd(a.screenStream);
+  }
+
+  /* ── floating camera preview (Document Picture-in-Picture) ──────────────────
+   *
+   * The composite is drawn into an off-screen canvas whose only on-page preview
+   * lives inside the recorder overlay — i.e. inside the tab Rene leaves the
+   * moment he starts demonstrating something. So he could only ever see his
+   * framing on playback. Document PiP gives a real always-on-top OS window that
+   * follows him across applications.
+   *
+   * It shows the CAMERA STREAM ONLY, never the composite. A window that floats
+   * above the screen is itself on the screen being captured, so a composite
+   * preview would recurse into a hall of mirrors. Camera-only makes that
+   * impossible by construction rather than by care.
+   *
+   * Circular with object-fit:cover on a square, which reproduces exactly the
+   * centre-crop the composite applies (side = min(vw,vh)) — so what he frames is
+   * what gets recorded. Deliberately NOT mirrored: nothing else here mirrors,
+   * and a mirrored preview would misreport left/right against the recording.
+   *
+   * Chrome/Edge 116+ only. Everywhere else this resolves null and we fall back
+   * silently to the in-overlay canvas preview. */
+  function openPip(camStream) {
+    if (!('documentPictureInPicture' in window)) return Promise.resolve(null);
+    var req;
+    try { req = window.documentPictureInPicture.requestWindow({ width: 260, height: 260 }); }
+    catch (e) { console.warn('[loom] PiP preview unavailable', e); return Promise.resolve(null); }
+    return req.then(function (w) {
+      _pipWin = w;
+      var d = w.document;
+      var st = d.createElement('style');
+      st.textContent = 'html,body{margin:0;height:100%;background:#0b0b0d;display:flex;align-items:center;'
+        + 'justify-content:center;overflow:hidden}'
+        + '.pipw{width:min(100vw,100vh);height:min(100vw,100vh);border-radius:50%;overflow:hidden;'
+        + 'box-sizing:border-box;border:3px solid rgba(201,168,76,.92)}'
+        + '.pipw video{width:100%;height:100%;object-fit:cover;display:block}';
+      d.head.appendChild(st);
+      var wrap = d.createElement('div'); wrap.className = 'pipw';
+      var v = d.createElement('video');
+      v.autoplay = true; v.muted = true; v.playsInline = true; v.srcObject = camStream;
+      wrap.appendChild(v); d.body.appendChild(wrap);
+      try { var p = v.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+      /* Closing the preview must NOT kill the take — it is a viewfinder, not the
+       * recorder. Just drop the reference so closePip() has nothing to do. */
+      w.addEventListener('pagehide', function () { _pipWin = null; });
+      return w;
+    }).catch(function (e) { console.warn('[loom] PiP preview unavailable', e); _pipWin = null; return null; });
+  }
+
+  function closePip() {
+    if (!_pipWin) return;
+    try { _pipWin.close(); } catch (e) {}
+    _pipWin = null;
+  }
+
+  /* Drop a loom session that picked a screen but never pressed Start. Separate
+   * from teardownStreams because _rec does not exist yet, so its tracks are
+   * owned by nothing else and would otherwise leak a live screen capture. */
+  function disarm() {
+    if (!_armed) return;
+    if (_armed.raf) { clearInterval(_armed.raf); _armed.raf = null; }
+    [_armed.screenStream, _armed.camStream].forEach(function (s) {
+      if (s) try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+    });
+    _armed = null;
   }
 
   function watchScreenEnd(stream) {
@@ -318,6 +453,7 @@
   function stopRecording() {
     if (!_rec || _rec.stopped) return;
     _rec.stopped = true;
+    closePip();   // the viewfinder's job is over; it must not linger over the desktop
     if (_rec.raf) { clearInterval(_rec.raf); _rec.raf = null; }   // a setInterval handle now — see startLoom
     if (_rec.timer) { clearInterval(_rec.timer); _rec.timer = null; }
     try { if (_rec.recorder && _rec.recorder.state !== 'inactive') _rec.recorder.stop(); } catch (e) {}
@@ -334,6 +470,11 @@
   }
   // Full teardown (streams + object URL); used on close/menu/re-record.
   function teardownStreams() {
+    /* Before the _rec guard: an armed-but-unstarted loom session holds a live
+     * screen capture that _rec knows nothing about, and the PiP window can
+     * outlive either. Every exit that is not stopRecording() lands here. */
+    disarm();
+    closePip();
     if (!_rec) return;
     if (_rec.raf) { clearInterval(_rec.raf); _rec.raf = null; }   // a setInterval handle now — see startLoom
     if (_rec.timer) { clearInterval(_rec.timer); _rec.timer = null; }
@@ -450,6 +591,7 @@
     if (e.target.closest('[data-lr-close]')) { closeOverlay(); return; }
     var st = e.target.closest('[data-lr-start]'); if (st) { start(st.getAttribute('data-lr-start')); return; }
     if (e.target.closest('[data-lr-menu]')) { showMenu(); return; }
+    if (e.target.closest('[data-lr-go]')) { startArmedLoom(); return; }
     if (e.target.closest('[data-lr-stop]')) { stopRecording(); return; }
     if (e.target.closest('[data-lr-save]')) { save(); return; }
   });
