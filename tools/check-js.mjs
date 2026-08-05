@@ -41,6 +41,9 @@ const GUARDED = {
   'admin/js/task-capture.js': { min: 20000,  require: ['})();', 'openDialog'] },
   'admin/js/staff-chat.js':   { min: 2000,   require: [] },
   'admin/js/loom-recorder.js':{ min: 5000,   require: [] },
+  /* The single attachment viewer behind BOTH the email attachment path and (once
+   * mounted) staff chat. Floor measured at 10747 bytes, set at ~85%. */
+  'admin/js/attachment-viewer.js': { min: 9000, require: ['})();', 'window.AttachmentViewer', 'function loadPdfJs'] },
   'src/worker.js':            { min: 15000,  require: ['export default'] },
   'tools/stamp-assets.mjs':   { min: 2000,   require: [] },
   /* The lead picker is the single implementation behind three mount points; a

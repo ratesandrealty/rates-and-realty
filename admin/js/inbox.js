@@ -1408,7 +1408,13 @@
   var PDFJS_SRC = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs';
   var PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
   var _pdfjsPromise = null;
+  /* One pdf.js in the app. The loader moved to attachment-viewer.js with the
+   * modal, but inbox still needs it for PDF hover-card THUMBNAILS (see the
+   * caller below) — a second copy here would mean two module instances and two
+   * workers. Falls back to the local constants only if the shared file is
+   * somehow absent. */
   function loadPdfJs() {
+    if (window.AttachmentViewer) return window.AttachmentViewer.loadPdfJs();
     if (window.__pdfjsLib) return Promise.resolve(window.__pdfjsLib);
     if (_pdfjsPromise) return _pdfjsPromise;
     _pdfjsPromise = import(PDFJS_SRC).then(function (mod) {
@@ -1541,103 +1547,28 @@
    * Renders from the cached blob. No Gmail URL is ever placed in the DOM, and
    * every byte still arrives through get_attachment, which re-checks the
    * JWT-derived mailbox on each call. */
+  /* Delegates to the SHARED viewer (admin/js/attachment-viewer.js). The body
+   * that used to live here now serves staff chat too — it could not before,
+   * because it closed over fetchAttachment, this IIFE's hover-card state, and
+   * the gm-* CSS, and no page loads both inbox.js and staff-chat.js.
+   *
+   * Three things cross the boundary as configuration:
+   *   fetch      — inbox reads four data-att-* attributes off the button and
+   *                memoises the decoded blob in _attCache; that DOM contract is
+   *                inbox's, not the viewer's, so it stays on this side.
+   *   onOpen     — hideHoverCard(). Nothing to do with viewing: it dismisses
+   *                the attachment hover-preview card so it does not sit over
+   *                the modal. Purely an inbox concern, and the one dependency
+   *                a signature-only reading of this function would have missed.
+   *   (download) — the viewer's default save is correct here, so no override. */
   async function openAttachmentModal(btn, cl, mailbox) {
-    hideHoverCard();
-    var name = btn.getAttribute('data-att-name') || 'attachment';
-    var mime = btn.getAttribute('data-att-mime') || '';
-    var isPdf = /pdf/i.test(mime) || /\.pdf$/i.test(name);
-    var isImg = /^image\//i.test(mime) || /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
-
-    var ov = document.createElement('div');
-    ov.className = 'gm-av-ov';
-    ov.innerHTML =
-      '<div class="gm-av-card">' +
-        '<div class="gm-av-hd">' +
-          '<span class="gm-av-name"></span>' +
-          '<span class="gm-av-pg" data-av="pg"></span>' +
-          '<span style="flex:1"></span>' +
-          '<button class="gm-btn plain" data-av="prev" title="Previous page">&lsaquo;</button>' +
-          '<button class="gm-btn plain" data-av="next" title="Next page">&rsaquo;</button>' +
-          '<button class="gm-btn plain" data-av="zout" title="Zoom out">&minus;</button>' +
-          '<button class="gm-btn plain" data-av="zin" title="Zoom in">+</button>' +
-          '<button class="gm-btn" data-av="dl">Download</button>' +
-          '<button class="gm-x" data-av="x" aria-label="Close">&times;</button>' +
-        '</div>' +
-        '<div class="gm-av-body" data-av="body"><div class="gm-av-msg">Loading&hellip;</div></div>' +
-      '</div>';
-    document.body.appendChild(ov);
-    ov.querySelector('.gm-av-name').textContent = name;
-    var q = function (n) { return ov.querySelector('[data-av="' + n + '"]'); };
-    var pdf = null, pageNo = 1, zoom = 1;
-    function go(d) { if (!pdf) return; var n = pageNo + d; if (n >= 1 && n <= pdf.numPages) { pageNo = n; draw(); } }
-    function close() { document.removeEventListener('keydown', onKey, true); ov.remove(); }
-    function onKey(e) {
-      if (e.key === 'Escape') { e.stopPropagation(); close(); }
-      else if (isPdf && e.key === 'ArrowRight') go(1);
-      else if (isPdf && e.key === 'ArrowLeft') go(-1);
-    }
-    document.addEventListener('keydown', onKey, true);
-    q('x').addEventListener('click', close);
-    ov.addEventListener('mousedown', function (e) { if (e.target === ov) close(); });
-
-    var rec = null;
-    try {
-      rec = await fetchAttachment(cl, mailbox, btn);
-    } catch (e) {
-      q('body').innerHTML = '<div class="gm-av-msg err"></div>';
-      q('body').firstChild.textContent = (e && e.message) || 'Could not open this attachment';
-      return;
-    }
-
-    q('dl').addEventListener('click', function () {
-      var u = URL.createObjectURL(rec.blob);
-      var a = document.createElement('a'); a.href = u; a.download = rec.name || name;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function () { try { URL.revokeObjectURL(u); } catch (e2) {} }, 30000);
+    if (!window.AttachmentViewer) { toast('Viewer still loading, try again in a moment', true); return; }
+    return window.AttachmentViewer.open({
+      name: btn.getAttribute('data-att-name') || 'attachment',
+      mime: btn.getAttribute('data-att-mime') || '',
+      onOpen: hideHoverCard,
+      fetch: function () { return fetchAttachment(cl, mailbox, btn); }
     });
-
-    if (isImg) {
-      ['pg', 'prev', 'next', 'zout', 'zin'].forEach(function (n) { q(n).style.display = 'none'; });
-      var iu = URL.createObjectURL(rec.blob);
-      q('body').innerHTML = '';
-      var im = document.createElement('img'); im.className = 'gm-av-img'; im.src = iu; im.alt = name;
-      q('body').appendChild(im);
-      return;
-    }
-    if (!isPdf) {
-      ['pg', 'prev', 'next', 'zout', 'zin'].forEach(function (n) { q(n).style.display = 'none'; });
-      q('body').innerHTML = '<div class="gm-av-msg">No preview for this file type &mdash; use Download.</div>';
-      return;
-    }
-
-    try {
-      var lib = await loadPdfJs();
-      pdf = await lib.getDocument({ data: await rec.blob.arrayBuffer() }).promise;
-    } catch (e) {
-      q('body').innerHTML = '<div class="gm-av-msg err"></div>';
-      q('body').firstChild.textContent = 'Could not read this PDF: ' + ((e && e.message) || e);
-      return;
-    }
-    var canvas = document.createElement('canvas');
-    canvas.className = 'gm-av-canvas';
-    q('body').innerHTML = ''; q('body').appendChild(canvas);
-
-    async function draw() {
-      var page = await pdf.getPage(pageNo);
-      var base = page.getViewport({ scale: 1 });
-      var fitW = Math.min(900, Math.max(320, q('body').clientWidth - 32));
-      var vp = page.getViewport({ scale: (fitW / base.width) * zoom });
-      canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
-      q('pg').textContent = 'Page ' + pageNo + ' / ' + pdf.numPages;
-      q('prev').disabled = pageNo <= 1;
-      q('next').disabled = pageNo >= pdf.numPages;
-    }
-    q('prev').addEventListener('click', function () { go(-1); });
-    q('next').addEventListener('click', function () { go(1); });
-    q('zin').addEventListener('click', function () { zoom = Math.min(3, zoom * 1.25); draw(); });
-    q('zout').addEventListener('click', function () { zoom = Math.max(0.4, zoom / 1.25); draw(); });
-    draw();
   }
 
   /** YouTube/Loom → clickable thumbnail. */
