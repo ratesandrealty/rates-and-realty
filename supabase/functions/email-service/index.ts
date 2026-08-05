@@ -17,7 +17,10 @@ const ANTHROPIC_KEY = Deno.env.get('ANTHROPIC_API_KEY');
  * RESOLVED action, never the raw one — `send_email` aliases to `send`, and
  * checking the string the caller supplied would let the alias table walk an
  * allowlist straight past the gate. That table already hid two bugs today. */
-async function requireAdmin(req: Request): Promise<{ ok: boolean; status?: number; msg?: string }> {
+/* Also returns the caller's uid so email_log.actor_user_id can record WHO ASKED.
+ * null for a service-key call, which is correct: a cron send has no human
+ * behind it. The identity was already being resolved here and thrown away. */
+async function requireAdmin(req: Request): Promise<{ ok: boolean; status?: number; msg?: string; uid?: string | null }> {
   const auth = req.headers.get('Authorization') || '';
   const token = auth.replace(/^Bearer\s+/i, '').trim();
   /* The service key also counts when presented as `apikey`. esign's sendRaw()
@@ -40,7 +43,11 @@ async function requireAdmin(req: Request): Promise<{ ok: boolean; status?: numbe
     if (!user) return { ok: false, status: 401, msg: 'invalid session' };
     const { data: isAdmin } = await u.rpc('is_admin');
     if (!isAdmin) return { ok: false, status: 403, msg: 'admin only' };
-    return { ok: true };
+    /* Return the id as well. It was already resolved to check the role and then
+     * thrown away — email_log.actor_user_id needs exactly this. The service-key
+     * returns above deliberately omit it: a cron send has no human behind it,
+     * and undefined coalesces to null at the call site. */
+    return { ok: true, uid: user.id };
   } catch (_e) {
     return { ok: false, status: 401, msg: 'auth check failed' };
   }
@@ -337,6 +344,16 @@ Deno.serve(async (req: Request) => {
   const ok = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, 'Content-Type': 'application/json' } });
   const err = (m: string, s = 400) => new Response(JSON.stringify({ error: m }), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
 
+  /* WHO ASKED. Declared at handler scope because the five email_log inserts are
+   * spread across separate action branches. Set from requireAdmin below; stays
+   * null for a service-key call (a cron send has no human behind it) and for
+   * ai_compose, which carries no session at all.
+   *
+   * See the email_log.actor_user_id column comment: null is AMBIGUOUS — it can
+   * mean pre-2026-08-05, cron, synced-from-Gmail, or a lost session — and must
+   * not be read as "nobody sent it". */
+  let actorUid: string | null = null;
+
   try {
     const body = await req.json();
     const rawAction = (body.action || body.type || body.mode || '').toString().toLowerCase();
@@ -361,6 +378,8 @@ Deno.serve(async (req: Request) => {
     if (action !== 'ai_compose') {
       const adm = await requireAdmin(req);
       if (!adm.ok) return err(adm.msg || 'unauthorized', adm.status || 403);
+      // requireAdmin already resolved the user to check the role; keep the id.
+      actorUid = adm.uid ?? null;
     } else {
       /* No session identifier reaches here: the portal posts { action, prompt }
        * and nothing else — it holds a portal_user in localStorage but does not
@@ -438,6 +457,7 @@ Deno.serve(async (req: Request) => {
       const ccForDb = ccParsed ? ccParsed.map((c: {email:string}) => c.email).join(',') : null;
       const attachList = parseAttachments(attachmentsRaw);
       const { data: logRow } = await sb.from('email_log').insert({
+        actor_user_id: actorUid,
         contact_id: contact_id || null,
         direction: 'outbound',
         from_email: fromEmail,
@@ -509,6 +529,7 @@ Deno.serve(async (req: Request) => {
         const cid = r.id || r.contact_id || null;
 
         const { data: logRow } = await sb.from('email_log').insert({
+        actor_user_id: actorUid,
           contact_id: cid, direction: 'outbound',
           from_email: 'rene@ratesandrealty.com', to_email: toEmail,
           to_name: [r.first_name, r.last_name].filter(Boolean).join(' ') || null,
@@ -592,6 +613,7 @@ Deno.serve(async (req: Request) => {
         const personalizedSubject = renderMergeTags(subject, r, settings);
         const personalizedHtml = renderMergeTags(html, r, settings);
         const { error: insErr } = await sb.from('email_log').insert({
+        actor_user_id: actorUid,
           contact_id: r.id || r.contact_id || null,
           direction: 'outbound',
           from_email: 'rene@ratesandrealty.com',
@@ -616,6 +638,7 @@ Deno.serve(async (req: Request) => {
       const cleanText = stripMarkdownFences(body.body_text || '');
       const toArray = Array.isArray(to) ? to : (to ? [to] : []);
       const { data: saved, error: insertErr } = await sb.from('email_log').insert({
+        actor_user_id: actorUid,
         contact_id: contact_id || null, direction: 'outbound',
         from_email: 'rene@ratesandrealty.com',
         to_email: toArray[0] || null, to_emails: toArray,
@@ -647,6 +670,7 @@ Deno.serve(async (req: Request) => {
       if (!mergedHtml) return err('html required');
       const testTo = body.test_to || 'rene@ratesandrealty.com';
       const { data: logRow } = await sb.from('email_log').insert({
+        actor_user_id: actorUid,
         contact_id: null, direction: 'outbound',
         from_email: 'rene@ratesandrealty.com', to_email: testTo,
         subject, body_html: mergedHtml, status: 'pending', template: 'send_test',

@@ -265,11 +265,24 @@ function messageToRow(mailbox: string, threadId: string, msg: any) {
 // arbiter; ON CONFLICT DO NOTHING (ignoreDuplicates) skips already-ingested messages atomically
 // in the DB, so concurrent polls/tags can't create duplicates. .select() returns ONLY the rows
 // actually inserted, so its length is the true inserted count.
-async function persistMessages(svc: any, rows: any[], contactId: string | null) {
+/* actorUid is the SEND path's caller and nothing else.
+ *
+ * This one funnel serves both syncing and sending. Stamping the caller on a
+ * SYNC would be actively false: a synced row can be an inbound borrower email,
+ * or a reply typed directly in Gmail — in neither case is the person who
+ * happened to trigger the sync its author. So the two sync call sites pass
+ * null and only the send site passes a uid, which is why this is an argument
+ * rather than something read from the request in here.
+ *
+ * email_log had NO identity column at all before 2026-08-05 — not unpopulated,
+ * absent — across 460 rows. See the column comment for what null means; it is
+ * ambiguous by nature and must not be read as "nobody sent it". */
+async function persistMessages(svc: any, rows: any[], contactId: string | null, actorUid: string | null = null) {
   if (!rows.length) return { inserted: 0, skipped: 0 }
   const payload = rows.map((r) => {
     const { participants: _p, ...row } = r
     if (contactId) (row as any).contact_id = contactId
+    if (actorUid) (row as any).actor_user_id = actorUid
     return row
   })
   const { data, error } = await svc.from('email_log')
@@ -692,7 +705,12 @@ serve(async (req) => {
         }
       }
       // cid may be null — that is a logged-but-unfiled row, which is the point.
-      const persisted = await persistMessages(svc, [row], cid)
+      /* The ONLY site that passes an actor. This row is a message the caller has
+       * just sent, so uid is genuinely its author. get_thread and tag persist
+       * SYNCED messages — inbound borrower mail, or replies typed in Gmail —
+       * where the caller is not the author and stamping them would be false.
+       * uid is already resolved above; the mailbox boundary depends on it. */
+      const persisted = await persistMessages(svc, [row], cid, uid)
 
       /* Link the persisted copies to the email_log row. Written after the upsert
        * rather than inside `row` because the Gmail-read path builds `row` from the
