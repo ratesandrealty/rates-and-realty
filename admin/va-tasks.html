@@ -103,6 +103,26 @@
   }
   .btn-complete:hover { background: rgba(82,200,122,0.2); }
   .btn-complete:disabled { opacity: 0.5; cursor: default; }
+  /* Stacked under Complete. Pending is visibly distinct so parked work is
+     obvious at a glance; the waiting state is deliberately NOT a button —
+     there is nothing for her to press while it is with Rene. */
+  .task-actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+  .btn-pending, .btn-question {
+    padding: 6px 10px; border-radius: 8px; font-size: 11px; font-weight: 700;
+    cursor: pointer; white-space: nowrap; font-family: inherit;
+  }
+  .btn-pending  { background: rgba(224,127,80,.12); border: 1px solid rgba(224,127,80,.35); color: var(--orange); }
+  .btn-pending:hover  { background: rgba(224,127,80,.2); }
+  .btn-question { background: rgba(90,160,224,.12); border: 1px solid rgba(90,160,224,.35); color: var(--blue); }
+  .btn-question:hover { background: rgba(90,160,224,.2); }
+  .btn-waiting {
+    padding: 6px 10px; border-radius: 8px; font-size: 11px; font-weight: 700;
+    background: rgba(201,168,76,.10); border: 1px dashed rgba(201,168,76,.45);
+    color: var(--gold); text-align: center; white-space: nowrap;
+  }
+  /* Parked and waiting tasks read differently from actionable ones. */
+  .task.is-pending  { border-left: 3px solid var(--orange); }
+  .task.is-question { border-left: 3px solid var(--gold); }
 
   /* Empty / loading */
   .empty, .loading { text-align: center; padding: 50px 20px; color: var(--text-muted); font-size: 13px; }
@@ -484,7 +504,8 @@ function renderTask(t) {
     links += '<a class="clickup-link" href="' + esc(t.clickup_url) + '" target="_blank" rel="noopener">🔗 ClickUp</a>';
   }
 
-  return '<div class="task" data-id="' + esc(t.id) + '">' +
+  const stateCls = t.question_pending ? ' is-question' : (t.status === 'pending' ? ' is-pending' : '');
+  return '<div class="task' + stateCls + '" data-id="' + esc(t.id) + '">' +
     '<div class="task-main">' +
       '<div class="task-title">' + esc(t.title || 'Untitled task') + '</div>' +
       (t.description ? '<div class="task-desc">' + esc(t.description) + '</div>' : '') +
@@ -506,8 +527,50 @@ function renderTask(t) {
     '</div>' +
     '<div class="task-actions">' +
       '<button class="btn-complete" onclick="completeTask(this, \'' + esc(t.id) + '\')">✓ Complete</button>' +
+      /* Pending and Question stack under Complete. status is CONSTRAINED to
+         open|pending|question|completed|cancelled, so a typo here fails loudly
+         instead of inventing a sixth state. */
+      (t.question_pending
+        ? '<div class="btn-waiting" title="Asked — waiting on an answer">⏳ with Rene</div>'
+        : '<button class="btn-pending" onclick="setTaskStatus(this, \'' + esc(t.id) + '\', \'' + (t.status === 'pending' ? 'open' : 'pending') + '\')">'
+            + (t.status === 'pending' ? '↩ Un-park' : '⏳ Pending') + '</button>'
+          + '<button class="btn-question" onclick="askQuestion(\'' + esc(t.id) + '\')">❓ Have a question</button>') +
     '</div>' +
   '</div>';
+}
+
+/* ── Status + question ──────────────────────────────────────────────────────
+   Both go through RPCs that stamp the actor, so a status change and a note are
+   attributable to the account the same way completed_by already is. */
+async function setTaskStatus(btn, taskId, status) {
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  const { error } = await _supabase.rpc('va_task_set_status', { p_id: taskId, p_status: status });
+  if (error) {
+    console.error('[va-tasks] status change failed', error);
+    showToast('⚠ Could not update task', true);
+    if (btn) btn.disabled = false;
+    loadTasks();
+    return;
+  }
+  showToast(status === 'pending' ? 'Parked' : 'Back in your list');
+  loadTasks();
+}
+
+async function askQuestion(taskId) {
+  const body = window.prompt('What do you need to know? Rene will be notified and this task will show as waiting.');
+  if (body === null) return;                       // cancelled, not an empty question
+  if (!body.trim()) { showToast('⚠ Question cannot be empty', true); return; }
+  const { error } = await _supabase.rpc('task_note_add', { p_task_id: taskId, p_body: body.trim(), p_kind: 'question' });
+  if (error) {
+    console.error('[va-tasks] question failed', error);
+    showToast('⚠ Could not send question', true);
+    return;
+  }
+  /* Say the notification landed, not just that the note saved. task_note_add
+     used to call app_notify_mentions, which notifies only @handles — so a
+     question reached nobody while reporting success. */
+  showToast('Sent — Rene has been notified');
+  loadTasks();
 }
 
 // ── ACTION: complete a task ──────────────────────────────────────────────

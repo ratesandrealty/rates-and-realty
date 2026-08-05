@@ -231,3 +231,37 @@ secret-gated, read-only where possible, and **deleted immediately after use**
 (verify the endpoint 404s). They are not acceptable as a way around a guard that
 just refused you — if a guard blocks cleanup, the litter should not have been
 there.
+
+### Cleaning up auth rows: delete the id you created, never the user
+
+**Capture the session id when you mint it, and delete THAT.** Never
+`delete from auth.sessions where user_id = ...`.
+
+There are two users in this project. So "delete the sessions for these two
+users" is "delete every session that exists" — which is what happened on
+2026-08-05, three times, during the mailbox-boundary and attribution proofs. All
+66 session rows went, for both accounts.
+
+The symptom is not obvious and does not look like a data problem. The browser
+still holds a refresh token in localStorage, so navigating works until the
+access token expires; the next page REFRESH calls getSession(), the server finds
+no session row, the refresh fails, and the client clears storage and bounces to
+login. It reads as "the app logs me out when I reload" and sends you looking at
+persistSession, autoRefreshToken and storageKey — all of which were correct.
+
+There is no repair. A deleted session row cannot be restored; both accounts have
+to sign in again.
+
+```sql
+-- mint, then keep the id
+--   POST /auth/v1/admin/generate_link  ->  /auth/v1/verify  ->  access_token
+select id from auth.sessions where user_id = '<uid>' order by created_at desc limit 1;
+
+-- clean up by THAT id only
+delete from auth.refresh_tokens where session_id = '<the id you captured>';
+delete from auth.sessions       where id         = '<the id you captured>';
+```
+
+The same reasoning applies to any table where the test account is one of a very
+small number of rows: a `where` clause that reads as "just mine" is only as
+narrow as the data makes it.

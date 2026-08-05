@@ -1,36 +1,35 @@
 -- va_daily_tasks()
 -- language: plpgsql   SECURITY DEFINER
--- Re-captured 2026-08-05: unassigned tasks + provenance labels, due_date fixed
--- to timestamp (not timestamptz) to match tasks.due_date.
+-- Captured 2026-08-05.
 
 CREATE OR REPLACE FUNCTION public.va_daily_tasks()
- RETURNS TABLE(id uuid, title text, description text, status text, priority text, due_date timestamp without time zone, contact_id uuid, lead_id uuid, contact_name text, contact_phone text, assigned_by uuid, clickup_url text, bucket text, assignee_state text, provenance text)
+ RETURNS TABLE(id uuid, title text, description text, status text, priority text, due_date timestamp without time zone, contact_id uuid, lead_id uuid, contact_name text, contact_phone text, assigned_by uuid, clickup_url text, bucket text, assignee_state text, provenance text, question_pending boolean)
  LANGUAGE plpgsql
  STABLE SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
-/* Also returns UNASSIGNED open tasks, not only assigned_to = auth.uid().
+/* SCOPED to the account, plus stale-lead follow-ups.
  *
- * Until 2026-08-05 this filtered on assigned_to = auth.uid() alone, and
- * tasks.assigned_to was populated on 0 of 207 rows — so it could never return
- * anything and the VA's Daily Tasks panel was structurally empty. Rene added
- * tasks, they saved, and they reached nobody.
+ *   assigned_to = auth.uid()  OR  related_table = 'auto_followup_lead'
  *
- * Which unassigned tasks: hand-typed and auto_followup_lead ONLY. ClickUp-synced
- * ones are excluded — they already live in ClickUp where they are actioned, and
- * duplicating them here creates two places to mark one thing done. Of the 48
- * open unassigned tasks when this shipped, 46 were machine-made and 20 of those
- * were ClickUp-synced.
+ * The auto_followup_lead clause is deliberate. Those 23 are "this lead has gone
+ * quiet, chase it" — real VA work, and unassigned, so dropping them would move
+ * the work NOWHERE rather than to Rene: nobody sees an unassigned task except an
+ * admin browsing all tasks.
  *
- * Two labels so the panel can distinguish them, because "Rene asked me" and
- * "the system noticed a stale lead" are different instructions:
- *   assignee_state  'mine' | 'unassigned'
- *   provenance      'human' | 'auto'
+ * Everything else unassigned is now excluded. That is only safe BECAUSE the
+ * auto-assign shipped in the same change (tg_tasks_autoassign fills
+ * related_table='loan_orders' from va_account_uid()). Scoping alone would have
+ * returned the panel to the empty state it was in before 2026-08-05 — 0 rows,
+ * because nothing was assigned to anyone.
  *
- * due_date is `timestamp` NOT `timestamptz`: tasks.due_date is timestamp without
- * time zone, and declaring timestamptz makes the whole function fail at runtime
- * with "structure of query does not match function result type". Caught by
- * calling it rather than by reading it.
+ * question_pending drives the "with Rene" state. Across a 15-hour offset she
+ * asks at 09:00 PHT (18:00 PT) and his answer lands near her midnight, so a
+ * question must LOOK parked rather than merely unanswered.
+ *
+ * due_date is `timestamp` not `timestamptz` — tasks.due_date is timestamp
+ * without time zone, and mismatching it fails the whole function at runtime with
+ * "structure of query does not match function result type".
  */
 begin
   return query
@@ -44,13 +43,12 @@ begin
               when t.due_date::date = (now() at time zone 'America/Los_Angeles')::date then 'today'
               else 'upcoming' end as bucket,
          case when t.assigned_to = auth.uid() then 'mine' else 'unassigned' end as assignee_state,
-         case when t.clickup_url is null and t.related_table is null then 'human' else 'auto' end as provenance
+         case when t.clickup_url is null and t.related_table is null then 'human' else 'auto' end as provenance,
+         (coalesce(t.status,'open') = 'question') as question_pending
   from tasks t
   left join contacts c on c.id = t.contact_id
-  where coalesce(t.status,'open') not in ('completed','complete','closed','done','cancelled','canceled')
-    and (
-      t.assigned_to = auth.uid()
-      or (t.assigned_to is null and (t.clickup_url is null or t.related_table = 'auto_followup_lead'))
-    )
-  order by (t.assigned_to = auth.uid()) desc nulls last, t.due_date asc nulls last;
+  where coalesce(t.status,'open') not in ('completed','cancelled')
+    and (t.assigned_to = auth.uid() or t.related_table = 'auto_followup_lead')
+  order by (coalesce(t.status,'open')='question'), (t.assigned_to = auth.uid()) desc nulls last,
+           t.due_date asc nulls last;
 end; $function$;
