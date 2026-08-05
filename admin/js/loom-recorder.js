@@ -390,11 +390,72 @@
       v.autoplay = true; v.muted = true; v.playsInline = true; v.srcObject = camStream;
       wrap.appendChild(v); d.body.appendChild(wrap);
       try { var p = v.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+      if (window.__LR_GESTURE_TEST) installGestureTest(w, d);
       /* Closing the preview must NOT kill the take — it is a viewfinder, not the
        * recorder. Just drop the reference so closePip() has nothing to do. */
       w.addEventListener('pagehide', function () { _pipWin = null; });
       return w;
     }).catch(function (e) { console.warn('[loom] PiP preview unavailable', e); _pipWin = null; return null; });
+  }
+
+  /* ── TEMPORARY: Document PiP gesture probe ──────────────────────────────────
+   * DELETE THIS once the question is answered. Enabled only by setting
+   * window.__LR_GESTURE_TEST = true in the console, so it is invisible to
+   * ordinary use and cannot fire on its own.
+   *
+   * The question: does a click INSIDE a Document PiP window supply the transient
+   * activation getDisplayMedia demands, and if so, whose? Activation is
+   * per-window, so calling the PARENT's navigator after a PiP click may fail
+   * while calling the PIP WINDOW'S OWN navigator succeeds. Nothing about
+   * mid-recording surface switching can be designed until we know which.
+   *
+   * The trap this is built to avoid: BOTH "no transient activation" and "user
+   * cancelled the picker" reject with NotAllowedError, so the error NAME cannot
+   * tell them apart. Two things can:
+   *   - elapsed time. No activation rejects in single-digit milliseconds; a
+   *     cancelled picker takes as long as a human takes to cancel it.
+   *   - the verbatim message, which says "requires transient activation" in the
+   *     first case and "Permission denied" in the second.
+   * Both are reported. If a picker actually opens, that alone is the answer --
+   * cancel it.
+   *
+   * One button per variant, because a single click cannot honestly test both:
+   * whichever ran first would have consumed the activation. */
+  function installGestureTest(w, d) {
+    var st = d.createElement('style');
+    st.textContent = '.gt{position:fixed;left:0;right:0;bottom:0;background:#111;padding:6px;'
+      + 'font:11px/1.35 -apple-system,Segoe UI,sans-serif;color:#ddd;text-align:center}'
+      + '.gt button{font:inherit;font-weight:700;margin:2px;padding:5px 7px;border:none;border-radius:5px;cursor:pointer}'
+      + '.gt .a{background:#C9A84C;color:#111}.gt .b{background:#4ade80;color:#111}'
+      + '.gt pre{margin:4px 0 0;white-space:pre-wrap;text-align:left;color:#9ad;max-height:90px;overflow:auto}';
+    d.head.appendChild(st);
+    var box = d.createElement('div');
+    box.className = 'gt';
+    box.innerHTML = '<button class="a">A: parent</button><button class="b">B: pip window</button><pre></pre>';
+    d.body.appendChild(box);
+    var out = box.querySelector('pre');
+
+    function run(label, nav) {
+      var t0 = Date.now();
+      var line = function (s) {
+        out.textContent = label + ': ' + s + '\n' + out.textContent;
+        console.log('[lr-gesture] ' + label + ': ' + s);
+      };
+      if (!nav || !nav.mediaDevices || !nav.mediaDevices.getDisplayMedia) {
+        line('no getDisplayMedia on this navigator'); return;
+      }
+      nav.mediaDevices.getDisplayMedia({ video: true }).then(function (s) {
+        var ms = Date.now() - t0;
+        line('PICKER OPENED, got a stream after ' + ms + 'ms — ACTIVATION WORKS');
+        try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+      }).catch(function (e) {
+        var ms = Date.now() - t0;
+        line('rejected after ' + ms + 'ms — ' + (e && e.name) + ': ' + (e && e.message)
+          + (ms < 100 ? '  [too fast for a picker → NO ACTIVATION]' : '  [slow → a picker probably opened and was cancelled → ACTIVATION WORKS]'));
+      });
+    }
+    box.querySelector('.a').addEventListener('click', function () { run('A parent', window.navigator); });
+    box.querySelector('.b').addEventListener('click', function () { run('B pipwin', w.navigator); });
   }
 
   function closePip() {

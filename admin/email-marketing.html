@@ -249,7 +249,7 @@
               <span>Compose</span>
               <div style="display:flex;gap:6px;">
                 <button onclick="openAiPanel()" style="padding:8px 16px;background:linear-gradient(135deg,rgba(201,168,76,0.2),rgba(201,168,76,0.08));border:1px solid rgba(201,168,76,0.3);border-radius:8px;color:#C9A84C;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">&#10024; AI Assistant</button>
-                <button onclick="openVideoModal()" style="padding:8px 16px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#ccc;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">&#127909; Video</button>
+                <button onclick="emVideo()" style="padding:8px 16px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#ccc;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">&#127909; Video</button>
               </div>
             </div>
             <div class="field">
@@ -1769,110 +1769,46 @@ function pickSmsVariation(index) {
 /* ================================================================
    VIDEO MESSAGES
    ================================================================ */
-var _videoStream = null, _mediaRecorder = null, _videoChunks = [], _videoBlob = null, _videoTimerInterval = null, _videoSeconds = 0;
-
-function openVideoModal() {
-  var modal = document.getElementById('videoModal');
-  modal.style.display = 'flex';
-  document.getElementById('videoPlayback').style.display = 'none';
-  document.getElementById('videoPreview').style.display = 'block';
-  document.getElementById('videoActions').style.display = 'none';
-  document.getElementById('videoRecordBtn').style.display = 'block';
-  document.getElementById('videoTimer').textContent = '0:00';
-  _videoSeconds = 0;
-  navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(function(stream) {
-    _videoStream = stream;
-    document.getElementById('videoPreview').srcObject = stream;
-  }).catch(function(e) { showToast('Camera access denied'); closeVideoModal(); });
-}
-
-function closeVideoModal() {
-  if (_videoStream) { _videoStream.getTracks().forEach(function(t) { t.stop(); }); _videoStream = null; }
-  if (_videoTimerInterval) clearInterval(_videoTimerInterval);
-  document.getElementById('videoModal').style.display = 'none';
-}
-
-function toggleVideoRecord() {
-  var btn = document.getElementById('videoRecordBtn');
-  if (_mediaRecorder && _mediaRecorder.state === 'recording') {
-    _mediaRecorder.stop();
-    btn.style.background = '#e74c3c';
-    btn.style.borderRadius = '50%';
-    clearInterval(_videoTimerInterval);
-    return;
-  }
-  _videoChunks = [];
-  _mediaRecorder = new MediaRecorder(_videoStream, { mimeType: 'video/webm' });
-  _mediaRecorder.ondataavailable = function(e) { if (e.data.size > 0) _videoChunks.push(e.data); };
-  _mediaRecorder.onstop = function() {
-    _videoBlob = new Blob(_videoChunks, { type: 'video/webm' });
-    var url = URL.createObjectURL(_videoBlob);
-    document.getElementById('videoPreview').style.display = 'none';
-    var playback = document.getElementById('videoPlayback');
-    playback.src = url;
-    playback.style.display = 'block';
-    document.getElementById('videoActions').style.display = 'flex';
-    document.getElementById('videoRecordBtn').style.display = 'none';
-  };
-  _mediaRecorder.start();
-  _videoSeconds = 0;
-  btn.style.background = '#333';
-  btn.style.borderRadius = '8px';
-  _videoTimerInterval = setInterval(function() {
-    _videoSeconds++;
-    var m = Math.floor(_videoSeconds / 60);
-    var s = _videoSeconds % 60;
-    document.getElementById('videoTimer').textContent = m + ':' + (s < 10 ? '0' : '') + s;
-    if (_videoSeconds >= 120) { toggleVideoRecord(); }
-  }, 1000);
-}
-
-function retakeVideo() {
-  document.getElementById('videoPlayback').style.display = 'none';
-  document.getElementById('videoPreview').style.display = 'block';
-  document.getElementById('videoActions').style.display = 'none';
-  document.getElementById('videoRecordBtn').style.display = 'block';
-  document.getElementById('videoTimer').textContent = '0:00';
-  _videoSeconds = 0;
-  document.getElementById('videoPreview').srcObject = _videoStream;
-}
-
-async function useVideo() {
-  if (!_videoBlob) return;
-  showToast('Uploading video...');
-  try {
-    var sbUrl = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || '';
-    var fileName = 'video-' + Date.now() + '.webm';
-    // 🔴 Must upload with the SIGNED-IN USER'S token, not the anon key. This used to
-    // send `Authorization: Bearer <SUPABASE_ANON_KEY>`, which storage sees as role
-    // `anon` — it only worked because video-messages carried a FOR ALL TO public
-    // policy that let anonymous callers write. That policy is gone; writes now
-    // require an authenticated JWT, so the anon-key path would 403 here.
-    var _vmCl = window._supabaseClient;
-    if (!_vmCl) throw new Error('Not signed in — reload the page and try again.');
-    var up = await _vmCl.storage.from('video-messages')
-      .upload(fileName, _videoBlob, { contentType: 'video/webm', upsert: false });
-    if (up.error) throw new Error('Upload failed: ' + up.error.message);
-    var videoUrl = sbUrl + '/storage/v1/object/public/video-messages/' + fileName;
-    var duration = Math.floor(_videoSeconds / 60) + ':' + (_videoSeconds % 60 < 10 ? '0' : '') + (_videoSeconds % 60);
-
-    if (typeof quill !== 'undefined' && quill) {
-      var videoHtml = '<div style="text-align:center;margin:16px 0;">' +
-        '<a href="' + videoUrl + '" target="_blank" style="display:inline-block;position:relative;text-decoration:none;">' +
-        '<div style="width:400px;height:225px;background:#000;border-radius:10px;display:flex;align-items:center;justify-content:center;border:2px solid rgba(201,168,76,0.3);">' +
-        '<div style="background:rgba(201,168,76,0.9);border-radius:50%;width:60px;height:60px;display:flex;align-items:center;justify-content:center;font-size:24px;">&#9654;</div>' +
-        '</div>' +
-        '<div style="font-size:11px;color:#888;margin-top:4px;">Click to watch video message (' + duration + ')</div>' +
-        '</a></div>';
+/* Video for the email composer is the SHARED recorder.
+ *
+ * This was a camera-only getUserMedia/MediaRecorder block that uploaded to
+ * video-messages and pasted the RAW supabase.co storage URL into the email:
+ *   https://<ref>.supabase.co/storage/v1/object/public/video-messages/video-<ts>.webm
+ * So borrowers saw the storage origin, there was no videos row and no slug --
+ * meaning no view tracking, no scoring, and none of the CTAs on the /v/ landing
+ * page. The SMS composer had the identical bug and was converted first.
+ *
+ * LoomRecorder uploads to the same bucket, calls video_create to mint a slug,
+ * and returns watch_url = https://ratesandrealty.com/v/<slug>. It also brings
+ * the screen and screen+camera-bubble modes this composer never had.
+ *
+ * NO contact_id, deliberately: this is a bulk composer with many recipients, so
+ * there is no single lead for views to score against. Views still record
+ * against the video itself. The per-lead email composer is a different surface.
+ *
+ * Already-sent raw storage links are untouched and still resolve. */
+function emVideo() {
+  if (!window.LoomRecorder) { showToast('Recorder still loading, try again in a moment'); return; }
+  window.LoomRecorder.open({
+    context: 'email_marketing',
+    onSaved: function (v) {
+      var link = v && (v.watch_url || (v.slug ? 'https://ratesandrealty.com/v/' + v.slug : ''));
+      if (!link) { showToast('Video saved but no link came back'); return; }
+      if (typeof quill === 'undefined' || !quill) { showToast('Composer not ready — link: ' + link); return; }
+      /* Same visual block as before, pointing at /v/<slug>. The thumbnail stays a
+       * drawn placeholder rather than a captured frame: a real frame of a screen
+       * recording is routinely a borrower's record, and this HTML is emailed. */
+      var videoHtml = '<div style="text-align:center;margin:16px 0;">'
+        + '<a href="' + link + '" target="_blank" style="display:inline-block;position:relative;text-decoration:none;">'
+        + '<div style="width:400px;height:225px;background:#000;border-radius:10px;display:flex;align-items:center;justify-content:center;border:2px solid rgba(201,168,76,0.3);">'
+        + '<div style="background:rgba(201,168,76,0.9);border-radius:50%;width:60px;height:60px;display:flex;align-items:center;justify-content:center;font-size:24px;">&#9654;</div>'
+        + '</div>'
+        + '<div style="font-size:11px;color:#888;margin-top:4px;">Click to watch video message</div>'
+        + '</a></div>';
       quill.clipboard.dangerouslyPasteHTML(quill.getLength() - 1, videoHtml);
+      showToast('Video inserted');
     }
-
-    closeVideoModal();
-    showToast('Video inserted! (' + duration + ')');
-  } catch(e) {
-    console.error('Video upload:', e);
-    showToast('Video upload failed: ' + e.message);
-  }
+  });
 }
 
 /* ================================================================
@@ -2021,24 +1957,7 @@ loadContacts = async function() {
 </script>
 
 <!-- Video Message Modal -->
-<div id="videoModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:600;align-items:center;justify-content:center;">
-  <div style="background:#111;border:2px solid rgba(201,168,76,0.3);border-radius:16px;padding:24px;width:520px;max-width:95vw;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-      <h3 style="color:#E8D5A3;font-size:16px;">&#127909; Video Message</h3>
-      <button onclick="closeVideoModal()" style="background:none;border:none;color:#888;font-size:20px;cursor:pointer;">&#10005;</button>
-    </div>
-    <video id="videoPreview" autoplay muted playsinline style="width:100%;border-radius:10px;background:#000;max-height:300px;"></video>
-    <video id="videoPlayback" controls style="width:100%;border-radius:10px;background:#000;max-height:300px;display:none;"></video>
-    <div id="videoTimer" style="text-align:center;font-size:18px;color:#C9A84C;font-family:'DM Mono',monospace;margin:10px 0;">0:00</div>
-    <div style="display:flex;gap:8px;justify-content:center;margin-top:12px;">
-      <button id="videoRecordBtn" onclick="toggleVideoRecord()" style="width:52px;height:52px;border-radius:50%;background:#e74c3c;border:3px solid #fff;cursor:pointer;transition:all .2s;"></button>
-    </div>
-    <div id="videoActions" style="display:none;flex-direction:row;gap:8px;justify-content:center;margin-top:12px;">
-      <button onclick="retakeVideo()" class="btn-ghost" style="padding:8px 16px;font-size:12px;">Retake</button>
-      <button onclick="useVideo()" style="padding:8px 20px;background:#C9A84C;color:#000;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">Use This Video</button>
-    </div>
-  </div>
-</div>
 
+  <script src="/admin/js/loom-recorder.js?v=0414ec3b9b"></script>
 </body>
 </html>
