@@ -329,10 +329,20 @@ verify_jwt = true
 verify_jwt = false
 
 [functions.market-rate]
-# No browser caller, but NOT uncalled: pg_cron job 24 refresh-market-rate runs it
-# weekdays at 22:00 and sends the ANON key. A staff-or-service guard here breaks
-# that cron SILENTLY — the exact shape of the send-scheduled-sms outage. The cron
-# must be moved to the service key FIRST.
+# No browser caller. pg_cron job 24 refresh-market-rate runs it weekdays at 22:00.
+#
+# The cron now sends x-cron-secret, read from VAULT (secret name
+# market_rate_cron_secret) so no credential sits in cron.job.command in cleartext.
+# The anon Bearer stays alongside it purely as the GATEWAY ticket — this is
+# verify_jwt = true, so with no Authorization header the gateway 401s the run
+# before the function is reached. The anon key identifies nobody; the cron secret
+# is the credential.
+#
+# NOT YET ENFORCED. The in-function check lands only after a real 22:00 weekday
+# run is observed carrying the header. A guard added before that is a silent cron
+# break — the send-scheduled-sms shape, and the reason for the order.
+# A dedicated secret was chosen over reading the JWT role claim because the latter
+# would touch all 17 working guards to fix one function.
 verify_jwt = true
 
 
