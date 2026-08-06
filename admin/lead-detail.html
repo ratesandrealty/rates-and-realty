@@ -24848,6 +24848,64 @@ function lsCalcTaxFromPct() {
 }
 
 // Pre-approval letter generator
+/* ── PRE-APPROVAL BORROWER NAMES ─────────────────────────────────────────────
+ * A pre-approval letter went to a listing agent reading PRIMARY BORROWER
+ * "(Not specified)". Every financial figure was right, because those come from
+ * the live qualifier panel; the NAME came only from mortgage_applications, and
+ * that contact had no application row at all. The letter still generated, and an
+ * empty field is worse than an error because it looks deliverable.
+ *
+ * Resolution order, most-trusted first:
+ *   1. the LIVE 1003 fields — what Rene is looking at, and the only route by
+ *      which an unsaved middle name reaches the letter. Matches how every
+ *      financial field on this letter already behaves.
+ *   2. mortgage_applications (the saved row)
+ *   3. loan_borrowers (per-borrower rows, when the application predates them)
+ *   4. contacts (always has first/last)
+ *
+ * THE CO-BORROWER TAB TRAP: _LP_1A_FIELDS reuses the SAME input ids for the
+ * co-borrower — with the co tab active, f_first_name holds the CO-borrower's
+ * name. Reading the live fields blindly would print the co-borrower as the
+ * primary. So live values are only trusted for whichever role is currently
+ * displayed, and the other role comes from stored data. */
+function _lsLiveName() {
+  var g = function (id) { var e = document.getElementById(id); return e ? (e.value || '').trim() : ''; };
+  var parts = [g('f_first_name'), g('f_middle_name'), g('f_last_name'), g('f_suffix')].filter(Boolean);
+  return parts.join(' ').trim();
+}
+
+function _lsResolveNames(app, lbRows, contact) {
+  app = app || {}; lbRows = lbRows || []; contact = contact || {};
+  var coActive = (typeof _lp1003CoActive === 'function') && _lp1003CoActive();
+  var live = _lsLiveName();
+
+  var joined = function () {
+    var parts = [].slice.call(arguments).map(function (x) { return (x == null ? '' : String(x)).trim(); });
+    return parts.filter(Boolean).join(' ').trim();
+  };
+
+  /* Primary */
+  var primary = '';
+  if (live && !coActive) primary = live;                                   // 1
+  if (!primary) primary = joined(app.first_name, app.middle_name, app.last_name);   // 2
+  if (!primary) {
+    var lbP = lbRows.find(function (r) { return r.is_primary; }) || lbRows[0];
+    if (lbP && lbP.vesting_name) primary = String(lbP.vesting_name).trim();  // 3
+  }
+  if (!primary) primary = joined(contact.first_name, contact.middle_name, contact.last_name); // 4
+
+  /* Co-borrower — "--" only when there genuinely is not one. */
+  var co = '';
+  if (live && coActive) co = live;
+  if (!co) co = joined(app.co_borrower_first_name, app.co_borrower_middle_name, app.co_borrower_last_name);
+  if (!co) {
+    var lbC = lbRows.filter(function (r) { return !r.is_primary; })
+                    .sort(function (a, b) { return (a.borrower_order || 99) - (b.borrower_order || 99); })[0];
+    if (lbC) co = String(lbC.vesting_name || '').trim() || (lbC.contact_name || '');
+  }
+  return { primary: primary, co: co };
+}
+
 async function lsGeneratePreApproval() {
   var btn = document.getElementById('lsPreApprovalBtn');
   var origTxt = btn ? btn.textContent : '';
@@ -24888,20 +24946,53 @@ async function lsGeneratePreApproval() {
     var totalDebt   = _lsNum('ls_total_monthly_debt');
     var frontDTI = totalIncome ? (pitia/totalIncome*100) : 0;
     var backDTI = totalIncome ? ((pitia+totalDebt)/totalIncome*100) : 0;
-    // Borrower / property / occupancy info still comes from the saved application row.
+    /* Borrower / property / occupancy info from the saved application row, with a
+       fallback chain — see _lsResolveNames below. */
     var cid = new URLSearchParams(location.search).get('contact_id') || contactId;
     var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
     var base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
-    var app = {};
+    var app = {}, _lbRows = [], _contactRow = {};
     try {
       var { data: rows } = await _authClient().from('mortgage_applications_secure')
-        .select('first_name,last_name,co_borrower_first_name,co_borrower_last_name,credit_score,property_address_street,property_address_city,property_address_state,property_address_zip,occupancy_type,loan_purpose')
+        .select('id,first_name,middle_name,last_name,co_borrower_first_name,co_borrower_middle_name,co_borrower_last_name,credit_score,property_address_street,property_address_city,property_address_state,property_address_zip,occupancy_type,loan_purpose')
         .eq('contact_id', cid).order('created_at', { ascending: false }).limit(1);
       if (rows && rows[0]) app = rows[0];
     } catch(e) {}
+    /* Fallbacks for the NAME only — same discipline as voe-form-fill, which found
+       the flat columns empty while another store held the value. */
+    try {
+      var _cRes = await _authClient().from('contacts_secure')
+        .select('first_name,middle_name,last_name').eq('id', cid).maybeSingle();
+      _contactRow = (_cRes && _cRes.data) || {};
+    } catch(e) {}
+    try {
+      var _appId = app.id || null;
+      var _lbq = _authClient().from('loan_borrowers')
+        .select('is_primary,borrower_order,vesting_name,contact_id,application_id,contacts(first_name,middle_name,last_name)');
+      var _lbRes = _appId ? await _lbq.eq('application_id', _appId).order('borrower_order', { ascending: true })
+                          : await _lbq.eq('contact_id', cid).order('borrower_order', { ascending: true });
+      _lbRows = ((_lbRes && _lbRes.data) || []).map(function (r) {
+        var c = r.contacts || {};
+        return Object.assign({}, r, {
+          contact_name: [c.first_name, c.middle_name, c.last_name].filter(Boolean).join(' ').trim()
+        });
+      });
+    } catch(e) {}
+
+    var _names = _lsResolveNames(app, _lbRows, _contactRow);
+    /* REFUSE rather than emit "(Not specified)". generate-preapproval renders
+       `borrower || '(Not specified)'`, so an empty name produces a letter that
+       looks deliverable and names nobody — going to a listing agent. Abort here,
+       before the function is called, and say what is missing. */
+    if (!_names.primary) {
+      if (btn) { btn.disabled = false; btn.textContent = origTxt || 'Generate Pre-Approval'; }
+      showToast('No borrower name found — fill FIRST/LAST NAME in the 1003 Borrower section. Nothing was generated.', true);
+      return;
+    }
+
     var payload = {
-      borrower_name: ((app.first_name||'')+' '+(app.last_name||'')).trim(),
-      co_borrower_name: app.co_borrower_first_name ? ((app.co_borrower_first_name||'')+' '+(app.co_borrower_last_name||'')).trim() : '',
+      borrower_name: _names.primary,
+      co_borrower_name: _names.co || '',
       loan_amount:loanAmount, purchase_price:value, appraised_value:value,
       loan_type: loanType,
       loan_program: (document.getElementById('ls_loan_program') || {}).value || '30-Year Fixed',
