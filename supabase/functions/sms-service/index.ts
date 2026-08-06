@@ -35,15 +35,43 @@ async function sendTwilioSMS(to: string, body: string, mediaUrl?: string, fromOv
   } catch(e:any){return{sent:false,error:e.message};}
 }
 
+/* WHO ASKED. sms_log had no staff-user column at all before 2026-08-05 — only
+ * portal_user_id, which is the BORROWER's portal id, not the sender. 422 rows
+ * with no way to tell who sent any of them.
+ *
+ * Set per request from the caller's JWT; stays null for automations, cron and
+ * inbound, which is correct — those have no human behind them. DELIBERATELY
+ * OPTIONAL: a send never fails for want of it, so this cannot break the SMS
+ * path. Attribution, not a guard.
+ *
+ * sms-service is still an open relay (docs/PINNED-NOT-GUARDED.md). Resolving
+ * the identity here makes a real guard a small change — deliberately NOT made
+ * in this pass. */
+let _actorUid: string | null = null;
+
+async function callerUid(req:Request): Promise<string|null> {
+  const raw = (req.headers.get('authorization')||'').replace(/^Bearer\s+/i,'').trim();
+  if (!raw || raw.split('.').length !== 3) return null;
+  try {
+    // The anon and service keys are well-formed JWTs too; neither has a user.
+    const c = JSON.parse(atob(raw.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+    if (!c?.sub || c.role === 'anon' || c.role === 'service_role') return null;
+  } catch(_) { return null; }
+  try {
+    const { data, error } = await sb.auth.getUser(raw);
+    return (!error && data?.user?.id) ? data.user.id : null;
+  } catch(_) { return null; }
+}
+
 async function logSMS(p:{to_phone:string;to_name?:string;body:string;trigger_type:string;trigger_id?:string;contact_id?:string;portal_user_id?:string;borrower_id?:string;twilio_sid?:string;status:string;error_message?:string;media_url?:string}) {
-  try { await sb.from('sms_log').insert({...p,created_at:new Date().toISOString()}); } catch(e){console.error('logSMS:',e);}
+  try { await sb.from('sms_log').insert({...p,actor_user_id:_actorUid,created_at:new Date().toISOString()}); } catch(e){console.error('logSMS:',e);}
 }
 
 async function logActivity(p:{contact_id?:string;portal_user_id?:string;crm_id?:string;title:string;description?:string;status:string;sms_body?:string;sms_to?:string;metadata?:any}) {
   try {
     await sb.from('activity_events').insert({
       contact_id:p.contact_id||null,portal_user_id:p.portal_user_id||null,crm_id:p.crm_id||null,
-      type:'sms',channel:'sms',direction:'outbound',title:p.title,description:p.description||null,
+      type:'sms',channel:'sms',direction:'outbound',title:p.title,description:p.description||null,created_by:_actorUid,
       status:p.status,sms_body:p.sms_body||null,sms_to:p.sms_to||null,
       metadata:p.metadata?JSON.stringify(p.metadata):null,created_at:new Date().toISOString()
     });
@@ -106,6 +134,8 @@ Deno.serve(async (req:Request) => {
   if (req.method==='OPTIONS') return new Response(null,{status:204,headers:cors});
   const ok=(d:any)=>new Response(JSON.stringify(d),{headers:{...cors,'Content-Type':'application/json'}});
   const err=(m:string,s=400)=>new Response(JSON.stringify({error:m}),{status:s,headers:{...cors,'Content-Type':'application/json'}});
+
+  _actorUid = await callerUid(req);   // null unless a real user session was sent
 
   try {
     const body = await req.json();
