@@ -280,3 +280,108 @@ verify_jwt = false
 # resolved in-function, a real guard here is a small change; deliberately not
 # made in this pass.
 verify_jwt = true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# docs/PINNED-NOT-GUARDED.md — the remaining members of that class.
+#
+# All of these are LIVE at verify_jwt = true and were UNPINNED, which is its own
+# bug in both directions: nothing held them at true, and tools/deploy-function.sh
+# refuses to ship an unpinned slug, so none of them could be deployed through the
+# wrapper at all. Pinned here at the value production already has. This is not a
+# change to any of them.
+#
+# It is also NOT a guard. The gateway only checks that the bearer is a
+# project-signed JWT, and the anon key is one, printed in every page's source.
+# Every function below still has NO in-function auth. The guards land after each
+# one's callers are switched to the session token and confirmed working — the
+# order is in CLAUDE.md and was learned by breaking email-service with it
+# reversed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[functions.textract-ocr]
+# Tier 1. Reads borrower documents out of storage for OCR. Five browser callers;
+# admin/lenders.html already sends a session token, the rest send the anon key.
+# Also called INTERNALLY by guidelines-library with the service key, so any guard
+# must accept the service key from Authorization or apikey.
+verify_jwt = true
+
+[functions.submit-showing]
+# Tier 2. Borrower-facing: public/search-homes.html and public/unified-portal.html
+# call it and borrowers have NO Supabase session. A session guard would 401 every
+# real showing request. Needs the lender-portal treatment (a row-held token
+# validated in-function) or a rate-limited public endpoint with no read surface.
+# Do NOT put a session guard on this one.
+verify_jwt = true
+
+[functions.market-rate]
+# No browser caller, but NOT uncalled: pg_cron job 24 refresh-market-rate runs it
+# weekdays at 22:00 and sends the ANON key. A staff-or-service guard here breaks
+# that cron SILENTLY — the exact shape of the send-scheduled-sms outage. The cron
+# must be moved to the service key FIRST.
+verify_jwt = true
+
+[functions.showing-actions]
+# No caller found anywhere: not in the repo, not in cron. Verify it is genuinely
+# dead before guarding — an unused function is better deleted than guarded.
+verify_jwt = true
+
+[functions.insights-data]
+# BI endpoint aggregating across the whole CRM. Both browser callers already send
+# a session token, so this is among the first that can take a guard.
+verify_jwt = true
+
+[functions.mismo-import]
+# Imports a MISMO file into contacts / loan tables. admin/people.html sends a
+# session token; admin/lead-detail.html and dashboard/admin.html send the anon key.
+verify_jwt = true
+
+[functions.ocr-apply-1003]
+# Writes OCR results onto a 1003. Single caller, components/admin-dashboard.js,
+# sending the anon key.
+verify_jwt = true
+
+[functions.generate-1003-pdf]
+# Renders a borrower's 1003. admin/lead-detail.html, anon key.
+verify_jwt = true
+
+[functions.generate-cma]
+# CMA from comps. admin/lead-detail.html, anon key.
+verify_jwt = true
+
+[functions.generate-deal-analysis]
+# Deal analysis PDF. Browser caller sends the anon key; ALSO called internally by
+# generate-cma with the service key.
+verify_jwt = true
+
+[functions.generate-mismo]
+# MISMO export. admin/lead-detail.html, anon key.
+verify_jwt = true
+
+[functions.generate-mismo-data]
+# MISMO export data. admin/lead-detail.html, anon key.
+verify_jwt = true
+
+[functions.property-lookup]
+# Property data lookup, PAID upstream — an open proxy is a spend risk as well as
+# a data one.
+verify_jwt = true
+
+[functions.pull-comps]
+# Comps pull, PAID upstream. Same spend risk.
+verify_jwt = true
+
+[functions.address-autocomplete]
+# Proxies Google Places, PAID upstream. docs/PINNED-NOT-GUARDED.md lists this as
+# having no browser caller; it does — tools/fee-sheet.html calls it via
+# functions.invoke.
+verify_jwt = true
+
+[functions.loe-generate]
+# Listed in the doc as having no browser caller; it has two, both in
+# admin/lead-detail.html.
+verify_jwt = true
+
+[functions.parse-signature]
+# Listed in the doc as having no browser caller; admin/lead-detail.html calls it
+# via functions.invoke.
+verify_jwt = true

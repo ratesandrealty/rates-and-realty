@@ -30,6 +30,8 @@
   </style>
   <script src="/admin/js/auth-guard.js?v=a93446dde2"></script>
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
+  <!-- Loaded after auth-guard so window._supabaseClient exists when fnFetch reads it. -->
+  <script src="/admin/js/fn-call.js?v=62e47af307"></script>
   <script src="/admin/js/crm-comms.js?v=d4687bb733"></script>
   <script>if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList.add('light-preload');</script>
   <style>
@@ -5443,7 +5445,16 @@ async function _rnrAuthHeaders(extra){
     var s = (c && c.auth) ? await c.auth.getSession() : null;
     if (s && s.data && s.data.session) jwt = s.data.session.access_token;
   } catch(e){}
-  var h = { 'Content-Type':'application/json', 'apikey': anon, 'Authorization': 'Bearer ' + (jwt || anon) };
+  /* NO `|| anon` FALLBACK. It used to read `'Bearer ' + (jwt || anon)`, which
+     meant every caller using this helper silently fell back to a key that
+     identifies nobody — and it is the key printed in this page's own source. A
+     function guarded on identity would then 401 with no way to tell "your
+     session expired" from "the guard is wrong", which is the mystery-401 the
+     email-service outage produced. Fail here instead, naming the cause.
+     apikey stays as the anon key: that is the PROJECT identifier the gateway
+     routes on, a different thing from the identity in Authorization. */
+  if (!jwt) throw new Error('Not signed in — reload the page and sign in again.');
+  var h = { 'Content-Type':'application/json', 'apikey': anon, 'Authorization': 'Bearer ' + jwt };
   if (extra) for (var k in extra) h[k] = extra[k];
   return h;
 }
@@ -16970,7 +16981,7 @@ async function daPullComps(){
   var payload={contact_id:contactId||undefined,address:addr||undefined,propertyType:document.getElementById('da-cma-type').value||undefined,bedrooms:_daNum('da-cma-beds'),bathrooms:_daNum('da-cma-baths'),squareFootage:_daNum('da-cma-sqft'),radius:_daNum('da-cma-radius')||1,compCount:_daNum('da-cma-count')||8};
   btn.disabled=true;var orig=btn.innerHTML;btn.innerHTML='Pulling…';status.textContent='';
   try{
-    var res=await fetch((window.APP_CONFIG?.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co')+'/functions/v1/pull-comps',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||'')},body:JSON.stringify(payload)});
+    var res=await fnFetch('pull-comps',{method:'POST',body:JSON.stringify(payload)});
     var d=await res.json();
     if(!res.ok||d.error){status.style.color='#e05252';status.textContent=d.error||'Comps lookup failed';return;}
     window._daCmaData=d;daRenderComps(d);
@@ -17055,7 +17066,7 @@ async function daPrintCMA(){
   }
   var st=document.getElementById('da-cma-status');if(st){st.style.color='var(--muted)';st.textContent='Generating CMA PDF…';}
   try{
-    var res=await fetch(base+'/functions/v1/generate-cma',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon},body:JSON.stringify(payload)});
+    var res=await fnFetch('generate-cma',{method:'POST',body:JSON.stringify(payload)});
     var result=await res.json();
     if(!result.success||!result.pdf)throw new Error(result.error||'PDF generation failed');
     var bc=atob(result.pdf);var ba=new Uint8Array(bc.length);for(var k=0;k<bc.length;k++)ba[k]=bc.charCodeAt(k);
@@ -17608,9 +17619,8 @@ async function exportDealAnalyzerPDF() {
   if (typeof showToast === 'function') showToast('Generating PDF…');
 
   try {
-    var res = await fetch(base + '/functions/v1/generate-deal-analysis', {
+    var res = await fnFetch('generate-deal-analysis', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + anon, 'apikey': anon },
       body: JSON.stringify(payload)
     });
     var result = await res.json();
@@ -20950,9 +20960,8 @@ async function importMismoToDB() {
   const ANON = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
   toast('Importing to database…');
   try {
-    const res = await fetch(SB_URL + '/functions/v1/mismo-import', {
+    const res = await fnFetch('mismo-import', {
       method:'POST',
-      headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+ANON, 'apikey':ANON },
       body: JSON.stringify({ xml: mismoData._rawXml, file_name: mismoData._fileName || 'import.xml' })
     });
     const result = await res.json();
@@ -21042,9 +21051,8 @@ async function reparseMismoXml() {
     const app = (apps && apps[0]) || null;
     if (!app || !app.mismo_raw_xml) { toast('No MISMO XML on file for this contact', true); return; }
     toast('Re-parsing stored XML…');
-    const res = await fetch(SB_URL+'/functions/v1/mismo-import', {
+    const res = await fnFetch('mismo-import', {
       method:'POST',
-      headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+ANON, 'apikey':ANON },
       body: JSON.stringify({ xml: app.mismo_raw_xml, file_name: app.mismo_file_name || 'reparse.xml' })
     });
     const result = await res.json();
@@ -22021,10 +22029,19 @@ let _allReferralPartners = [];
 let _selectedReferralPartnerId = null;
 
 async function loadReferralPartners() {
-  const r = await fetch(`${window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co'}/rest/v1/referral_partners?select=id,first_name,last_name,company,source_type&order=first_name`, {
-    headers: await _rnrAuthHeaders()
-  });
-  _allReferralPartners = await r.json();
+  /* The only _rnrAuthHeaders() call site not already inside a try. That helper
+     now throws when there is no session instead of falling back to the anon key,
+     so without this the partner picker would fail as an uncaught rejection. */
+  try {
+    const r = await fetch(`${window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co'}/rest/v1/referral_partners?select=id,first_name,last_name,company,source_type&order=first_name`, {
+      headers: await _rnrAuthHeaders()
+    });
+    _allReferralPartners = await r.json();
+  } catch (e) {
+    _allReferralPartners = [];
+    console.warn('[referral-partners]', e && e.message);
+    if (typeof showToast === 'function') showToast('Could not load referral partners: ' + ((e && e.message) || 'request failed'), true);
+  }
 }
 
 function searchReferralPartners(q) {
@@ -24511,11 +24528,8 @@ async function lsGenerate1003() {
   var origTxt = btn ? btn.textContent : ''; if (btn) { btn.textContent = '\u23F3 Generating...'; btn.disabled = true; }
   try {
     var cid = new URLSearchParams(location.search).get('contact_id') || contactId;
-    var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
-    var base = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
-    var res = await fetch(base+'/functions/v1/generate-1003-pdf', {
+    var res = await fnFetch('generate-1003-pdf', {
       method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon},
       body: JSON.stringify({ contact_id: cid })
     });
     const text = await res.text();
@@ -26212,9 +26226,8 @@ async function exportMISMO() {
   if (!contactId) return alert('No contact ID found.');
   try { await save1003(); } catch(_) {}
   try {
-    const res = await fetch(
-      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/generate-mismo-data',
-      { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||'')}, body:JSON.stringify({contact_id:contactId}) }
+    const res = await fnFetch('generate-mismo-data',
+      { method:'POST', body:JSON.stringify({contact_id:contactId}) }
     );
     const resp = await res.json();
     if (!res.ok || resp.error) { (window.toast||window.showToast||alert)(resp.message || resp.error || 'MISMO export failed'); return; }
@@ -26256,9 +26269,8 @@ async function openForm1003Modal() {
   if (subtitle) subtitle.textContent = name + ' \u00b7 ' + new Date().toLocaleDateString('en-US');
 
   try {
-    var res = await fetch(
-      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/generate-1003-pdf',
-      { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||'')}, body:JSON.stringify({contact_id:contactId}) }
+    var res = await fnFetch('generate-1003-pdf',
+      { method:'POST', body:JSON.stringify({contact_id:contactId}) }
     );
     if (!res.ok) { var err = await res.json(); throw new Error(err.error || 'Generation failed'); }
     var data = await res.json();
@@ -26284,14 +26296,15 @@ async function openForm1003Modal() {
 }
 
 // Export MISMO 3.4 XML for LendingPad. Calls the generate-mismo edge function the same
-// way openForm1003Modal calls generate-1003-pdf (same SUPABASE_URL + anon-key auth/headers),
-// passing the current lead's contact_id. On success, decodes the base64 XML and downloads it.
+// way openForm1003Modal calls generate-1003-pdf — both now go through fnFetch, which
+// sends the SIGNED-IN USER's token rather than the anon key that used to be pasted into
+// every call site here. Passing the current lead's contact_id; on success, decodes the
+// base64 XML and downloads it.
 async function exportMismoLendingPad() {
   var contactId = new URLSearchParams(window.location.search).get('contact_id');
   try {
-    var res = await fetch(
-      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/functions/v1/generate-mismo',
-      { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+(window.APP_CONFIG?.SUPABASE_ANON_KEY||'')}, body:JSON.stringify({contact_id:contactId}) }
+    var res = await fnFetch('generate-mismo',
+      { method:'POST', body:JSON.stringify({contact_id:contactId}) }
     );
     var resp = await res.json();
     if (!res.ok || resp.error) {
@@ -34039,7 +34052,7 @@ function _cmaBuildPayload(){
 async function _cmaPdfBase64(){
   var payload = _cmaBuildPayload(); if (!payload) throw new Error('pull comps first');
   var cfg=window.APP_CONFIG||{}, base=cfg.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co', anon=cfg.SUPABASE_ANON_KEY||'';
-  var res=await fetch(base+'/functions/v1/generate-cma',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon},body:JSON.stringify(payload)});
+  var res=await fnFetch('generate-cma',{method:'POST',body:JSON.stringify(payload)});
   var result=await res.json();
   if(!result.success||!result.pdf) throw new Error(result.error||'PDF generation failed');
   return result.pdf;

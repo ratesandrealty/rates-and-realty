@@ -1,6 +1,62 @@
 # 19 functions that a `verify_jwt = true` pin does not protect
 
-**Status: documented 2026-08-04. Not fixed. `sms-service` is being taken first.**
+**Status: re-derived against production 2026-08-06. 2 of 19 now guarded
+(`sms-service`, `google-drive-upload`). 17 still have no in-function auth.**
+
+## What the 2026-08-06 re-derivation corrected
+
+The 2026-08-04 version of this file was wrong in four ways that changed the plan.
+Re-derive rather than trust a table; `tools/audit-function-guards.mjs` prints
+pin-vs-guard for any slug and `tools/audit-stage-lists.mjs` is the same idea for
+stage vocabularies.
+
+1. **"Every one has `verify_jwt = true`" — 17 of the 19 were not pinned at all.**
+   They were *live* at true because the CLI defaults unpinned functions to true,
+   which is the same latent bug pointing the other way. Nothing held them there,
+   and `tools/deploy-function.sh` refuses an unpinned slug, so none of them could
+   be shipped through the wrapper. All 19 are now pinned at their live value.
+
+2. **Tier 4 "no browser caller" was wrong for 3 of 5.** `address-autocomplete`
+   (`tools/fee-sheet.html`), `loe-generate` (`admin/lead-detail.html` ×2) and
+   `parse-signature` (`admin/lead-detail.html`) all have browser callers.
+
+3. **`market-rate` is not uncalled — pg_cron job 24 `refresh-market-rate` runs it
+   weekdays at 22:00 and sends the ANON key.** A staff-or-service guard breaks
+   that cron silently: the exact shape of the `send-scheduled-sms` outage. The
+   cron must move to the service key first. Being listed "lowest priority, no
+   browser caller" hid a live dependency.
+
+4. **The file recorded *that* callers existed but never *what they send*, which
+   is the only fact that decides whether a guard is safe.** Several functions
+   listed as anon-key callers were already sending the user's JWT —
+   `textract-ocr` from all three `lead-detail.html` sites, `guideline-ai.html`,
+   `lenders.html` and `admin-dashboard.js`, and `ocr-apply-1003`. Beware the
+   inverse trap when auditing: `apikey: ANON_KEY` alongside
+   `Authorization: Bearer ${jwt}` is CORRECT — apikey is the project identifier
+   the gateway routes on, Authorization is the identity. A first pass that
+   grepped for `ANON_KEY` anywhere near the call site mis-flagged all of these.
+
+## Frontend half done 2026-08-06
+
+The reason this class persisted is that there was no single place to fix a
+caller: `admin/lead-detail.html` alone had **87 hand-rolled `/functions/v1/`
+fetches**, each pasting its own headers. `admin/js/fn-call.js` is now that place —
+`fnFetch(slug, init)` sends the signed-in user's token and **never** the anon key,
+failing with a named error when there is no session.
+
+Migrated to it: `generate-1003-pdf` (×2), `generate-cma` (×2), `pull-comps`,
+`generate-deal-analysis`, `generate-mismo`, `generate-mismo-data`,
+`mismo-import` (×2).
+
+Also removed the `|| anon` fallback from `_rnrAuthHeaders()`, the shared helper
+behind 19 further call sites including `property-lookup` and every
+`email-service` call. It read `'Bearer ' + (jwt || anon)`, so any caller with no
+session silently became anonymous. It now throws a named error; all 19 sites were
+checked to be inside a `try` first, and `loadReferralPartners()` — the one that
+was not — had one added.
+
+**No guard has been added to any of the 17.** That is the next step and it needs
+a human to confirm the pages still work first.
 
 ## `verify_jwt = true` IS NOT A CONTROL. Read this before pinning anything as a fix.
 

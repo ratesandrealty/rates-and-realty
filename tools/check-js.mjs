@@ -49,6 +49,11 @@ const GUARDED = {
   'admin/js/attachment-viewer.js': { min: 9000, require: ['})();', 'window.AttachmentViewer', 'function loadPdfJs'] },
   /* The heartbeat feeding "active time". Floor measured at 5877, set at ~85%. */
   'admin/js/presence.js': { min: 5000, require: ['})();', 'presence_beat', 'presence_day'] },
+  /* The single place edge-function calls get their auth. If this file were
+     truncated, fnFetch would be undefined and every migrated call site would
+     throw — so it is guarded like the other shared modules. Floor measured at
+     4372, set at ~85%. */
+  'admin/js/fn-call.js': { min: 3700, require: ['})();', 'window.fnFetch', 'window.fnCall'] },
   'src/worker.js':            { min: 15000,  require: ['export default'] },
   'tools/stamp-assets.mjs':   { min: 2000,   require: [] },
   /* The lead picker is the single implementation behind three mount points; a
