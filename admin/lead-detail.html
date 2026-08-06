@@ -11903,6 +11903,73 @@ async function _lpVoePrefetch(cid){
   }
 }
 function _lpB64FromBuf(buf){ let bin=''; const b=new Uint8Array(buf), c=0x8000; for(let i=0;i<b.length;i+=c){ bin+=String.fromCharCode.apply(null, b.subarray(i,i+c)); } return btoa(bin); }
+/* ── ATTACHMENT PREVIEW ──────────────────────────────────────────────────────
+ * "Request_for_VOE_BLANK.pdf + Borrower_Authorization_signed.pdf will be
+ * attached" was plain text. One of those is a SIGNED BORROWER AUTHORIZATION
+ * going to an outside HR contact, so being able to confirm the right document
+ * before sending is not a nicety.
+ *
+ * Both previews resolve the bytes THE SAME WAY THE SEND DOES, so the preview
+ * cannot show a different document than the one attached:
+ *   VOE form  — app_config.voe_form_url holds a path in the PRIVATE
+ *               borrower-documents bucket; _voeFormSignedUrl() mints a 1-hour
+ *               signed URL, exactly as _voeComposerSend does.
+ *   Auth PDF  — esign-docs action:'download' returns a 1-hour signed URL.
+ *               NOTE: that endpoint GENERATES the certificate PDF per call, so
+ *               the preview is content-identical rather than byte-identical —
+ *               same code path, same inputs, regenerated.
+ *
+ * Rendering goes through window.AttachmentViewer, the module extracted earlier
+ * and already mounted here for email attachments. No second viewer. */
+let _lpVoeAuthEnvelopeId = null;
+
+function _lpVoeRenderAttachNote(withAuth){
+  const n=document.getElementById('ecAttachNote'); if(!n) return;
+  const cfg=_lpVoeCfg||{};
+  const parts=[];
+  if(cfg.voe_form_url){
+    parts.push('<a href="#" onclick="lpVoePreviewForm();return false;" style="color:#C9A84C;text-decoration:underline;">Request_for_VOE_BLANK.pdf</a>');
+  }
+  if(withAuth && _lpVoeAuthEnvelopeId){
+    parts.push('<a href="#" onclick="lpVoePreviewAuth();return false;" style="color:#C9A84C;text-decoration:underline;">Borrower_Authorization_signed.pdf</a>');
+  }
+  if(!parts.length){ n.textContent='⚠ VOE form not staged yet — will send without the attachment'; return; }
+  n.innerHTML='📎 '+parts.join(' + ')+' will be attached <span style="opacity:.7;">(click to preview)</span>';
+}
+
+async function _lpVoeShowPdf(name, fetcher){
+  if(!window.AttachmentViewer){ showToast('Viewer not loaded', true); return; }
+  window.AttachmentViewer.open({
+    name: name, mime: 'application/pdf',
+    fetch: async function(){
+      const url=await fetcher();
+      if(!url) throw new Error('could not resolve the document');
+      const r=await fetch(url);
+      if(!r.ok) throw new Error('fetch failed ('+r.status+')');
+      const blob=await r.blob();
+      return { blob: blob, mime: 'application/pdf', name: name, size: blob.size };
+    }
+  });
+}
+
+function lpVoePreviewForm(){
+  const cfg=_lpVoeCfg||{};
+  _lpVoeShowPdf('Request_for_VOE_BLANK.pdf', function(){ return _voeFormSignedUrl(cfg.voe_form_url); });
+}
+
+function lpVoePreviewAuth(){
+  const env=_lpVoeAuthEnvelopeId;
+  _lpVoeShowPdf('Borrower_Authorization_signed.pdf', async function(){
+    const appc=window.APP_CONFIG||{};
+    const SB=appc.SUPABASE_URL||'https://ljywhvbmsibwnssxpesh.supabase.co', anon=appc.SUPABASE_ANON_KEY||'';
+    let tok=anon; try{ const s=await _authClient().auth.getSession(); if(s&&s.data&&s.data.session) tok=s.data.session.access_token; }catch(_){}
+    const dr=await fetch(SB+'/functions/v1/esign-docs',{ method:'POST', headers:{ 'Content-Type':'application/json','apikey':anon,'Authorization':'Bearer '+tok }, body:JSON.stringify({ action:'download', envelope_id:env }) });
+    let dj=null; try{ dj=await dr.json(); }catch(_){}
+    if(!dr.ok || !dj || !dj.url) throw new Error((dj&&(dj.error||dj.message))||('download failed ('+dr.status+')'));
+    return dj.url;
+  });
+}
+
 /* 1. EMPLOYER PICKER — every employer on the file, current AND previous, for
  *    every borrower on it.
  *
@@ -12099,6 +12166,8 @@ async function lpVoeReqOpen(k){
   const ccExtra=String(cfg.voe_request_cc||'').split(/[;,]/).map(s=>s.trim()).filter(Boolean);
   // Everything the VOE send pipeline needs, captured now (HR name/phone aren't composer fields).
   const st={ k:k, cid:cid, orderId:v.id, hrName:hrName, hrPhone:hrPhone, employer:employer, cfg:cfg };
+  _lpVoeAuthEnvelopeId=null;   // set once voe_borrower_auth_request resolves
+  setTimeout(function(){ _lpVoeRenderAttachNote(false); }, 0);
   const attachNote=cfg.voe_form_url ? '📎 Request_for_VOE_BLANK.pdf will be attached'
                                     : '⚠ VOE form not staged yet — will send without the attachment';
   await openEmailComposer({
@@ -12115,7 +12184,7 @@ async function lpVoeReqOpen(k){
   // Reflect the signed borrower authorization in the attachment note if one is on file (display only).
   if(cfg.voe_form_url){
     _authClient().rpc('voe_borrower_auth_request',{ p_contact_id:cid })
-      .then(function(r){ const a=(r&&!r.error)?(Array.isArray(r.data)?r.data[0]:r.data):null; if(a && a.found===true && _lpVoeReqKey===k){ const n=document.getElementById('ecAttachNote'); if(n) n.textContent='📎 Request_for_VOE_BLANK.pdf + Borrower_Authorization_signed.pdf will be attached'; } })
+      .then(function(r){ const a=(r&&!r.error)?(Array.isArray(r.data)?r.data[0]:r.data):null; if(a && a.found===true && _lpVoeReqKey===k){ _lpVoeAuthEnvelopeId=a.envelope_id||null; _lpVoeRenderAttachNote(true); } })
       .catch(function(){});
   }
 }
