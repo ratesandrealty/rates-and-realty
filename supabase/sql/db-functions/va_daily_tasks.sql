@@ -54,7 +54,20 @@ begin
               when t.due_date::date = (now() at time zone 'America/Los_Angeles')::date then 'today'
               else 'upcoming' end as bucket,
          case when t.assigned_to = auth.uid() then 'mine' else 'unassigned' end as assignee_state,
-         case when t.clickup_url is null and t.related_table is null then 'human' else 'auto' end as provenance,
+         /* PROVENANCE: positive evidence of a PERSON, not absence of machinery.
+            The old rule was `clickup_url is null and related_table is null` ->
+            human, which no open task satisfied, so the "from Rene" pill was
+            unreachable for every one of them. Rene's manual tasks arrive THROUGH
+            ClickUp (15 of them: "Follow up with Anita", "Submit X loan to
+            lender"), so the clickup_url test labelled exactly the tasks it
+            existed to highlight as machine-made.
+            A person left a trace when there is a clickup_url (he wrote it in
+            ClickUp) or an assigned_by (he wrote it in the CRM). Machine sources
+            leave neither -- auto_followup_lead and loan_orders rows have no
+            clickup_url and no assigned_by. Defaulting the unknown case to 'auto'
+            keeps a future machine source from being announced as Rene. */
+         case when t.clickup_url is not null or t.assigned_by is not null
+              then 'human' else 'auto' end as provenance,
          (coalesce(t.status,'open') = 'question') as question_pending
   from tasks t
   left join contacts c on c.id = t.contact_id
