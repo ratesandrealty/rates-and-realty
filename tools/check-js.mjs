@@ -54,6 +54,13 @@ const GUARDED = {
      throw — so it is guarded like the other shared modules. Floor measured at
      4372, set at ~85%. */
   'admin/js/fn-call.js': { min: 3700, require: ['})();', 'window.fnFetch', 'window.fnCall'] },
+  /* The single share path. lead-detail's toggle AND the unshared-lead nudge popup
+     both write through it, so a truncated copy takes out both. Floor measured at
+     4320, set at ~85%. */
+  'admin/js/lead-share.js': { min: 3600, require: ['})();', 'window.LeadShare', 'function grant'] },
+  /* The unshared-lead nudge popup, mounted by BOTH lead-detail.html and
+     dashboard/admin.html. Floor measured at 6491, set at ~85%. */
+  'admin/js/share-nudge.js': { min: 5500, require: ['})();', 'window.ShareNudge', 'LeadShare.grant'] },
   'src/worker.js':            { min: 15000,  require: ['export default'] },
   'tools/stamp-assets.mjs':   { min: 2000,   require: [] },
   /* The lead picker is the single implementation behind three mount points; a

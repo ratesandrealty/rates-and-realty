@@ -32,6 +32,8 @@
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
   <!-- Loaded after auth-guard so window._supabaseClient exists when fnFetch reads it. -->
   <script src="/admin/js/fn-call.js?v=62e47af307"></script>
+  <script src="/admin/js/lead-share.js?v=323b40bde5"></script>
+  <script src="/admin/js/share-nudge.js?v=06ab25599e"></script>
   <script src="/admin/js/crm-comms.js?v=d4687bb733"></script>
   <script>if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList.add('light-preload');</script>
   <style>
@@ -5687,24 +5689,16 @@ function _shareMsg(text, isError) {
 async function initShareWithVa() {
   try {
     if (!contactId) return;
-    const client = await _waitForAuthClient();
-    if (!client) return;
-    // share_targets() returns rows only for admins; empty/null => not admin => no toggle.
-    const { data: targets, error: tErr } = await client.rpc('share_targets');
-    if (tErr) { console.warn('[share] share_targets failed:', tErr.message); return; }
-    if (!Array.isArray(targets) || !targets.length) return;
-    const va = targets.find(t => t.role === 'va');
-    if (!va) return; // no VA configured — leave toggle hidden
+    /* Query layer lives in admin/js/lead-share.js so the nudge popup can share
+       without a second copy of the insert. This function keeps the toggle's
+       markup and messages; it no longer owns the lookup. */
+    const va = await LeadShare.target();
+    if (!va) return; // not an admin, or no VA configured — leave toggle hidden
     _shareVa = va;
 
-    const { data: existing, error: eErr } = await client
-      .from('lead_shares')
-      .select('id')
-      .eq('contact_id', contactId)
-      .eq('shared_with_user_id', va.user_id)
-      .maybeSingle();
-    if (eErr) { console.warn('[share] state lookup failed:', eErr.message); return; }
-    _shareRowExists = !!existing;
+    const shared = await LeadShare.state(contactId);
+    if (shared === null) return;   // could not answer — do NOT render as "not shared"
+    _shareRowExists = shared;
 
     const wrap = document.getElementById('shareVaWrap');
     if (wrap) wrap.style.display = 'inline-flex';
@@ -5724,22 +5718,13 @@ async function onShareVaToggle(e) {
   _shareBusy = true;
   _shareMsg('Saving…', false);
   try {
-    const client = await _waitForAuthClient();
-    if (!client) throw new Error('Not signed in');
     if (wantOn) {
-      const { data: { user } } = await client.auth.getUser();
-      const { error } = await client.from('lead_shares')
-        .insert({ contact_id: contactId, shared_with_user_id: _shareVa.user_id, shared_by: user.id });
-      if (error) throw error;
+      await LeadShare.grant(contactId);
       _shareRowExists = true;
       _renderShareToggle(true);
       _shareMsg(_shareVa.label ? ('Shared with ' + _shareVa.label) : 'Shared', false);
     } else {
-      const { error } = await client.from('lead_shares')
-        .delete()
-        .eq('contact_id', contactId)
-        .eq('shared_with_user_id', _shareVa.user_id);
-      if (error) throw error;
+      await LeadShare.revoke(contactId);
       _shareRowExists = false;
       _renderShareToggle(false);
       _shareMsg('', false);
