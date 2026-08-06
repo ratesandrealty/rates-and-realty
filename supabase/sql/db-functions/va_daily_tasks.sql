@@ -8,26 +8,37 @@ CREATE OR REPLACE FUNCTION public.va_daily_tasks()
  STABLE SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
-/* SCOPED to the account, plus stale-lead follow-ups.
+/* SCOPED to assignment or sharing. She sees a task if EITHER:
  *
- *   assigned_to = auth.uid()  OR  related_table = 'auto_followup_lead'
+ *   a) t.assigned_to = auth.uid()   -- Rene assigned it, or tg_tasks_autoassign did
+ *   b) the task's contact has a lead_shares row for her
  *
- * The auto_followup_lead clause is deliberate. Those 23 are "this lead has gone
- * quiet, chase it" — real VA work, and unassigned, so dropping them would move
- * the work NOWHERE rather than to Rene: nobody sees an unassigned task except an
- * admin browsing all tasks.
+ * WHAT CHANGED AND WHY. The previous clause was
+ *   assigned_to = auth.uid() OR related_table = 'auto_followup_lead'
+ * which handed her every auto-surfaced stale-lead follow-up whether or not Rene
+ * had shared the lead -- Salomon Flores, Edgar Rodriguez, Moris Villalobos and
+ * 16 others he had not given her. That was my recommendation and it was wrong
+ * for how Rene works: sharing is his deliberate act, and a rule that routes work
+ * around it is not a scope at all.
  *
- * Everything else unassigned is now excluded. That is only safe BECAUSE the
- * auto-assign shipped in the same change (tg_tasks_autoassign fills
- * related_table='loan_orders' from va_account_uid()). Scoping alone would have
- * returned the panel to the empty state it was in before 2026-08-05 — 0 rows,
- * because nothing was assigned to anyone.
+ * ORDER REMINDERS ARE UNAFFECTED, and that is the point of keeping (a) first.
+ * tg_tasks_autoassign stamps assigned_to on related_table='loan_orders' rows, so
+ * chasing an order reaches her even on a lead she cannot otherwise see -- 2 of
+ * her 4 assigned tasks are exactly that case today. Chasing orders is her job;
+ * the unshared lead is Rene's to share, which is what the share nudge asks him
+ * to do.
  *
- * question_pending drives the "with Rene" state. Across a 15-hour offset she
- * asks at 09:00 PHT (18:00 PT) and his answer lands near her midnight, so a
- * question must LOOK parked rather than merely unanswered.
+ * (b) CANNOT BE SATISFIED BY A TASK WITH NO contact_id -- there is no contact to
+ * share. Such a task needs an explicit assignment or nobody sees it. Exactly one
+ * open task is in that state today ('Call from the Camp phone to do verbal
+ * verification', related_table='leads'), and it was invisible under the OLD rule
+ * too, so this change does not lose it. It is unowned rather than newly hidden.
  *
- * due_date is `timestamp` not `timestamptz` — tasks.due_date is timestamp
+ * question_pending drives the "with Rene" state. Across a 15-hour offset she asks
+ * at 09:00 PHT (18:00 PT) and his answer lands near her midnight, so a question
+ * must LOOK parked rather than merely unanswered.
+ *
+ * due_date is `timestamp` not `timestamptz` -- tasks.due_date is timestamp
  * without time zone, and mismatching it fails the whole function at runtime with
  * "structure of query does not match function result type".
  */
@@ -48,7 +59,12 @@ begin
   from tasks t
   left join contacts c on c.id = t.contact_id
   where coalesce(t.status,'open') not in ('completed','cancelled')
-    and (t.assigned_to = auth.uid() or t.related_table = 'auto_followup_lead')
+    and (
+      t.assigned_to = auth.uid()
+      or exists (select 1 from lead_shares s
+                  where s.contact_id = t.contact_id
+                    and s.shared_with_user_id = auth.uid())
+    )
   order by (coalesce(t.status,'open')='question'), (t.assigned_to = auth.uid()) desc nulls last,
            t.due_date asc nulls last;
 end; $function$;
