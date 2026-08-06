@@ -16,6 +16,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -437,6 +438,13 @@ async function reportActivity(range: string | null) {
 // ============ ROUTER ============
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+  /* GUARD FIRST — before the body or query string is read, so an action
+     added later is covered by default rather than by remembering.
+     verify_jwt=true does NOT do this: the anon key is a project-signed JWT
+     printed in every page's source. See docs/PINNED-NOT-GUARDED.md. */
+  const _auth = await requireStaff(req);
+  if (!_auth.ok) return new Response(JSON.stringify({ error: _auth.msg || 'not authorized' }),
+    { status: _auth.status || 401, headers: { ...cors, 'Content-Type': 'application/json' } });
   if (req.method !== "GET") return j({ error: "GET only" }, 405);
 
   try {

@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
 const jHead = { ...cors, 'Content-Type': 'application/json' }
@@ -22,6 +23,13 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  /* GUARD FIRST — before the body or query string is read, so an action
+     added later is covered by default rather than by remembering.
+     verify_jwt=true does NOT do this: the anon key is a project-signed JWT
+     printed in every page's source. See docs/PINNED-NOT-GUARDED.md. */
+  const _auth = await requireStaff(req);
+  if (!_auth.ok) return new Response(JSON.stringify({ error: _auth.msg || 'not authorized' }),
+    { status: _auth.status || 401, headers: { ...cors, 'Content-Type': 'application/json' } });
   try {
     const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')
     if (!ANTHROPIC_API_KEY) return fail('ANTHROPIC_API_KEY not set')

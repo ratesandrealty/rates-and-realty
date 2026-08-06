@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -583,6 +584,13 @@ async function upsertPrimaryApp(contactId:string, primary:any, shared:any, rawXm
 
 Deno.serve(async (req: Request) => {
   if (req.method==='OPTIONS') return new Response(null,{status:204,headers:cors});
+  /* GUARD FIRST — before the body or query string is read, so an action
+     added later is covered by default rather than by remembering.
+     verify_jwt=true does NOT do this: the anon key is a project-signed JWT
+     printed in every page's source. See docs/PINNED-NOT-GUARDED.md. */
+  const _auth = await requireStaff(req);
+  if (!_auth.ok) return new Response(JSON.stringify({ error: _auth.msg || 'not authorized' }),
+    { status: _auth.status || 401, headers: { ...cors, 'Content-Type': 'application/json' } });
   const ok  = (d:any) => new Response(JSON.stringify(d),{headers:{...cors,'Content-Type':'application/json'}});
   const err = (m:string,s=400,step?:string) => new Response(JSON.stringify({error:m,step}),{status:s,headers:{...cors,'Content-Type':'application/json'}});
 

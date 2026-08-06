@@ -1,3 +1,4 @@
+import { requireStaff } from "../_shared/require-staff.ts";
 // parse-signature (v1) — reads an email-signature screenshot and returns structured contact fields.
 // Vision via claude-sonnet-4-6. CORS allow-list includes x-client-info. Errors return HTTP 200 {error}.
 
@@ -18,6 +19,13 @@ function json(body: unknown, status = 200) {
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  /* GUARD FIRST — before the body or query string is read, so an action
+     added later is covered by default rather than by remembering.
+     verify_jwt=true does NOT do this: the anon key is a project-signed JWT
+     printed in every page's source. See docs/PINNED-NOT-GUARDED.md. */
+  const _auth = await requireStaff(req);
+  if (!_auth.ok) return new Response(JSON.stringify({ error: _auth.msg || 'not authorized' }),
+    { status: _auth.status || 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   try {
     if (req.method !== 'POST') return json({ error: 'method_not_allowed' });

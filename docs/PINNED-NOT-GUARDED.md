@@ -1,7 +1,28 @@
 # 19 functions that a `verify_jwt = true` pin does not protect
 
-**Status: re-derived against production 2026-08-06. 2 of 19 now guarded
-(`sms-service`, `google-drive-upload`). 17 still have no in-function auth.**
+**Status: 2026-08-06 — 16 of 19 guarded. 3 remain, each blocked on something
+specific rather than on effort.**
+
+Guarded via `_shared/require-staff.ts` (accepts the service key from
+`Authorization` OR `apikey`, runs before the body/query is read):
+`generate-1003-pdf`, `generate-cma`, `pull-comps`, `generate-deal-analysis`,
+`generate-mismo`, `generate-mismo-data`, `property-lookup`, `textract-ocr`,
+`ocr-apply-1003`, `loe-generate`, `parse-signature`, `address-autocomplete`,
+`insights-data`, `mismo-import`. Plus `sms-service` and `google-drive-upload`,
+which already had `getUser()`.
+
+Each was proven live: unauthenticated → 401, and **the live anon key → 401
+`{"error":"invalid session"}`** — the case the pin was believed to cover. The
+control that makes it concrete: the same public anon key against `generate-cma`
+*before* its guard returned **HTTP 200 with a fully generated borrower PDF**.
+
+### The 3 that remain, and what each is waiting on
+
+| function | blocked on |
+|---|---|
+| `market-rate` | pg_cron job 24 sends the **anon key**. Move the cron to the service key first, or guarding it breaks the 22:00 weekday run silently — the `send-scheduled-sms` shape. |
+| `submit-showing` | Borrower-facing (`public/search-homes.html`, `public/unified-portal.html`). Borrowers have no Supabase session, so a session guard 401s every real showing request. Needs the `lender-portal` treatment: a row-held token validated in-function. **Do not put `requireStaff` on this.** |
+| `showing-actions` | No caller anywhere — not in the repo, not in cron. Confirm it is dead and **delete** it rather than guard it. |
 
 ## What the 2026-08-06 re-derivation corrected
 

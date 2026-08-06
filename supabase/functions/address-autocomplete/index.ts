@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { requireStaff } from "../_shared/require-staff.ts";
 
 // address-autocomplete — proxies Google Places Autocomplete (US addresses).
 // Prefers a dedicated SERVER key (no HTTP-referrer restriction) over the browser maps key,
@@ -63,6 +64,13 @@ async function viaLegacy(q: string) {
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+  /* GUARD FIRST — before the body or query string is read, so an action
+     added later is covered by default rather than by remembering.
+     verify_jwt=true does NOT do this: the anon key is a project-signed JWT
+     printed in every page's source. See docs/PINNED-NOT-GUARDED.md. */
+  const _auth = await requireStaff(req);
+  if (!_auth.ok) return new Response(JSON.stringify({ error: _auth.msg || 'not authorized' }),
+    { status: _auth.status || 401, headers: { ...cors, 'Content-Type': 'application/json' } });
   const ok = (d: any) => new Response(JSON.stringify(d), { headers: cors });
   try {
     const body = await req.json().catch(() => ({}));
