@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { requireStaff } from "../_shared/require-staff.ts";
 import { PDFDocument, rgb, StandardFonts, PDFName, PDFString, pushGraphicsState, popGraphicsState, moveTo, lineTo, appendBezierCurve, closePath, clip, endPath } from 'npm:pdf-lib@1.17.1';
 import fontkit from 'npm:@pdf-lib/fontkit@1.1.1';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
@@ -225,6 +226,14 @@ async function buildCMASnapshot(body:any){
 
 Deno.serve(async (req:Request)=>{
   if(req.method==='OPTIONS') return new Response(null,{status:204,headers:cors});
+  /* GUARD FIRST — before req.json(), so an action added later is covered by
+     default rather than by remembering. verify_jwt=true does NOT do this:
+     the anon key is a project-signed JWT printed in every page's source, so
+     the pin alone left this reachable by anyone who read the HTML.
+     See docs/PINNED-NOT-GUARDED.md. */
+  const _auth = await requireStaff(req);
+  if (!_auth.ok) return new Response(JSON.stringify({ error: _auth.msg || 'not authorized' }),
+    { status: _auth.status || 401, headers: { ...cors, 'Content-Type': 'application/json' } });
   try{
     const body=await req.json();
 

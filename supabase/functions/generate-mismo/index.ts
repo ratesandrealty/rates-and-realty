@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { requireStaff } from "../_shared/require-staff.ts";
 
 // generate-mismo
 // Phase 0 (de-risk): returns the loan's STORED MISMO 3.4 XML for loans imported
@@ -20,6 +21,14 @@ const hdrs = { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` };
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+  /* GUARD FIRST — before req.json(), so an action added later is covered by
+     default rather than by remembering. verify_jwt=true does NOT do this:
+     the anon key is a project-signed JWT printed in every page's source, so
+     the pin alone left this reachable by anyone who read the HTML.
+     See docs/PINNED-NOT-GUARDED.md. */
+  const _auth = await requireStaff(req);
+  if (!_auth.ok) return new Response(JSON.stringify({ error: _auth.msg || 'not authorized' }),
+    { status: _auth.status || 401, headers: { ...cors, 'Content-Type': 'application/json' } });
   try {
     const body = await req.json().catch(() => ({}));
     const contact_id = body.contact_id;
