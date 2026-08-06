@@ -22,7 +22,32 @@ control that makes it concrete: the same public anon key against `generate-cma`
 |---|---|
 | `market-rate` | pg_cron job 24 sends the **anon key**. Move the cron to the service key first, or guarding it breaks the 22:00 weekday run silently — the `send-scheduled-sms` shape. |
 | `submit-showing` | Borrower-facing (`public/search-homes.html`, `public/unified-portal.html`). Borrowers have no Supabase session, so a session guard 401s every real showing request. Needs the `lender-portal` treatment: a row-held token validated in-function. **Do not put `requireStaff` on this.** |
-| `showing-actions` | No caller anywhere — not in the repo, not in cron. Confirm it is dead and **delete** it rather than guard it. |
+| ~~`showing-actions`~~ | **DELETED 2026-08-06** — see below. |
+
+### `showing-actions` was deleted rather than guarded
+
+It was an **unauthenticated endpoint that sent email from rene@ (MailerLite) and
+SMS from the business line (Twilio)**, and offered full CRUD on `showings`
+including a hard `delete_home`. The same shape as the `sms-service` open relay,
+on both channels at once.
+
+Evidence it was dead, gathered before deleting:
+
+| check | result |
+|---|---|
+| repo callers | none |
+| pg_cron | none |
+| n8n (all 11 workflows enumerated) | none |
+| edge logs, observed window | none |
+| its email/SMS path ever writing `activity_events` | **0 rows, ever** |
+| `showings` table | dormant since 2026-06-13 |
+| replacement | `tours-admin` — same table, same operations, live |
+
+`tours-admin` supersedes it: `create_tour`, `update_tour`, `add_stop`,
+`update_stop`, `reorder_stops`, soft-delete, all against `showings`.
+
+Deleted from production (`supabase functions delete`), endpoint verified 404,
+source and pin removed. Recoverable from git at `85db61d` if that is ever wrong.
 
 ## What the 2026-08-06 re-derivation corrected
 
