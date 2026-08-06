@@ -158,6 +158,34 @@ async function getCachedPages(guidelineId: string, fileUrl: string): Promise<str
   return sc.complete ? sc.pages : null;
 }
 
+/* Postgres rejects U+0000 in text and jsonb outright — "unsupported Unicode
+ * escape sequence" — and OCR output carries it: a NUL survives extraction from a
+ * scanned page and lands in chunk_text.
+ *
+ * Not hypothetical. USDA HB-1-3560 (Multi-Family Direct) sat at
+ * chunk_status='failed', stuck on page 475 of 511 with 829 chunks already
+ * written, and the cron retried the SAME page every run and threw the same 500
+ * every time. Guideline indexing was failing on every attempt, and the only
+ * visible trace was a 500 in net._http_response that nothing alerted on.
+ *
+ * Lone surrogates are stripped for the same reason: a half pair is a legal JS
+ * string but not legal UTF-8, so it fails at the same boundary for a different
+ * cause and would present as the identical bug.
+ *
+ * Iterating code points rather than matching a surrogate RANGE is deliberate —
+ * writing \uD800 literals into source is how the patch that introduced this
+ * function corrupted its own file on the first attempt. */
+function pgSafeText(s: string): string {
+  let out = "";
+  for (const ch of String(s ?? "")) {
+    const c = ch.codePointAt(0)!;
+    if (c === 0) continue;                      // NUL — Postgres will not store it
+    if (c >= 0xD800 && c <= 0xDFFF) continue;   // lone surrogate — invalid UTF-8
+    out += ch;
+  }
+  return out;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   const ok = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, "Content-Type": "application/json" } });
@@ -233,7 +261,7 @@ Deno.serve(async (req) => {
           lender_id: g.lender_id || null,
           chunk_index: chunkIdx++,
           page_number: p,
-          chunk_text: piece,
+          chunk_text: pgSafeText(piece),
           chunk_tokens: approxTokens(piece),
           category: g.category || null,
           loan_types: g.loan_types || null,
