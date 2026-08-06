@@ -655,6 +655,12 @@ html,body{overflow-x:hidden}
               </div>
               <div class="form-group"><label>Phone</label><input type="tel" id="schedPhone" placeholder="(555) 000-0000"/></div>
               <div class="form-group"><label>Notes (optional)</label><input type="text" id="schedNotes" placeholder="Any special requests?"/></div>
+              <!-- submit-showing inserts CONTACTS from unauthenticated input, so it needs the
+                   same captcha submit-lead uses. The widget renders a hidden
+                   [name="cf-turnstile-response"] input, read on submit — the pattern the login
+                   and signup forms on this page already use. Sent BEFORE the function requires
+                   it, so a mistake here shows up as a page that still works. -->
+              <div id="schedTurnstile" class="cf-turnstile" data-sitekey="0x4AAAAAADj25vOJQ6mnClMb" style="margin:4px 0 12px;"></div>
               <button class="btn-gold" onclick="submitShowings()"><i class="fas fa-paper-plane"></i> Request Showings</button>
             </div>
           </div>
@@ -1883,7 +1889,11 @@ function submitShowings() {
 
   fetch(SB + '/functions/v1/submit-showing', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email:u?u.email:null, name:u?((u.first_name||'')+' '+(u.last_name||'')).trim():null, phone:phone||null, portal_user_id:u?u.id:null, borrower_id:u?u.borrower_id:null, preferred_date:date, preferred_time:time, notes:notes||null, homes:homes })
+    body: JSON.stringify({ email:u?u.email:null, name:u?((u.first_name||'')+' '+(u.last_name||'')).trim():null, phone:phone||null, portal_user_id:u?u.id:null, borrower_id:u?u.borrower_id:null, preferred_date:date, preferred_time:time, notes:notes||null, homes:homes,
+      /* Sent now, required by the function LATER — frontend first, so a mistake
+         here is a page that still works rather than the outage this path just
+         came out of. */
+      turnstileToken: (document.querySelector('#schedTurnstile [name="cf-turnstile-response"]')||{}).value || '' })
   /* CHECK r.ok, NOT JUST result.error.
      This used to test only `result.error`. The gateway's rejection body is
      {"code":"UNAUTHORIZED_NO_AUTH_HEADER","message":"..."} — no `error` key — so
