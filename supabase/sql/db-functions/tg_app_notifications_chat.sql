@@ -1,15 +1,12 @@
 -- tg_app_notifications_chat()
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
--- check-function-drift.mjs compares deployed EDGE functions and never
--- opens the database, so 5 of 307 were recorded and the rest existed only
--- in production. Re-capture after any change.
+-- Captured 2026-08-06 (quiet hours).
 
 CREATE OR REPLACE FUNCTION public.tg_app_notifications_chat()
  RETURNS trigger
  LANGUAGE plpgsql
  SECURITY DEFINER
- SET search_path TO 'public', 'auth'
+ SET search_path TO 'public'
 AS $function$
 declare
   v_email text; v_phone text; v_cuid bigint;
@@ -32,7 +29,7 @@ begin
   begin
     select notify_phone into v_phone from public.auth_user_roles
       where user_id = new.recipient_user_id and notify_phone is not null limit 1;
-    if v_phone is not null and v_phone <> '' then
+    if v_phone is not null and v_phone <> '' and not public.is_quiet_hours(new.recipient_user_id) then
       perform net.http_post(
         url := 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service',
         headers := '{"Content-Type":"application/json"}'::jsonb,

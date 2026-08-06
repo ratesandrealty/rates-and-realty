@@ -1,9 +1,6 @@
 -- tg_app_notifications_email()
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
--- check-function-drift.mjs compares deployed EDGE functions and never
--- opens the database, so 5 of 307 were recorded and the rest existed only
--- in production. Re-capture after any change.
+-- Captured 2026-08-06 (quiet hours).
 
 CREATE OR REPLACE FUNCTION public.tg_app_notifications_email()
  RETURNS trigger
@@ -114,7 +111,7 @@ begin
 
   select notify_phone into v_phone
   from auth_user_roles where user_id = new.recipient_user_id and notify_phone is not null limit 1;
-  if v_phone is not null and v_phone <> '' then
+  if v_phone is not null and v_phone <> '' and not public.is_quiet_hours(new.recipient_user_id) then
     v_sms := case when v_is_reminder then '🔔 Reminder' else '💬 ' || v_actor_clean || ' mentioned you' end
              || coalesce(' on ' || v_lead_name, '') || ': '
              || left(v_note, 90) || E'\n' || v_url;
