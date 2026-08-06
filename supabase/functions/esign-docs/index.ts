@@ -170,7 +170,7 @@ async function upload(req: Request, body: any) {
 }
 
 async function docUrl(req: Request, body: any) {
-  const adm = await requireAdmin(req);
+  const adm = await requireStaff(req, { what: 'This document action' });
   if (!adm.ok) return json({ error: adm.msg }, adm.status || 403);
   const db = svc();
   const { data: doc } = await db.from('esign_documents').select('*').eq('id', body.document_id).maybeSingle();
@@ -181,7 +181,7 @@ async function docUrl(req: Request, body: any) {
 }
 
 async function listDocuments(req: Request, body: any) {
-  const adm = await requireAdmin(req);
+  const adm = await requireStaff(req, { what: 'This document action' });
   if (!adm.ok) return json({ error: adm.msg }, adm.status || 403);
   const db = svc();
   let q = db.from('esign_documents').select('id,name,page_count,created_at,request_id').eq('is_library', false).order('created_at', { ascending: false });
@@ -197,7 +197,7 @@ async function listDocuments(req: Request, body: any) {
 }
 
 async function libraryList(req: Request, _body: any) {
-  const adm = await requireAdmin(req);
+  const adm = await requireStaff(req, { what: 'This document action' });
   if (!adm.ok) return json({ error: adm.msg }, adm.status || 403);
   const db = svc();
   const { data: docs } = await db.from('esign_documents').select('id,name,page_count,page_sizes,created_at').eq('is_library', true).order('created_at', { ascending: false });
@@ -318,7 +318,7 @@ async function saveFields(req: Request, body: any) {
 }
 
 async function getFields(req: Request, body: any) {
-  const adm = await requireAdmin(req);
+  const adm = await requireStaff(req, { what: 'This document action' });
   if (!adm.ok) return json({ error: adm.msg }, adm.status || 403);
   const db = svc();
   const { data: doc } = await db.from('esign_documents').select('*').eq('id', body.document_id).maybeSingle();
@@ -328,7 +328,7 @@ async function getFields(req: Request, body: any) {
 }
 
 async function resolveMerge(req: Request, body: any) {
-  const adm = await requireAdmin(req);
+  const adm = await requireStaff(req, { what: 'This document action' });
   if (!adm.ok) return json({ error: adm.msg }, adm.status || 403);
   const db = svc();
   const map = await fetchMergeMap(db, body.contact_id || null, body.lender_id || null);
@@ -451,7 +451,7 @@ async function drawFinal(pdfBytes: Uint8Array, fields: any[], signerForIndex: (i
 }
 
 async function stampPreview(req: Request, body: any) {
-  const adm = await requireAdmin(req);
+  const adm = await requireStaff(req, { what: 'This document action' });
   if (!adm.ok) return json({ error: adm.msg }, adm.status || 403);
   const db = svc();
   const { data: doc } = await db.from('esign_documents').select('*').eq('id', body.document_id).maybeSingle();
@@ -480,7 +480,7 @@ async function stampPreview(req: Request, body: any) {
 }
 
 async function buildFinal(req: Request, body: any) {
-  const adm = await requireAdmin(req);
+  const adm = await requireStaff(req, { what: 'This document action' });
   if (!adm.ok) return json({ error: adm.msg }, adm.status || 403);
   const db = svc();
   const { data: env } = await db.from('signature_requests').select('*').eq('id', body.envelope_id).maybeSingle();
@@ -540,7 +540,7 @@ async function buildFinal(req: Request, body: any) {
 }
 
 async function finalUrl(req: Request, body: any) {
-  const adm = await requireAdmin(req);
+  const adm = await requireStaff(req, { what: 'This document action' });
   if (!adm.ok) return json({ error: adm.msg }, adm.status || 403);
   const db = svc();
   const { data: env } = await db.from('signature_requests').select('id,final_pdf_path,combined_pdf_path,document_title').eq('id', body.envelope_id).maybeSingle();

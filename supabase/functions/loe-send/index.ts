@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0'
+import { requireStaff } from '../_shared/require-staff.ts'
 
 const URL = Deno.env.get('SUPABASE_URL')!
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -36,7 +37,11 @@ const SIGNER_BLOCK = `<div style="margin:16px 0 4px;">
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors })
   try {
-    const adm = await requireAdmin(req)
+    /* STAFF. Sending an LOE for signature is ordinary loan-processing work and
+     * the VA is the primary processor; requireAdmin() refused her with
+     * "admin only", so she could draft an LOE (loe-generate admits staff) and
+     * then not send it. This function only sends — it deletes nothing. */
+    const adm = await requireStaff(req, { what: 'Sending an LOE' })
     if (!adm.ok) return json({ error: adm.msg }, adm.status || 403)
     const body = await req.json().catch(() => ({}))
     const loe_id = body.loe_id

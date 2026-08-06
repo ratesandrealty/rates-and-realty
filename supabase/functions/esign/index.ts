@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import { requireStaff } from '../_shared/require-staff.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -303,7 +304,7 @@ async function createPdf(req: Request, body: any, adm: any, db: any) {
 }
 
 async function create(req: Request, body: any) {
-  const adm = await requireAdmin(req);
+  const adm = await requireStaff(req, { what: 'Creating an e-signature request' });
   if (!adm.ok) return json({ error: adm.msg }, adm.status || 403);
   const db = svc();
   if (body.document_id || (Array.isArray(body.document_ids) && body.document_ids.length)) return await createPdf(req, body, adm, db);
@@ -470,7 +471,7 @@ async function submit(req: Request, body: any) {
 }
 
 async function resend(req: Request, body: any) {
-  const adm = await requireAdmin(req);
+  const adm = await requireStaff(req, { what: 'Resending a signing link' });
   if (!adm.ok) return json({ error: adm.msg }, adm.status || 403);
   const db = svc();
   const channel = ['email','sms','both'].includes(body.channel) ? body.channel : 'both';

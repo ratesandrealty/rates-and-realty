@@ -1,6 +1,6 @@
 -- loe_save(p_loe_id uuid, p_contact_id uuid, p_application_id uuid, p_topic text, p_category text, p_title text, p_details text, p_body text, p_signer_contact_ids uuid[], p_status text)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-06. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -13,7 +13,7 @@ CREATE OR REPLACE FUNCTION public.loe_save(p_loe_id uuid, p_contact_id uuid, p_a
 AS $function$
 declare v_id uuid;
 begin
-  if auth.role() = 'authenticated' and not public.is_admin() then raise exception 'admin only'; end if;
+  if auth.role() = 'authenticated' and not (public.is_admin() or coalesce(public.current_app_role(),'') in ('va','loa','agent','staff')) then raise exception 'admin only'; end if;
   if p_loe_id is not null then
     update public.loe_requests set
       topic = coalesce(nullif(p_topic,''), topic),

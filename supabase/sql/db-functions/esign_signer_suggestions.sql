@@ -1,6 +1,6 @@
 -- esign_signer_suggestions(p_contact_id uuid)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-06. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -12,7 +12,7 @@ CREATE OR REPLACE FUNCTION public.esign_signer_suggestions(p_contact_id uuid)
  SET search_path TO 'public', 'pg_temp'
 AS $function$
 begin
-  if auth.role() = 'authenticated' and not public.is_admin() then
+  if auth.role() = 'authenticated' and not (public.is_admin() or coalesce(public.current_app_role(),'') in ('va','loa','agent','staff')) then
     raise exception 'admin only';
   end if;
 

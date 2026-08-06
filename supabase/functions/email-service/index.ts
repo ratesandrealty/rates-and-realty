@@ -4,6 +4,7 @@
 //   v54: htmlToText readable activity descriptions. v53: attachments. bcc supported.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { requireStaff } from '../_shared/require-staff.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,Authorization,apikey,x-client-info' };
@@ -407,10 +408,23 @@ Deno.serve(async (req: Request) => {
      * open because public/unified-portal.html is served to borrowers and calls it
      * with no session — it cannot send, it only returns generated text. */
     if (action !== 'ai_compose') {
-      const adm = await requireAdmin(req);
+      /* STAFF may SEND; bulk/marketing and settings stay ADMIN.
+       * The VA could not send a single email — 403 "admin only" on action:'send'
+       * — which blocked the VOE composer, LOE delivery and every lead email.
+       * She is the primary loan-processing user, so "cannot send email" is most
+       * of her job. Bulk sends and stored settings are a different risk: one
+       * mistake reaches the whole list, so those keep requireAdmin. */
+      const STAFF_SENDABLE = ['send','send_test','save_draft','preview','get_history'];
+      const adm = STAFF_SENDABLE.includes(action)
+        ? await requireStaff(req, { what: 'Email sending' })
+        : await requireAdmin(req);
       if (!adm.ok) return err(adm.msg || 'unauthorized', adm.status || 403);
       // requireAdmin already resolved the user to check the role; keep the id.
-      actorUid = adm.uid ?? null;
+      /* The two guards name the caller differently — requireAdmin returns `uid`,
+       * requireStaff returns `userId`. Reading only `uid` would have silently
+       * dropped attribution for every STAFF send, so email_log.actor_user_id
+       * would be null exactly for the VA. Caught by check-functions, not by eye. */
+      actorUid = (adm as any).uid ?? (adm as any).userId ?? null;
     } else {
       /* No session identifier reaches here: the portal posts { action, prompt }
        * and nothing else — it holds a portal_user in localStorage but does not
