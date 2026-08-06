@@ -296,8 +296,39 @@ async function sendEmail(p: {to:string;from?:string;fromName?:string;subject:str
     html: p.html,
     text: htmlToText(p.html)
   };
-  const ccList = parseEmailList(p.cc);
-  const bccList = parseEmailList(p.bcc);
+  /* DEDUPE ACROSS To / CC / BCC. MailerSend rejects the ENTIRE send when one
+   * address appears twice — "rene@ratesandrealty.com is duplicated in the to
+   * recipients list. #MS42201" — so a single overlap loses the whole email, not
+   * just the duplicate.
+   *
+   * This is not a test-only case. The CRM composer pre-fills CC with rene@ and
+   * processing@, so any send TO one of those collides by construction, and an HR
+   * contact or lender could legitimately already be on the default CC.
+   *
+   * Precedence To > CC > BCC: the strongest visibility wins, matching what the
+   * sender chose by typing the address into To.
+   *
+   * Done HERE rather than in the composer because sendEmail() is the single exit
+   * to MailerSend — every caller funnels through it (the VOE composer, the main
+   * composer, esign's sendRaw, order_email_send, bulk sends), and a fix in one
+   * composer would leave the others one CC away from the same rejection.
+   *
+   * Case-insensitive: MailerSend treats addresses case-insensitively, and the
+   * composer's own default-CC guard is case-SENSITIVE, so 'Rene@...' in To would
+   * otherwise slip past both. */
+  const seen = new Set<string>([String(p.to || '').trim().toLowerCase()]);
+  const dedupe = (list: Array<{email: string}> | undefined) => {
+    if (!list) return undefined;
+    const out = list.filter((r) => {
+      const k = String(r.email || '').trim().toLowerCase();
+      if (!k || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    return out.length ? out : undefined;
+  };
+  const ccList = dedupe(parseEmailList(p.cc));
+  const bccList = dedupe(parseEmailList(p.bcc));
   if (ccList) payload.cc = ccList;
   if (bccList) payload.bcc = bccList;
   const attachList = parseAttachments(p.attachments);
