@@ -12826,14 +12826,41 @@ async function lpOrderEmailSend(orderId, btn){
   const subj=g('lpOeSubj'); if(!subj){ alert('Subject required.'); return; }
   const html='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6;color:#222;white-space:pre-wrap;">'+lpEsc(g('lpOeBody'))+'</div>';
   const sv=document.getElementById('lpOeSaved'); btn.disabled=true; btn.textContent='Sending…';
+  /* SEND FROM HERE, then record the REAL outcome.
+     order_email_send did this in SQL via net.http_post — fire-and-forget, wrapped
+     in `exception when others then null`, and then wrote a "📧 Emailed X" note and
+     returned success:true regardless. Every failure looked identical to a send.
+     Reordering could not fix it: net.http_post cannot report an HTTP result
+     synchronously. So the browser sends (as the VOE composer now does) and
+     order_email_note() writes what actually happened. */
+  const fromKey=g('lpOeFrom')||'processing', toName=g('lpOeToName')||null;
   try{
-    const r=await _authClient().rpc('order_email_send',{ p_order_id:orderId, p_to_email:to, p_subject:subj, p_html:html, p_from_key:(g('lpOeFrom')||'processing'), p_to_name:g('lpOeToName')||null, p_cc:g('lpOeCc')||null });
-    if(r.error) throw r.error;
+    const ev=await _authClient().rpc('order_email_envelope',{ p_order_id:orderId, p_to_email:to, p_from_key:fromKey, p_cc:g('lpOeCc')||null });
+    if(ev.error) throw ev.error;
+    const env=(Array.isArray(ev.data)?ev.data[0]:ev.data)||{};
+    const payload={ action:'send', to_email:to, to_name:toName, subject:subj, html:html,
+                    from_email:env.from_email, reply_to:env.reply_to, contact_id:env.contact_id||null,
+                    activity_title:'📧 '+(env.label||'Order')+' email → '+(toName||to) };
+    if(env.cc)  payload.cc = env.cc;
+    if(env.bcc) payload.bcc = env.bcc;
+    const resp=await _authClient().functions.invoke('email-service',{ body:payload });
+    const data=resp&&resp.data, error=resp&&resp.error;
+    if(error||!data||data.success!==true) throw new Error((data&&data.error)||(error&&error.message)||'send failed');
+    await _authClient().rpc('order_email_note',{ p_order_id:orderId, p_to_email:to, p_to_name:toName, p_subject:subj, p_from_key:fromKey, p_ok:true, p_error:null });
     const ov=document.getElementById('lpOrderEmailModal'); if(ov) ov.remove();
     if(typeof showToast==='function') showToast('Email sent ✓');
-    lpNotesLoad(orderId);   // backend logged it as a "📧 Emailed…" note
+    lpNotesLoad(orderId);
     lpLoadTracker(lpCid());
-  }catch(e){ btn.disabled=false; btn.textContent='Send'; if(sv){ sv.textContent='Failed'; sv.style.color='#f87171'; } alert('Could not send: '+(e.message||'error')); }
+  }catch(e){
+    /* Record the failure on the order too — a note reading "⚠ Email FAILED" is
+       the thing that stops someone assuming HR was contacted. */
+    try{ await _authClient().rpc('order_email_note',{ p_order_id:orderId, p_to_email:to, p_to_name:toName, p_subject:subj, p_from_key:fromKey, p_ok:false, p_error:String((e&&e.message)||e).slice(0,200) }); }
+    catch(ne){ console.warn('[order_email_note]', ne&&ne.message); }
+    btn.disabled=false; btn.textContent='Send';
+    if(sv){ sv.textContent='Failed'; sv.style.color='#f87171'; }
+    lpNotesLoad(orderId);
+    alert('Could not send: '+(e.message||'error'));
+  }
 }
 function lpOrderStatusChange(type,status){
   if(!_lpOrders[type]) _lpOrders[type]={};

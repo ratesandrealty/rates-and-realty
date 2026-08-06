@@ -129,7 +129,11 @@ async function requireAdmin(req: Request): Promise<{ ok: boolean; userId: string
 }
 
 async function upload(req: Request, body: any) {
-  const adm = await requireAdmin(req);
+  /* STAFF. Preparing an e-signature document is ordinary processing work, and
+   * without upload the workflow stops partway: she can list, preview and send,
+   * but not put the document there in the first place. clone_document stays
+   * admin — that is template authoring, not document handling. */
+  const adm = await requireStaff(req, { what: 'Uploading a document' });
   if (!adm.ok) return json({ error: adm.msg }, adm.status || 403);
   const { name, contact_id, request_id, pdf_base64, replace_document_id } = body;
   if (!pdf_base64) return json({ error: 'pdf_base64 required' }, 400);
