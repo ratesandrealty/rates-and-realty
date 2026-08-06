@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { PDFDocument, StandardFonts, rgb } from 'https://esm.sh/pdf-lib@1.17.1';
 import fontkit from 'https://esm.sh/@pdf-lib/fontkit@1.1.1';
+import { requireStaff } from '../_shared/require-staff.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -560,7 +561,22 @@ async function finalUrl(req: Request, body: any) {
 }
 
 async function download(req: Request, body: any) {
-  const adm = await requireAdmin(req);
+  /* STAFF, not admin. This is the action the VOE composer calls to attach the
+   * signed Borrower Authorization, and the VA sends VOEs — she is the primary
+   * loan-processing user. requireAdmin() refused her with "admin only", so the
+   * order was placed and the email never went out.
+   *
+   * The DB layer was already staff-aware: voe_borrower_auth_request,
+   * voe_request_log, voe_email_get, voe_orders_awaiting_reply and voe_log_inbound
+   * all admit current_app_role() in ('va','loa','agent','staff'). Only this edge
+   * function disagreed, so a guard admitted her to pick the employer and refused
+   * her to send — inconsistent by construction.
+   *
+   * Scoped to THIS action deliberately. requireAdmin() is shared by 15 actions in
+   * this file, several of them destructive (delete_document, library_remove) or
+   * configuration (save_fields, library_save). Widening the shared helper would
+   * grant all of them in one edit; the reported break is the download path. */
+  const adm = await requireStaff(req, { what: 'Signed document download' });
   if (!adm.ok) return json({ error: adm.msg }, adm.status || 403);
   const db = svc();
   const { data: env } = await db.from('signature_requests').select('*').eq('id', body.envelope_id).maybeSingle();
