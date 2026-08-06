@@ -233,7 +233,17 @@ Deno.serve(async (req) => {
         sb.from("contacts").select("id", { count: "exact", head: true }).or("lead_score.lt.50,lead_score.is.null"),
         sb.from("contacts").select("id", { count: "exact", head: true }).gte("created_at", dayAgo),
         sb.from("contacts").select("id", { count: "exact", head: true }).gte("created_at", weekAgo),
-        sb.from("contacts").select("id", { count: "exact", head: true }).in("pipeline_status", ["Pre-Approved", "Processing", "Under Contract", "Submitted", "Approved"]),
+        /* "Active clients" = a live loan. Was ["Pre-Approved","Processing",
+         * "Under Contract","Submitted","Approved"]: 'Submitted' and 'Approved'
+         * are not pipeline stages and never have been — fossils of an older
+         * vocabulary, matching nothing — while the real 'Clear to Close' stage
+         * was missing. The count was still CORRECT when this was found, because
+         * Under Contract and Clear to Close both happened to be empty; the bug
+         * was latent, and would have shown up as a silent undercount the next
+         * time anyone reached Clear to Close. One contact sat there in June.
+         * Follow Up is deliberately out: it is a lead being nurtured, not a
+         * client with a loan in progress. */
+        sb.from("contacts").select("id", { count: "exact", head: true }).in("pipeline_status", ["Pre-Approved", "Processing", "Under Contract", "Clear to Close"]),
         sb.from("contacts").select("id", { count: "exact", head: true }).or(`last_contact_date.is.null,last_contact_date.lt.${sevenDaysAgo}`).not("pipeline_status", "in", '("Closed","Lost")'),
         sb.from("contacts").select("id", { count: "exact", head: true }).or(`last_contact_date.is.null,last_contact_date.lt.${fourteenDaysAgo}`).not("pipeline_status", "in", '("Closed","Lost")'),
       ]);
