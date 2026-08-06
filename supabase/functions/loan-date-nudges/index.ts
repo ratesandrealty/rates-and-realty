@@ -83,6 +83,25 @@ serve(async (req) => {
   const dryRun = !!body.dry_run
   const summary: any = { ok: true, dry_run: dryRun, from: NUDGE_FROM, item_count: 0, recipients: [], sent: 0, digest: null, errors: [] }
 
+  /* Third-party order reminders ride on THIS schedule rather than a new cron.
+   * Every outstanding order gets a task every 2 days until it is received or
+   * marked not required. order_reminders_run() is idempotent — it skips any
+   * order that already has an OPEN reminder, and counts from the last reminder
+   * rather than the order date so a 30-day-old order does not generate 15
+   * backdated tasks on first run.
+   *
+   * FIRST, and outside the main try, so a failure in the nudge digest below
+   * cannot stop the reminders — and vice versa. They are unrelated jobs sharing
+   * a timer, not one job. */
+  if (!dryRun) {
+    try {
+      const created = await rpc('order_reminders_run', {})
+      summary.order_reminders = Array.isArray(created) ? created.length : 0
+    } catch (e) {
+      summary.errors.push('order_reminders_run: ' + String((e as any)?.message || e))
+    }
+  }
+
   try {
     const items = await rpc('loan_date_nudge_scan', {})
     if (!Array.isArray(items)) { summary.ok = false; summary.errors.push('scan failed: ' + JSON.stringify(items)); return new Response(JSON.stringify(summary), { headers: J }) }
