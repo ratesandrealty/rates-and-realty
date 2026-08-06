@@ -75,12 +75,19 @@ Deno.serve(async (req: Request) => {
       .eq('id', order.contact_id).maybeSingle();
 
     const { data: app } = await db.from('mortgage_applications')
-      .select('id, loan_number, employer_street, employer_city, employer_state, employer_zip, prev_employer_street, prev_employer_city, prev_employer_state, prev_employer_zip, employer_name, prev_employer_name')
+      .select('id, loan_number, employments, employer_street, employer_city, employer_state, employer_zip, prev_employer_street, prev_employer_city, prev_employer_state, prev_employer_zip, employer_name, prev_employer_name')
       .eq('contact_id', order.contact_id).order('created_at', { ascending: false }).limit(1).maybeSingle();
 
     /* Employer address: match the ORDER's employer against the application's
      * current/previous blocks rather than assuming current — the picker can
-     * select a previous employer, which is the whole point of it. */
+     * select a PREVIOUS employer, which is the whole point of it.
+     *
+     * Then fall back to the employments JSONB, because the flat columns are
+     * frequently empty where the JSONB is not: on the file this was built
+     * against, prev_employer_street/city/state/zip are all NULL while the JSONB
+     * entry carries "950 North Burke Street, Visalia, CA, USA". Reading only the
+     * flat columns produced an Item 1 with the employer NAME and no address —
+     * a half-filled box, which is the thing this function exists to prevent. */
     const emp = String(order.employer_name || '').trim();
     const same = (a: unknown) => String(a || '').trim().toLowerCase() === emp.toLowerCase();
     let addr: string[] = [];
@@ -88,6 +95,10 @@ Deno.serve(async (req: Request) => {
       addr = [app.prev_employer_street, [app.prev_employer_city, app.prev_employer_state, app.prev_employer_zip].filter(Boolean).join(', ')];
     } else if (app) {
       addr = [app.employer_street, [app.employer_city, app.employer_state, app.employer_zip].filter(Boolean).join(', ')];
+    }
+    if (!addr.filter((s) => String(s || '').trim()).length && Array.isArray(app?.employments)) {
+      const hit = (app!.employments as any[]).find((e) => same(e?.employer));
+      if (hit) addr = [hit.street, [hit.city, hit.state_zip].filter(Boolean).join(', ')];
     }
     const employerBlock = [emp, ...addr].map(s => String(s || '').trim()).filter(Boolean).join('\n');
 

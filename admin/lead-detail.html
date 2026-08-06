@@ -11952,9 +11952,25 @@ async function _lpVoeShowPdf(name, fetcher){
   });
 }
 
+/* Preview the FILLED form — the bytes that will actually be attached. Previewing
+   the stored blank would show an empty Part I and prove nothing about what HR
+   receives, which is the whole reason Rene asked for a preview. */
 function lpVoePreviewForm(){
-  const cfg=_lpVoeCfg||{};
-  _lpVoeShowPdf('Request_for_VOE_BLANK.pdf', function(){ return _voeFormSignedUrl(cfg.voe_form_url); });
+  const oid=_lpVoeReqKey ? ((_lpVoeFind(_lpVoeReqKey)||{}).id||null) : null;
+  if(!window.AttachmentViewer){ showToast('Viewer not loaded', true); return; }
+  window.AttachmentViewer.open({
+    name:'Request_for_VOE.pdf', mime:'application/pdf',
+    fetch: async function(){
+      if(!oid) throw new Error('no order selected');
+      const fr=await _authClient().functions.invoke('voe-form-fill',{ body:{ order_id: oid } });
+      const d=fr&&fr.data, e=fr&&fr.error;
+      if(e||!d||d.success!==true||!d.content) throw new Error((d&&d.error)||(e&&e.message)||'could not prepare the form');
+      const bin=atob(d.content); const arr=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+      const blob=new Blob([arr],{type:'application/pdf'});
+      return { blob:blob, mime:'application/pdf', name:(d.filename||'Request_for_VOE.pdf'), size:blob.size };
+    }
+  });
 }
 
 function lpVoePreviewAuth(){
@@ -12209,10 +12225,24 @@ async function _voeComposerSend(st){
   // Fetch the staged VOE PDF → base64 attachment (public bucket; graceful if not staged).
   let attachments=undefined;
   if(cfg.voe_form_url){
-    // Sign the stored path on demand (bucket is private) before fetching the bytes to attach.
-    const _voeSigned=await _voeFormSignedUrl(cfg.voe_form_url);
-    try{ const resp=await fetch(_voeSigned); if(resp.ok){ const buf=await resp.arrayBuffer(); attachments=[{ content:_lpB64FromBuf(buf), filename:'Request_for_VOE_BLANK.pdf', disposition:'attachment' }]; } else { showToast('VOE form fetch failed ('+resp.status+') — sending without attachment', true); } }
-    catch(e){ showToast('Could not load VOE form — sending without attachment', true); }
+    /* Part I is MERGED SERVER-SIDE by voe-form-fill — employer, applicant, loan #
+       and date — so HR receives a form that already says who it is about. The
+       browser never merges borrower data; it asks for the filled bytes.
+       If the fill fails, ABORT rather than attach. A blank or half-filled Part I
+       reaching an outside HR contact is worse than not sending: they cannot act
+       on it and nobody here would know it went out empty. */
+    try{
+      const fr=await _authClient().functions.invoke('voe-form-fill',{ body:{ order_id: st.orderId } });
+      const fdata=fr&&fr.data, ferr=fr&&fr.error;
+      if(ferr||!fdata||fdata.success!==true||!fdata.content){
+        throw new Error((fdata&&fdata.error)||(ferr&&ferr.message)||'VOE form could not be prepared');
+      }
+      attachments=[{ content:fdata.content, filename:(fdata.filename||'Request_for_VOE.pdf'), disposition:'attachment' }];
+    }catch(e){
+      restore();
+      showToast('VOE form not attached: '+((e&&e.message)||e)+' — nothing was sent.', true);
+      return;
+    }
   }
   // SECOND attachment — the SIGNED borrower authorization. voe_borrower_auth_request → { found, envelope_id, title }.
   // esign-docs returns a 1-hour signed URL, so we fetch it NOW (client-side) and inline as base64. Never send silently without it.
