@@ -12,7 +12,32 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 type SbClient = ReturnType<typeof createClient>
 
-const SHARED_SECRET = Deno.env.get('PROACTIVE_FOLLOWUPS_SECRET') || 'rr-cron-2026-x7k3m9pq2r5tw8z4y6h8b3n1'
+/* The cron credential now lives in VAULT (secret name proactive_followups_secret)
+ * and is read at request time, not baked in.
+ *
+ * It used to be `Deno.env.get(...) || 'rr-cron-2026-...'` — and that env var was
+ * NEVER SET, so the function ran on the hardcoded fallback. That value is in git,
+ * in every clone and every commit that touched this file, and both crons carried
+ * it in cleartext in cron.job.command. It also doubles as a ?secret= query
+ * parameter, so it reached any URL logging in between. A guard against strangers,
+ * not a secret.
+ *
+ * LEGACY_SECRET is accepted ONLY for the switchover, so the running crons keep
+ * working while they are repointed at vault. It is removed in the same session,
+ * once a real invocation carrying the new value has been observed. */
+const LEGACY_SECRET = 'rr-cron-2026-x7k3m9pq2r5tw8z4y6h8b3n1'
+let _vaultSecret: string | null | undefined = undefined
+async function cronSecret(db: SbClient): Promise<string | null> {
+  if (_vaultSecret !== undefined) return _vaultSecret
+  try {
+    /* `as any` on the rpc call only — SbClient is typed from the generated
+       schema, which has no signature for this function. The VALUE is still
+       checked as a string below. */
+    const { data } = await (db as any).rpc('cron_secret_get', { p_name: 'proactive_followups_secret' })
+    _vaultSecret = (typeof data === 'string' && data.length > 0) ? data : null
+  } catch (_e) { _vaultSecret = null }
+  return _vaultSecret
+}
 const STALE_LEAD_DAYS = 14
 const PREAPPROVAL_WARN_DAYS = 30
 const CREDIT_WARN_DAYS = 90
@@ -227,7 +252,12 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: { 'Access-Control-Allow-Origin': '*' } })
   const url = new URL(req.url)
   const providedSecret = req.headers.get('x-cron-secret') || url.searchParams.get('secret') || ''
-  if (providedSecret !== SHARED_SECRET) {
+  const expected = await cronSecret(
+    createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!))
+  /* Refuse if vault has no value AND the legacy value does not match — an unset
+     secret must not mean "let everything through". */
+  const ok = (!!expected && providedSecret === expected) || (providedSecret === LEGACY_SECRET)
+  if (!ok) {
     return new Response(JSON.stringify({ error: 'Forbidden — missing or invalid x-cron-secret' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
   }
 
