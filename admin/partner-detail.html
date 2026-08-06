@@ -103,6 +103,7 @@
     /* Toast */
     #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:#161616;border:1px solid var(--gold-bdr);color:var(--text);font-size:13px;padding:10px 18px;border-radius:10px;opacity:0;pointer-events:none;transition:all .25s;z-index:9999;box-shadow:0 10px 30px rgba(0,0,0,.5);}
     #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+    #toast.err{background:#2a1414;border-color:#E05252;color:#ffb4b4;}
     /* Activity row hover actions */
     .act-row{position:relative;}
     .act-actions{position:absolute;top:6px;right:2px;display:none;gap:4px;background:var(--surface);padding:2px;border-radius:8px;}
@@ -199,7 +200,12 @@
   /* ── helpers ── */
   function _authClient(){ return window._supabaseClient; }
   function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-  function showToast(msg){ var t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._tm); t._tm=setTimeout(function(){ t.classList.remove('show'); },2500); }
+  /* isError is REQUIRED here: this page includes crm-comms.js, whose _toast()
+     calls window.showToast(msg, isErr). This signature took only msg, so every
+     failed send from a partner record — SMS and email both — rendered in the
+     success style. Errors also hold longer, because a failure is the case where
+     the text actually has to be read. */
+  function showToast(msg, isError){ var t=document.getElementById('toast'); t.textContent=msg; t.classList.toggle('err', !!isError); t.classList.add('show'); clearTimeout(t._tm); t._tm=setTimeout(function(){ t.classList.remove('show'); }, isError?6000:2500); }
 
   function money(n){ n=Number(n)||0; return '$'+n.toLocaleString('en-US',{maximumFractionDigits:0}); }
   // Shared money formatter: <$1K plain (commas), >=1K as $X.XK, >=1M as $X.XM.

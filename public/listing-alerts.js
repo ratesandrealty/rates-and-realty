@@ -96,7 +96,14 @@ const LA = window.ListingAlerts = {
       }
     } catch(e) {
       if (btn) { btn.disabled=false; btn.innerHTML='<i class="fas fa-bell"></i> '+(editId?'Update':'Create')+' Alert'; }
-      if (window.showToast) window.showToast('Could not save alert', true);
+      /* 'error', not true. This script is included by three pages with two
+         different showToast signatures: lead-detail takes a boolean, while
+         portal.html and unified-portal.html do `className = 'toast ' + type`.
+         Passing `true` there produced class "toast true", which matches no rule,
+         so a failed save rendered in the DEFAULT toast style — indistinguishable
+         from a success. The string is truthy for the boolean consumers and
+         resolves to the real .toast.error rule for the others. */
+      if (window.showToast) window.showToast('Could not save alert', 'error');
       return;
     }
     document.getElementById('laModal')?.remove();
