@@ -11697,7 +11697,8 @@ function lpVoeCardHtml(v){
       +'<span id="lpVoeSaved-'+k+'" style="font-size:10px;min-width:36px;text-align:right;"></span>'
     +'</div>'
     +'<input type="text" id="lpVoeF-'+k+'-label" placeholder="Label (e.g. VOE - Acme W2)" value="'+lpEsc(v.label||'')+'" onchange="lpVoeField(\''+k+'\',\'label\',this.value)" style="'+inp+'margin-bottom:6px;">'
-    +'<div style="display:flex;justify-content:flex-end;margin-bottom:4px;"><button type="button" onclick="lpVoePull(\''+k+'\')" title="Fill Employer from the CRM (voe_prefill)" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.15);color:#bbb;border-radius:6px;font-size:10px;font-weight:600;padding:2px 8px;cursor:pointer;font-family:inherit;">⬇ Pull employer from CRM</button></div>'
+    +'<div style="display:flex;justify-content:flex-end;margin-bottom:4px;"><button type="button" onclick="lpVoeEmpOpen(\''+k+'\')" title="Every employer on this file — current and previous, every borrower" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.15);color:#bbb;border-radius:6px;font-size:10px;font-weight:600;padding:2px 8px;cursor:pointer;font-family:inherit;">⬇ Employer from file ▾</button></div>'
+    +'<div id="lpVoeEmpDrop-'+k+'" style="display:none;position:absolute;left:8px;right:8px;z-index:61;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.6);padding:8px;max-height:320px;overflow-y:auto;"></div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">'
       +'<div style="grid-column:1 / -1;">'+txtF('employer_name','Employer Name')+'</div>'
       +txtF('hr_contact_first_name','HR First Name')+txtF('hr_contact_last_name','HR Last Name')
@@ -11816,13 +11817,115 @@ async function _lpVoePrefetch(cid){
   return _lpVoePrefill||{};
 }
 function _lpB64FromBuf(buf){ let bin=''; const b=new Uint8Array(buf), c=0x8000; for(let i=0;i<b.length;i+=c){ bin+=String.fromCharCode.apply(null, b.subarray(i,i+c)); } return btoa(bin); }
-// 1. PULL EMPLOYER from the CRM into the card's Employer field (stays editable).
-async function lpVoePull(k){
-  const cid=lpCid(); if(!cid) return;
-  const pf=await _lpVoePrefetch(cid);
-  const emp=document.getElementById('lpVoeF-'+k+'-employer_name');
-  if(emp && pf.employer_name){ emp.value=pf.employer_name; lpVoeField(k,'employer_name',pf.employer_name); }
-  _lpVoeToast(pf.employer_name ? ('Pulled: '+pf.employer_name) : 'No employer on file — enter it manually'+(pf.borrower_full?(' for '+pf.borrower_full):''), !pf.employer_name);
+/* 1. EMPLOYER PICKER — every employer on the file, current AND previous, for
+ *    every borrower on it.
+ *
+ * Replaces "Pull employer from CRM", which called voe_prefill() — that takes
+ * type='current' … order by updated_at desc limit 1, i.e. ONE arbitrary record.
+ * On Vincent Solis's file it returned Primoris and there was no way to reach
+ * Cal-Tech, the previous employer, which is the one carrying HR contact details
+ * (Rhonda, rhonda@cal-tech.net). A previous employer is a legitimate VOE target:
+ * the 1003's 1d section exists for "less than 2 years at current", which is
+ * exactly when a lender asks for one.
+ *
+ * The rows come from voe_employer_options(), which unions four stores that do
+ * not agree with each other. Where two stores name different employers the
+ * picker shows BOTH rows rather than choosing — see the function's comment. */
+let _lpVoeEmpOpts = null;   // cached rows for this contact
+let _lpVoeEmpCid  = null;   // contact the cache belongs to
+
+function _lpVoeSetF(k, field, val){
+  const el = document.getElementById('lpVoeF-'+k+'-'+field);
+  if (el) el.value = val || '';
+  lpVoeField(k, field, val || '');
+}
+
+function lpVoeEmpClose(k){
+  const d = document.getElementById('lpVoeEmpDrop-'+k);
+  if (d) { d.style.display='none'; d.innerHTML=''; }
+}
+
+async function lpVoeEmpOpen(k){
+  const cid = lpCid(); if(!cid) return;
+  const d = document.getElementById('lpVoeEmpDrop-'+k); if(!d) return;
+  if (d.style.display === 'block') { lpVoeEmpClose(k); return; }   // toggle
+
+  d.style.display = 'block';
+  d.innerHTML = '<div style="font-size:11px;color:#888;padding:6px;">Loading employers…</div>';
+
+  if (_lpVoeEmpCid !== cid || !_lpVoeEmpOpts) {
+    try {
+      const r = await _authClient().rpc('voe_employer_options', { p_contact_id: cid });
+      if (r.error) throw r.error;
+      _lpVoeEmpOpts = Array.isArray(r.data) ? r.data : [];
+      _lpVoeEmpCid  = cid;
+    } catch(e) {
+      /* Say what failed. The old button toasted "No employer on file" whether the
+         file was empty or the call had errored, which are different problems. */
+      d.innerHTML = '<div style="font-size:11px;color:#E5484D;padding:6px;">Could not load employers: '
+                  + lpEsc((e && e.message) || 'request failed') + '</div>';
+      return;
+    }
+  }
+
+  const rows = _lpVoeEmpOpts || [];
+  if (!rows.length) {
+    d.innerHTML = '<div style="font-size:11px;color:#999;padding:6px;">No employer on any application for this file — type it in manually.</div>'
+                + '<div style="text-align:right;"><button type="button" onclick="lpVoeEmpClose(\''+k+'\')" style="background:none;border:none;color:#888;font-size:11px;cursor:pointer;">close</button></div>';
+    return;
+  }
+
+  d.innerHTML =
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">'
+      + '<span style="font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#C9A84C;">Employers on this file</span>'
+      + '<button type="button" onclick="lpVoeEmpClose(\''+k+'\')" style="background:none;border:none;color:#888;font-size:14px;line-height:1;cursor:pointer;padding:0 2px;">✕</button>'
+    + '</div>'
+    + rows.map(function(r, i){
+        const hasHr = !!(r.hr_full || r.employer_email || r.employer_phone);
+        /* Say up front which rows can actually fill the HR fields. Only 2 of 15
+           rows on this database carry HR details, so a picker that looked
+           uniform would promise something it cannot deliver. */
+        const bits = [];
+        if (r.hr_full)        bits.push(lpEsc(r.hr_full));
+        if (r.employer_email) bits.push(lpEsc(r.employer_email));
+        if (r.employer_phone) bits.push(lpEsc(r.employer_phone));
+        const detail = hasHr ? bits.join(' · ') : 'no HR contact on file — you will need to add it';
+        const kindCol = r.kind === 'previous' ? '#AB7FE0' : '#52C87A';
+        return '<div onclick="lpVoeEmpPick(\''+k+'\','+i+')" style="padding:6px 7px;border-radius:6px;cursor:pointer;margin-bottom:3px;border:1px solid rgba(255,255,255,.07);" onmouseover="this.style.background=\'rgba(255,255,255,.06)\'" onmouseout="this.style.background=\'transparent\'">'
+          + '<div style="font-size:11.5px;color:#e8e8e8;">'
+            + '<strong>' + lpEsc(r.employer || '') + '</strong> '
+            + '<span style="color:'+kindCol+';font-size:10px;">(' + lpEsc(r.kind || '') + ')</span>'
+          + '</div>'
+          + '<div style="font-size:10px;color:#999;margin-top:1px;">'
+            + lpEsc(r.person || '') + ' <span style="color:#777;">(' + lpEsc(r.role || '') + ')</span>'
+          + '</div>'
+          + '<div style="font-size:9.5px;color:' + (hasHr ? '#8a8a8a' : '#c08a4a') + ';margin-top:2px;">' + detail + '</div>'
+        + '</div>';
+      }).join('');
+}
+
+/* 2. Selecting a row fills the VOE card's HR fields FROM THAT ENTRY. */
+function lpVoeEmpPick(k, i){
+  const r = (_lpVoeEmpOpts || [])[i];
+  if (!r) return;
+  _lpVoeSetF(k, 'employer_name',         r.employer || '');
+  _lpVoeSetF(k, 'hr_contact_first_name', r.hr_first || '');
+  _lpVoeSetF(k, 'hr_contact_last_name',  r.hr_last || '');
+  _lpVoeSetF(k, 'hr_contact_phone',      r.employer_phone || '');
+  _lpVoeSetF(k, 'hr_contact_email',      r.employer_email || '');
+  /* Label the order with the borrower AND which employment it is, so a file with
+     two borrowers and four employers between them stays readable in the list. */
+  const lbl = document.getElementById('lpVoeF-'+k+'-label');
+  if (lbl && !(lbl.value || '').trim()) {
+    _lpVoeSetF(k, 'label', 'VOE - ' + (r.employer||'') + ' (' + (r.kind||'') + ') - ' + (r.person||''));
+  }
+  lpVoeEmpClose(k);
+  const missing = [];
+  if (!r.hr_full)        missing.push('HR name');
+  if (!r.employer_email) missing.push('email');
+  _lpVoeToast(missing.length
+    ? ('Filled ' + (r.employer||'') + ' — still needs: ' + missing.join(', '))
+    : ('Filled ' + (r.employer||'') + ' — HR ' + r.hr_full), false);
 }
 // 2. SEND TO HR — composer (single recipient, VOE PDF attached, cc rene@+processing@).
 function _lpVoeSigText(b){ b=b||{}; const L=[]; if(b.name)L.push(b.name); if(b.title)L.push(b.title); if(b.phone)L.push(b.phone); if(b.nmls)L.push('NMLS #'+b.nmls); if(b.email)L.push(b.email); return L.join('\n'); }
