@@ -1,6 +1,6 @@
 -- voe_prefill(p_contact_id uuid)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-06. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -14,6 +14,18 @@ AS $function$
 declare c public.contacts; emp jsonb; lb public.loan_borrowers; broker jsonb;
 declare hr_first text; hr_last text; hr_full text;
 begin
+  /* STAFF ONLY. security definer bypasses RLS, and this returns a named
+     borrower, their employer, that employer's HR contact and the broker's
+     signature block for ANY contact id. Borrowers hold portal accounts, so
+     without this any signed-in borrower could read another borrower's
+     employment and HR details by guessing a uuid. verify_jwt would not stop
+     it - the anon key is a project-signed JWT printed in every page.
+     Matches the guard on voe_employer_options(). */
+  if auth.role() is distinct from 'service_role'
+     and not exists (select 1 from auth_user_roles where user_id = auth.uid() and role in ('admin','va')) then
+    raise exception 'not authorized';
+  end if;
+
   select * into c from public.contacts where id = p_contact_id;
 
   select e into emp

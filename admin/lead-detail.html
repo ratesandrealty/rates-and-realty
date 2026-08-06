@@ -11828,7 +11828,18 @@ async function _lpVoePrefetch(cid){
     if(r.error) throw r.error;
     _lpVoePrefill=r.data||{};
     return _lpVoePrefill;
-  }catch(e){ console.warn('[voe_prefill]', e&&e.message); return {}; }
+  }catch(e){
+    console.warn('[voe_prefill]', e&&e.message);
+    /* SAY SO. A failure here is not an outage — the composer still opens — it is
+       a silently DEGRADED email: no borrower name (the "helping ___" blank stays
+       as underscores) and no broker signature. That is worse than an error,
+       because it is sendable. Whoever is looking at the composer needs to know
+       the prefill did not arrive before they hit send. */
+    _lpVoeToast('Could not load borrower/broker details: '
+      + ((e&&e.message)||'request failed')
+      + ' — check the borrower name and signature before sending.', true);
+    return {};
+  }
 }
 function _lpB64FromBuf(buf){ let bin=''; const b=new Uint8Array(buf), c=0x8000; for(let i=0;i<b.length;i+=c){ bin+=String.fromCharCode.apply(null, b.subarray(i,i+c)); } return btoa(bin); }
 /* 1. EMPLOYER PICKER — every employer on the file, current AND previous, for
