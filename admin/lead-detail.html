@@ -11692,7 +11692,7 @@ function lpVoeCardHtml(v){
   const txtF=(field,ph)=>'<input type="text" id="lpVoeF-'+k+'-'+field+'" placeholder="'+ph+'" value="'+lpEsc(v[field]||'')+'" onchange="lpVoeField(\''+k+'\',\''+field+'\',this.value)" style="'+inp+'">';
   return '<div style="position:relative;border:1px solid '+(overdue?'#E5484D':'rgba(255,255,255,.08)')+';border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(255,255,255,.02);">'
     +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">'
-      +'<select onchange="lpVoeBorrowerChange(\''+k+'\',this.value)" style="'+sel+'flex:1;min-width:0;">'+bopts+'</select>'
+      +'<select id="lpVoeBor-'+k+'" onchange="lpVoeBorrowerChange(\''+k+'\',this.value)" style="'+sel+'flex:1;min-width:0;">'+bopts+'</select>'
       +'<select onchange="lpVoeStatusChange(\''+k+'\',this.value)" style="'+sel+'">'+stOpts+'</select>'
       +'<span id="lpVoeSaved-'+k+'" style="font-size:10px;min-width:36px;text-align:right;"></span>'
     +'</div>'
@@ -11812,9 +11812,23 @@ async function lpVoeLoadCfg(){
   try{ const r=await _authClient().from('app_config').select('key,value').in('key',['voe_form_url','voe_request_cc','voe_ytd_screenshot_url']); (r.data||[]).forEach(function(x){ _lpVoeCfg[x.key]=x.value; }); }catch(e){ console.warn('[voe cfg]', e&&e.message); }
   return _lpVoeCfg;
 }
+/* Takes a contact id and returns THAT contact's prefill. It is called with the
+   VOE card's selected borrower, who on a multi-borrower file is often not the
+   contact whose page this is.
+
+   On failure it now returns {} rather than the module-level _lpVoePrefill. That
+   global holds whoever was fetched last — so a failed call used to hand back a
+   DIFFERENT borrower's name, and the composer would have written it into "I am
+   helping ___ apply for a mortgage loan" in an email to an employer. Empty is
+   recoverable (the body falls back to underscores for hand-typing); the wrong
+   borrower's name is not. */
 async function _lpVoePrefetch(cid){
-  try{ const r=await _authClient().rpc('voe_prefill',{ p_contact_id:cid }); if(!r.error) _lpVoePrefill=r.data||{}; }catch(e){ console.warn('[voe_prefill]', e&&e.message); }
-  return _lpVoePrefill||{};
+  try{
+    const r=await _authClient().rpc('voe_prefill',{ p_contact_id:cid });
+    if(r.error) throw r.error;
+    _lpVoePrefill=r.data||{};
+    return _lpVoePrefill;
+  }catch(e){ console.warn('[voe_prefill]', e&&e.message); return {}; }
 }
 function _lpB64FromBuf(buf){ let bin=''; const b=new Uint8Array(buf), c=0x8000; for(let i=0;i<b.length;i+=c){ bin+=String.fromCharCode.apply(null, b.subarray(i,i+c)); } return btoa(bin); }
 /* 1. EMPLOYER PICKER — every employer on the file, current AND previous, for
@@ -11919,23 +11933,51 @@ function lpVoeEmpPick(k, i){
   if (lbl && !(lbl.value || '').trim()) {
     _lpVoeSetF(k, 'label', 'VOE - ' + (r.employer||'') + ' (' + (r.kind||'') + ') - ' + (r.person||''));
   }
+
+  /* POINT THE ORDER AT THE PERSON WHOSE JOB THIS IS.
+     The composer writes "I am helping <borrower> apply for a mortgage loan" into
+     an email addressed to this employer's HR. If the card still names a
+     different borrower, that sentence is wrong in a message going to an outside
+     party. Selecting Jose's employer means the VOE is for Jose. */
+  let borrowerNote = '';
+  const v = _lpVoeFind(k);
+  if (v && r.contact_id) {
+    const known = (_lpBorrowers || []).find(b => String(b.contact_id) === String(r.contact_id));
+    if (known && String(v.borrower_contact_id||'') !== String(r.contact_id)) {
+      lpVoeBorrowerChange(k, String(r.contact_id));
+      const selEl = document.getElementById('lpVoeBor-'+k);
+      if (selEl) selEl.value = String(r.contact_id);
+      borrowerNote = ' · borrower set to ' + (known.name || r.person || '');
+    } else if (!known && String(v.borrower_contact_id||'') !== String(r.contact_id)) {
+      /* The employer is attributable but that person is not in this file's
+         borrower list, so the dropdown cannot represent them. Say so rather
+         than leaving a silent mismatch. */
+      borrowerNote = ' · check the borrower — this job is ' + (r.person || 'another borrower') + "'s";
+    }
+  }
+
   lpVoeEmpClose(k);
   const missing = [];
   if (!r.hr_full)        missing.push('HR name');
   if (!r.employer_email) missing.push('email');
-  _lpVoeToast(missing.length
+  _lpVoeToast((missing.length
     ? ('Filled ' + (r.employer||'') + ' — still needs: ' + missing.join(', '))
-    : ('Filled ' + (r.employer||'') + ' — HR ' + r.hr_full), false);
+    : ('Filled ' + (r.employer||'') + ' — HR ' + r.hr_full)) + borrowerNote, false);
 }
 // 2. SEND TO HR — composer (single recipient, VOE PDF attached, cc rene@+processing@).
 function _lpVoeSigText(b){ b=b||{}; const L=[]; if(b.name)L.push(b.name); if(b.title)L.push(b.title); if(b.phone)L.push(b.phone); if(b.nmls)L.push('NMLS #'+b.nmls); if(b.email)L.push(b.email); return L.join('\n'); }
-function _lpVoeDefaultBody(pf, hrName, employer, hrFirst){
+function _lpVoeDefaultBody(pf, hrName, employer, hrFirst, borrowerName){
   pf=pf||{};
   const bk=pf.broker||{};
   const name=(bk.name||'').trim();
   const nmls=(bk.nmls==null?'':String(bk.nmls)).trim();
-  // borrower_full fills the "helping ___" blank; empty ⇒ literal underscores for hand-typing pre-send.
-  const bn=(pf.borrower_full||'').trim()
+  /* Fills the "helping ___" blank. borrowerName is passed in by the caller and
+     is the borrower the ORDER is for, which on a multi-borrower file is not
+     necessarily the contact whose page is open. It is preferred over the prefill
+     so the subject line and this sentence cannot name two different people in
+     the same email. Empty ⇒ literal underscores for hand-typing pre-send. */
+  const bn=(borrowerName||'').trim()
+        || (pf.borrower_full||'').trim()
         || [pf.borrower_first,pf.borrower_last].filter(Boolean).join(' ').trim()
         || '____________';
   // broker.nmls already carries the "NMLS #..." prefix — do NOT prepend "NMLS " again.
@@ -11963,12 +12005,23 @@ async function lpVoeReqOpen(k){
   const hrName=[hrFirst,hrLast].filter(Boolean).join(' ').trim();
   const hrEmail=g('hr_contact_email'), hrPhone=g('hr_contact_phone'), employer=g('employer_name');
   if(!hrEmail){ showToast('Add the HR email on this card first.', true); return; }
-  const cfgPf=await Promise.all([lpVoeLoadCfg(), _lpVoePrefetch(cid)]);
+  /* THE BORROWER THIS VOE IS FOR — not whoever's lead page is open.
+     On a multi-borrower file these differ. One live application has four
+     borrowers with four employers between them, and the picker can select any of
+     them, so deriving the name from the page contact would write the wrong
+     person into an email addressed to someone else's employer: "I am helping
+     <the page's contact> apply" sent to a co-borrower's HR department. The card
+     already records which borrower the order is for; use it. */
+  const borrowerCid = v.borrower_contact_id || cid;
+  const cfgPf=await Promise.all([lpVoeLoadCfg(), _lpVoePrefetch(borrowerCid)]);
   const cfg=cfgPf[0]||{}, pf=cfgPf[1]||{};
   _lpVoeReqKey=k;
-  const bn=pf.borrower_full||[pf.borrower_first,pf.borrower_last].filter(Boolean).join(' ')||'';
+  /* Prefer the name recorded on the card; fall back to the prefill. Both refer
+     to borrowerCid, so they cannot disagree about WHO — only about formatting. */
+  const bn=(v.borrower_name||'').trim()
+        || pf.borrower_full||[pf.borrower_first,pf.borrower_last].filter(Boolean).join(' ')||'';
   const subject='Verification of Employment Request'+(bn?(' — '+bn):'');
-  const bodyText=_lpVoeDefaultBody(pf, hrName, employer, hrFirst);
+  const bodyText=_lpVoeDefaultBody(pf, hrName, employer, hrFirst, bn);
   const bodyHtml='<div>'+lpEsc(bodyText).replace(/\n/g,'<br>')+'</div>';
   // CC: composer auto-adds rene@ + processing@; also seed any configured voe_request_cc extras.
   const ccExtra=String(cfg.voe_request_cc||'').split(/[;,]/).map(s=>s.trim()).filter(Boolean);
