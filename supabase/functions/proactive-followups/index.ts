@@ -15,17 +15,17 @@ type SbClient = ReturnType<typeof createClient>
 /* The cron credential now lives in VAULT (secret name proactive_followups_secret)
  * and is read at request time, not baked in.
  *
- * It used to be `Deno.env.get(...) || 'rr-cron-2026-...'` — and that env var was
+ * It used to be `Deno.env.get(...) || '<a literal baked in here>'` — and that env var was
  * NEVER SET, so the function ran on the hardcoded fallback. That value is in git,
  * in every clone and every commit that touched this file, and both crons carried
  * it in cleartext in cron.job.command. It also doubles as a ?secret= query
  * parameter, so it reached any URL logging in between. A guard against strangers,
  * not a secret.
  *
- * LEGACY_SECRET is accepted ONLY for the switchover, so the running crons keep
- * working while they are repointed at vault. It is removed in the same session,
- * once a real invocation carrying the new value has been observed. */
-const LEGACY_SECRET = 'rr-cron-2026-x7k3m9pq2r5tw8z4y6h8b3n1'
+ * The old literal was ROTATED OUT on 2026-08-06 and is gone from this file, so
+ * the copy in git history no longer opens anything. Both crons were repointed at
+ * vault and each invoked verbatim and observed returning 200 BEFORE the legacy
+ * path was removed — the switchover was proven, not assumed. */
 let _vaultSecret: string | null | undefined = undefined
 async function cronSecret(db: SbClient): Promise<string | null> {
   if (_vaultSecret !== undefined) return _vaultSecret
@@ -256,7 +256,10 @@ serve(async (req) => {
     createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!))
   /* Refuse if vault has no value AND the legacy value does not match — an unset
      secret must not mean "let everything through". */
-  const ok = (!!expected && providedSecret === expected) || (providedSecret === LEGACY_SECRET)
+  /* No fallback. An unset or unreadable secret REFUSES rather than admitting
+     everything — the previous `env || 'literal'` meant the env var was never set
+     and nobody noticed, because the fallback always matched. */
+  const ok = !!expected && providedSecret === expected
   if (!ok) {
     return new Response(JSON.stringify({ error: 'Forbidden — missing or invalid x-cron-secret' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
   }
