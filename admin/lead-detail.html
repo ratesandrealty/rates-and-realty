@@ -12243,12 +12243,13 @@ async function _voeComposerSend(st){
   // Log FIRST so the reply_token exists BEFORE we send — HR replies route back to us via reply_to.
   // voe_request_log → { reply_token, email_log_id, order_id }; it also stamps the order (status→ordered,
   // HR fields, ordered_at, last_follow_up_at, reply_token) + writes email_log.
-  let reply_token=null;
+  let reply_token=null, email_log_id=null;
   try{
     const lr=await _authClient().rpc('voe_request_log',{ p_order_id:st.orderId, p_contact_id:cid, p_hr_name:hrName||null, p_hr_email:to||null, p_hr_phone:hrPhone||null, p_employer:employer||null, p_subject:subject, p_body_html:bodyHtml });
     if(lr.error) throw lr.error;
     const ret=Array.isArray(lr.data)?lr.data[0]:lr.data;
     reply_token=(ret && ret.reply_token)||null;
+    email_log_id=(ret && ret.email_log_id)||null;
   }catch(le){ console.warn('[voe_request_log]', le&&le.message); }
   try{
     const body={ action:'send', to_email:to, to_name:hrName, first_name:((hrName||'').split(/\s+/)[0]||''), subject:subject, html:bodyHtml, contact_id:cid };
@@ -12258,10 +12259,22 @@ async function _voeComposerSend(st){
     const resp=await _authClient().functions.invoke('email-service',{ body:body });
     const data=resp&&resp.data, error=resp&&resp.error;
     if(error||!data||data.success!==true) throw new Error((data&&data.error)||(error&&error.message)||'send failed');
+    /* ONLY NOW is the order ordered. voe_request_log no longer asserts it — it
+       prepares the token and a 'pending' log row, and this is what records that
+       the send actually happened. */
+    try{ await _authClient().rpc('voe_request_sent',{ p_email_log_id:email_log_id, p_order_id:st.orderId, p_ok:true, p_error:null }); }
+    catch(me){ console.warn('[voe_request_sent]', me&&me.message); }
     showToast('VOE request sent to '+to+' ✓');
     closeEmailComposer();
     lpLoadVoes(cid);      // refresh cards (status now ordered) + activity
-  }catch(e){ restore(); showToast('Send failed: '+((e&&e.message)||e), true); }
+  }catch(e){
+    /* Mark the log row failed and leave the ORDER untouched. Before this, a
+       failed send still left the order 'ordered' and a log row claiming 'sent',
+       so the 2-day reminder chased a request HR had never received. */
+    try{ await _authClient().rpc('voe_request_sent',{ p_email_log_id:email_log_id, p_order_id:st.orderId, p_ok:false, p_error:String((e&&e.message)||e).slice(0,180) }); }
+    catch(me){ console.warn('[voe_request_sent:fail]', me&&me.message); }
+    restore(); showToast('Send failed: '+((e&&e.message)||e), true);
+  }
 }
 // 3. ACTIVITY — status/ordered/HR + events[] (inbound replies render distinctly for Phase 2).
 async function lpVoeLoadActivity(orderId, k){
