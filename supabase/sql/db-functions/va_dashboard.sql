@@ -1,6 +1,6 @@
 -- va_dashboard()
 -- language: plpgsql
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-06. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -26,7 +26,8 @@ begin
     'tasks', (
       select coalesce(jsonb_agg(jsonb_build_object(
                'id',id,'title',title,'priority',priority,'due_date',due_date,
-               'contact_id',contact_id,'contact_name',contact_name,'bucket',bucket)
+               'contact_id',contact_id,'contact_name',contact_name,'bucket',bucket,
+               'related_table',related_table,'related_id',related_id)
              order by case bucket when 'overdue' then 0 when 'today' then 1 when 'upcoming' then 2 else 3 end, due_date asc nulls last), '[]'::jsonb)
       from va_daily_tasks()
     ),

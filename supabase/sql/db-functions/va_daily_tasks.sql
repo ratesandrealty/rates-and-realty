@@ -3,7 +3,7 @@
 -- Captured 2026-08-05.
 
 CREATE OR REPLACE FUNCTION public.va_daily_tasks()
- RETURNS TABLE(id uuid, title text, description text, status text, priority text, due_date timestamp without time zone, contact_id uuid, lead_id uuid, contact_name text, contact_phone text, assigned_by uuid, clickup_url text, bucket text, assignee_state text, provenance text, question_pending boolean)
+ RETURNS TABLE(id uuid, title text, description text, status text, priority text, due_date timestamp without time zone, contact_id uuid, lead_id uuid, contact_name text, contact_phone text, assigned_by uuid, clickup_url text, related_table text, related_id uuid, bucket text, assignee_state text, provenance text, question_pending boolean)
  LANGUAGE plpgsql
  STABLE SECURITY DEFINER
  SET search_path TO 'public'
@@ -48,7 +48,7 @@ begin
          t.contact_id, t.lead_id,
          nullif(trim(coalesce(c.first_name,'')||' '||coalesce(c.last_name,'')),'') as contact_name,
          case when current_app_role()='va' and not is_admin() then mask_phone(c.phone) else c.phone end as contact_phone,
-         t.assigned_by, t.clickup_url,
+         t.assigned_by, t.clickup_url, t.related_table, t.related_id,
          case when t.due_date is null then 'no_date'
               when t.due_date::date < (now() at time zone 'America/Los_Angeles')::date then 'overdue'
               when t.due_date::date = (now() at time zone 'America/Los_Angeles')::date then 'today'

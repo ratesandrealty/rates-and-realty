@@ -5873,7 +5873,17 @@ function _ldRestoreTabFromHash() {
   if (!document.getElementById('tab-' + name)) return; // unknown tab
   var btn = document.querySelector('.ld-tab-btn[onclick*="\'' + name + '\'"]');
   if (!btn) return;
-  if (btn.offsetParent === null) return;               // hidden (display:none) → skip
+  if (btn.offsetParent === null) {
+    /* Hidden tab — the VA following an order-reminder link to Processing, which
+       is admin-only. Silence here is the shape that hides bugs: she is the main
+       audience for order reminders, so "nothing happened" is indistinguishable
+       from a broken link. Say why, then land on the default tab. */
+    if (/(?:^|[#&])order=/.test(location.hash || '') || name === 'processing') {
+      var say = window.showToast || window.toast;
+      if (typeof say === 'function') say('Processing is admin-only — ask Rene to check this order.', true);
+    }
+    return;
+  }
   switchTab(name, btn);
 }
 
@@ -10211,6 +10221,45 @@ async function lpLoadProcessing(){
   lpLoadVaTasks();
   lpLoadShares();
   lpLoadHealth(cid);       // status banner + urgent list + Critical Dates glow (one source of truth)
+  lpFocusOrderFromHash();  // deep link: #processing&order=<order_id>
+}
+
+/* ── DEEP LINK TO A SPECIFIC ORDER CARD ──────────────────────────────────────
+ * A reminder row on the VA dashboard links to
+ *     /admin/lead-detail?contact_id=<c>#processing&order=<order_id>
+ * The tab itself is restored by _ldRestoreTabFromHash(); this scrolls to the
+ * card and expands it.
+ *
+ * ONE RESOLVER, TWO CONTAINERS. Third-Party Orders (#lpOrdersBody) covers only
+ * title/hoi/escrow/appraisal/payoff — VOE is NOT in LP_ORDER_ROWS and renders in
+ * its own section. Querying [data-order-id] document-wide inside the Processing
+ * panel finds either without the caller having to know which kind it is.
+ *
+ * FALLS BACK QUIETLY to the tab itself. An order that has since been received is
+ * filtered out of the VOE list, so its id is legitimately absent — landing on
+ * Processing is the right answer, not an error.
+ *
+ * Order rows load asynchronously, so retry briefly rather than resolving once
+ * against a body that has not rendered yet. */
+function lpFocusOrderFromHash(){
+  var m = /(?:^|[#&])order=([0-9a-f-]{36})/i.exec(location.hash || '');
+  if (!m) return;
+  var wanted = m[1], tries = 0;
+  (function attempt(){
+    var panel = document.getElementById('tab-processing');
+    var el = panel && panel.querySelector('[data-order-id="' + wanted + '"]');
+    if (!el) {
+      if (++tries < 12) return setTimeout(attempt, 250);   // ~3s, then give up quietly
+      return;
+    }
+    try { if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior:'smooth', block:'center' }); } catch(_) { }
+    /* Expand: VOE cards carry their detail inline, so "expanded" here means
+       drawing attention to it rather than opening a collapsed region. */
+    var prev = el.style.boxShadow;
+    el.style.transition = 'box-shadow .3s';
+    el.style.boxShadow = '0 0 0 2px rgba(201,168,76,.85)';
+    setTimeout(function(){ el.style.boxShadow = prev || ''; }, 2600);
+  })();
 }
 function lpGoToLender(name){
   const btn = document.querySelector('.ld-tab-btn[onclick*="lenders"]');
@@ -11132,7 +11181,17 @@ async function lpLoadVoes(cid){
     const all = (vRes && !vRes.error && vRes.data) ? vRes.data : [];
     const voeRows = all.filter(o=>o.order_type==='voe');
     _lpVoeNotReq = voeRows.find(function(o){ return o.status==='not_required'; }) || null;   // section "Don't Need" marker
-    _lpVoes = voeRows.filter(function(o){ return o.status!=='not_required'; }).map((o,i)=>Object.assign({}, o, { key:'v'+i }));
+    /* KEY BY THE ORDER'S REAL id, not by position.
+       This was `key:'v'+i` — an index into the list AFTER the not_required
+       filter, so setting any VOE to "Don't Need" renumbered every card below it.
+       The key reaches ~25 call sites through _lpVoeFind(k) and is also baked into
+       DOM ids (lpVoeF-<k>-<field>) and inline handlers, so a renumber between a
+       render and an interaction pointed those at a DIFFERENT order: an open
+       employer picker writing HR fields onto the wrong VOE, or lpVoeLoadActivity
+       resolving its async result into the wrong card.
+       Unsaved cards keep the synthetic 'vn<seq>' key until they have an id. */
+    _lpVoes = voeRows.filter(function(o){ return o.status!=='not_required'; })
+                     .map(o => Object.assign({}, o, { key: o.id || ('vn'+(++_lpVoeSeq)) }));
     // Merge id + tracking fields onto the single rows so they can show a notes log too.
     all.forEach(function(o){ if(o.order_type!=='voe' && _lpOrders[o.order_type]){ const t=_lpOrders[o.order_type]; t.id=o.id; t.note_count=o.note_count; t.last_follow_up_at=o.last_follow_up_at; t.last_note_at=o.last_note_at; } });
     lpRenderOrders();   // re-render rows (now with ids → notes toggle) + VOE cards
@@ -11605,7 +11664,11 @@ function lpRenderOrders(){
     const statusCell = nreqPayoff
       ? '<span style="'+sel+'border-color:rgba(80,200,120,.5);color:#7ee2a3;background:rgba(80,200,120,.12);text-align:center;font-weight:600;">Don\'t need</span>'
       : '<select id="lpStatus-'+row.type+'" onchange="lpOrderStatusChange(\''+row.type+'\',this.value)" style="'+sel+stStyle+'">'+opts+'</select>';
-    let html='<div style="'+rowStyle+'">'
+    /* data-order-id is the deep-link target. These rows are keyed by order_type
+       in the UI (one card per type), but the LINK carries the order row id, so
+       the anchor keeps working if the type-to-row mapping ever changes. Absent
+       when no order row exists yet for that type. */
+    let html='<div'+(o.id?' data-order-id="'+lpEsc(o.id)+'"':'')+' style="'+rowStyle+'">'
       +'<div style="display:grid;grid-template-columns:62px 1fr 104px 52px;gap:8px;align-items:center;">'
         +'<span class="lp-role-tag">'+lpEsc(row.label)+'</span>'
         +'<button type="button" onclick="lpVendorOpen(\''+row.type+'\')" style="text-align:left;'+sel+'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'+(o.vendor_id?'color:#ddd;':'color:#777;')+'">'+lpEsc(vLabel)+' ▾</button>'
@@ -11686,7 +11749,9 @@ function lpVoeCardHtml(v){
   const vLabel = v.vendor_id ? (v.vendor_name||_lpVendorNames[v.vendor_id]||'Vendor selected') : 'Select vendor (optional)';
   const overdue = v.follow_up_at && st!=='received' && (new Date(v.follow_up_at).getTime()<Date.now());
   const txtF=(field,ph)=>'<input type="text" id="lpVoeF-'+k+'-'+field+'" placeholder="'+ph+'" value="'+lpEsc(v[field]||'')+'" onchange="lpVoeField(\''+k+'\',\''+field+'\',this.value)" style="'+inp+'">';
-  return '<div style="position:relative;border:1px solid '+(overdue?'#E5484D':'rgba(255,255,255,.08)')+';border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(255,255,255,.02);">'
+  /* data-order-id is the deep-link target. Absent on an unsaved card, which is
+     correct — nothing can link to an order that has no row yet. */
+  return '<div'+(v.id?' data-order-id="'+lpEsc(v.id)+'"':'')+' style="position:relative;border:1px solid '+(overdue?'#E5484D':'rgba(255,255,255,.08)')+';border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(255,255,255,.02);">'
     +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">'
       +'<select id="lpVoeBor-'+k+'" onchange="lpVoeBorrowerChange(\''+k+'\',this.value)" style="'+sel+'flex:1;min-width:0;">'+bopts+'</select>'
       +'<select onchange="lpVoeStatusChange(\''+k+'\',this.value)" style="'+sel+'">'+stOpts+'</select>'

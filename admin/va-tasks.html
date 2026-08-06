@@ -508,6 +508,15 @@ function renderTask(t) {
   if (t.clickup_url) {
     links += '<a class="clickup-link" href="' + esc(t.clickup_url) + '" target="_blank" rel="noopener">🔗 ClickUp</a>';
   }
+  /* An order reminder is only actionable next to the order it names, and the
+     lead page opens on a different tab. Deep-link to the card:
+     #processing is restored by _ldRestoreTabFromHash(), &order=<id> resolved by
+     lpFocusOrderFromHash(). Processing is admin-only, so a VA following this
+     gets a toast rather than a silent landing on the default tab. */
+  if (t.related_table === 'loan_orders' && t.related_id && t.contact_id) {
+    links += '<a href="lead-detail?contact_id=' + encodeURIComponent(t.contact_id)
+          + '#processing&order=' + encodeURIComponent(t.related_id) + '">🧾 Open order</a>';
+  }
 
   const stateCls = t.question_pending ? ' is-question' : (t.status === 'pending' ? ' is-pending' : '');
   return '<div class="task' + stateCls + '" data-id="' + esc(t.id) + '">' +

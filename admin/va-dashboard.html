@@ -255,6 +255,20 @@ function renderScorecard(s) {
   ).join('');
 }
 
+/* Where a task row should OPEN.
+ * An order reminder goes to the ORDER CARD, not just the lead page — "VOE still
+ * outstanding" is only actionable next to the order it names, and the lead page
+ * opens on a different tab entirely. #processing is restored by
+ * _ldRestoreTabFromHash(); &order=<id> is resolved by lpFocusOrderFromHash().
+ * Anything else keeps the plain lead link. */
+function taskHref(t) {
+  var base = leadHref(t.contact_id);
+  if (t.related_table === 'loan_orders' && t.related_id) {
+    return base + '#processing&order=' + encodeURIComponent(t.related_id);
+  }
+  return base;
+}
+
 function renderPriority(tasks) {
   const strip = document.getElementById('priorityStrip');
   const list = document.getElementById('priorityList');
@@ -263,8 +277,13 @@ function renderPriority(tasks) {
   list.innerHTML = urgent.map(t => {
     const prio = (t.priority || 'normal').toLowerCase();
     const due = t.due_date ? '<span class="' + dueClass(t.bucket) + '">' + esc(fmtDate(t.due_date)) + '</span>' : '';
-    const who = (t.contact_id && t.contact_name) ? '<a class="contact-link" href="' + leadHref(t.contact_id) + '">' + esc(t.contact_name) + '</a>' : (t.contact_name ? esc(t.contact_name) : '');
-    return '<div class="prio-item"><span class="pi-title">' + esc(t.title || '(untitled)') + '</span>'
+    const who = (t.contact_id && t.contact_name) ? '<a class="contact-link" href="' + taskHref(t) + '">' + esc(t.contact_name) + '</a>' : (t.contact_name ? esc(t.contact_name) : '');
+    /* The TITLE is the click target for an order reminder — the row reads
+       "VOE still outstanding", and that is the thing to click, not the name. */
+    const titleHtml = (t.contact_id && t.related_table === 'loan_orders' && t.related_id)
+      ? '<a class="contact-link" href="' + taskHref(t) + '">' + esc(t.title || '(untitled)') + '</a>'
+      : esc(t.title || '(untitled)');
+    return '<div class="prio-item"><span class="pi-title">' + titleHtml + '</span>'
       + '<span class="prio prio-' + prio + '">' + esc(prio) + '</span>'
       + (due ? '<span style="font-size:11px;">' + due + '</span>' : '')
       + (who ? '<span style="font-size:11px;">' + who + '</span>' : '') + '</div>';
@@ -276,11 +295,14 @@ function taskRow(t) {
   const prio = (t.priority || 'normal').toLowerCase();
   const due = t.due_date ? '<span class="' + dueClass(t.bucket) + '">' + esc(fmtDate(t.due_date)) + '</span>' : '';
   const who = (t.contact_id && t.contact_name)
-    ? '<a class="contact-link" href="' + leadHref(t.contact_id) + '" onclick="event.stopPropagation()">' + esc(t.contact_name) + '</a>'
+    ? '<a class="contact-link" href="' + taskHref(t) + '" onclick="event.stopPropagation()">' + esc(t.contact_name) + '</a>'
     : (t.contact_name ? esc(t.contact_name) : '');
   const meta = ['<span class="prio prio-' + prio + '">' + esc(prio) + '</span>'];
   if (due) meta.push(due); if (who) meta.push(who);
-  return '<div class="task-row"><div class="task-title">' + esc(t.title || '(untitled)') + '</div>'
+  const titleHtml = (t.contact_id && t.related_table === 'loan_orders' && t.related_id)
+    ? '<a class="contact-link" href="' + taskHref(t) + '" onclick="event.stopPropagation()">' + esc(t.title || '(untitled)') + '</a>'
+    : esc(t.title || '(untitled)');
+  return '<div class="task-row"><div class="task-title">' + titleHtml + '</div>'
     + '<div class="task-meta">' + meta.join('<span style="opacity:.4">·</span>') + '</div></div>';
 }
 
