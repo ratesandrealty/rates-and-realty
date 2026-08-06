@@ -3335,7 +3335,11 @@ async function saveMismoImport() {
         session = (sr && sr.data && sr.data.session) || null;
       }
     } catch(e) {}
-    var bearer = session && session.access_token ? session.access_token : ANON;
+    /* Session token required — the `: ANON` fallback that used to sit here sent a
+       key that identifies nobody into a function that writes contacts and loan
+       rows. mismo-import is being guarded, so this must be a real identity. */
+    var bearer = session && session.access_token;
+    if (!bearer) throw new Error('Not signed in — reload the page and sign in again.');
     var res = await fetch(SB_URL + '/functions/v1/mismo-import', {
       method:'POST',
       headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + bearer, 'apikey':ANON },

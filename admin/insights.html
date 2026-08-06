@@ -189,15 +189,23 @@ a{text-decoration:none;color:inherit}
   // so the server can apply per-user filtering if it ever needs to.
   async function fetchInsights(report, range) {
     range = range || currentRange;
-    var headers = { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY };
+    /* The session token is REQUIRED, not preferred. Authorization used to default
+       to the anon key and only upgrade if a session happened to be present — but
+       the anon key identifies nobody and is printed in this page's own source, so
+       this BI endpoint (which aggregates across the whole CRM) was reachable by
+       anyone who read the HTML. Fail here, naming the cause, rather than sending
+       a key that cannot be an identity. */
+    var headers = { 'apikey': ANON_KEY };
     var client = getSupabaseClient();
+    var token = null;
     if (client) {
       try {
         var sess = await client.auth.getSession();
-        var token = sess && sess.data && sess.data.session && sess.data.session.access_token;
-        if (token) headers.Authorization = 'Bearer ' + token;
-      } catch (e) { /* fall back to anon */ }
+        token = sess && sess.data && sess.data.session && sess.data.session.access_token;
+      } catch (e) { /* handled below */ }
     }
+    if (!token) throw new Error('Not signed in — reload the page and sign in again.');
+    headers.Authorization = 'Bearer ' + token;
     var url = SUPABASE_URL + '/functions/v1/insights-data?report=' + encodeURIComponent(report) + '&range=' + encodeURIComponent(range);
     var res = await fetch(url, { headers: headers });
     if (!res.ok) {

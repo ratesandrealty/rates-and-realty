@@ -2893,7 +2893,7 @@
   <!-- Staff-to-staff chat: floating Chat bubble (beside the AI FAB) + realtime. -->
   <script src="/admin/js/staff-chat.js?v=443262548b"></script>
   <script type="module" src="/components/admin-dashboard.js?v=0d5f9fe8d0"></script>
-  <script src="/dashboard/utils/insights.js?v=ebf93e5ab7"></script>
+  <script src="/dashboard/utils/insights.js?v=08b45a0c2f"></script>
   <script src="/dashboard/utils/lead-picker.js?v=ed36024245"></script>
   <script src="/dashboard/utils/calendar.js?v=694e0fe0b9"></script>
   <script src="/dashboard/utils/clickup-widget.js?v=35b310978f"></script>
@@ -3718,9 +3718,23 @@ async function importMismoFiles() {
     try {
       var xml = await file.text();
       if (!xml.includes("MISMO") && !xml.includes("mismo") && !xml.includes("MESSAGE")) throw new Error("Not a valid MISMO XML");
+      /* Authorization must be the SIGNED-IN USER, not SB_KEY — that is the anon
+         key, printed in this page's source, and it identifies nobody. This call
+         imports a MISMO file into contacts and loan tables, and mismo-import is
+         being guarded. apikey stays anon: that is the project identifier the
+         gateway routes on, which is a different thing from the identity. */
+      var _mtok = null;
+      try {
+        var _msb = window._dashSupabase || window._pipelineSupabase || window._supabaseClient;
+        if (_msb && _msb.auth && _msb.auth.getSession) {
+          var _mss = await _msb.auth.getSession();
+          _mtok = _mss && _mss.data && _mss.data.session && _mss.data.session.access_token;
+        }
+      } catch (_) {}
+      if (!_mtok) throw new Error("Not signed in — reload the page and sign in again.");
       var res = await fetch(SB_URL + "/functions/v1/mismo-import", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SB_KEY, "apikey": SB_KEY },
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + _mtok, "apikey": SB_KEY },
         body: JSON.stringify({ action: "import", xml: xml, file_name: file.name })
       });
       var data = await res.json();

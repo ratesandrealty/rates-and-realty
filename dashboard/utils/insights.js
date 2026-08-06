@@ -40,15 +40,21 @@
   // Preferred admin-session token; falls back to anon. The deployed function
   // accepts either, but using the session lets the server log/auth properly.
   async function fetchInsights(report, range) {
-    var headers = { 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY };
+    /* Session token REQUIRED. See the matching change in admin/insights.html:
+       the anon key defaulted in as the Authorization header, identifies nobody,
+       and is printed in the page source — so this CRM-wide aggregate was open to
+       anyone who read the HTML. */
+    var headers = { 'apikey': ANON_KEY };
     var client = getClient();
+    var token = null;
     if (client) {
       try {
         var sess = await client.auth.getSession();
-        var token = sess && sess.data && sess.data.session && sess.data.session.access_token;
-        if (token) headers.Authorization = 'Bearer ' + token;
-      } catch (e) { /* anon fallback */ }
+        token = sess && sess.data && sess.data.session && sess.data.session.access_token;
+      } catch (e) { /* handled below */ }
     }
+    if (!token) throw new Error('Not signed in — reload the page and sign in again.');
+    headers.Authorization = 'Bearer ' + token;
     var url = SUPABASE_URL + '/functions/v1/insights-data?report=' + encodeURIComponent(report)
       + (range ? '&range=' + encodeURIComponent(range) : '');
     var res = await fetch(url, { headers: headers });
