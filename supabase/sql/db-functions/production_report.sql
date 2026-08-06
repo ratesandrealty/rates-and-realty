@@ -1,6 +1,6 @@
 -- production_report(p_from date, p_to date)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-06. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -79,9 +79,9 @@ begin
       from (
         select pipeline_status as stage, count(*) as n,
           case pipeline_status
-            when 'New Lead' then 0 when 'Contacted' then 1 when 'Pre-Approved' then 2
-            when 'Under Contract' then 3 when 'Processing' then 4 when 'Clear to Close' then 5
-            when 'Closed' then 6 else 7 end as ord
+            when 'New Lead' then 0 when 'Contacted' then 1 when 'Follow Up' then 2 when 'Pre-Approved' then 3
+            when 'Under Contract' then 4 when 'Processing' then 5 when 'Clear to Close' then 6
+            when 'Closed' then 7 else 8 end as ord
         from rep group by pipeline_status
       ) s
     ),

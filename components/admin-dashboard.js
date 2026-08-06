@@ -2207,7 +2207,7 @@ function _fvFiltered() {
 
 function _fvPipelineColor(status) {
   const m = {
-    "New Lead": "#6B6B7A", "Contacted": "#5AA0E0", "Pre-Approved": "#C9A84C",
+    "New Lead": "#6B6B7A", "Contacted": "#5AA0E0", "Follow Up": "#4FB3B3", "Pre-Approved": "#C9A84C",
     "Under Contract": "#AB7FE0", "Processing": "#E07F50", "Clear to Close": "#52C87A",
     "Closed": "#3AB06A", "Lost": "#E05252"
   };

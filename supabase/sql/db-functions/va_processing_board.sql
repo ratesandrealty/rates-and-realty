@@ -1,6 +1,6 @@
 -- va_processing_board()
 -- language: sql
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-06. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -24,7 +24,7 @@ AS $function$
     (select kd.label from loan_key_dates kd where kd.contact_id=c.id and kd.date_value >= current_date order by kd.date_value asc limit 1)
   from contacts c
   where public.is_lead_shared_with_me(c.id)
-    and coalesce(c.pipeline_status,'') not in ('New Lead','Closed')
+    and coalesce(c.pipeline_status,'') not in ('New Lead','Follow Up','Closed')
     and coalesce(c.deal_outcome,'') not in ('won','lost')
   order by array_position(array['Clear to Close','Under Contract','Processing','Pre-Approved','Contacted'], c.pipeline_status), name;
 $function$;

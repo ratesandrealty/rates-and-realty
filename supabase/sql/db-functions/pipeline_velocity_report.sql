@@ -1,6 +1,6 @@
 -- pipeline_velocity_report(p_from date, p_to date)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-06. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -41,7 +41,7 @@ begin
     select c.*,
            extract(epoch from (now() - c.created_at))/86400.0 as age_days
     from contacts c
-    where c.pipeline_status in ('Contacted','Pre-Approved','Under Contract','Processing','Clear to Close')
+    where c.pipeline_status in ('Contacted','Follow Up','Pre-Approved','Under Contract','Processing','Clear to Close')
   ),
   time_to_fund as (
     select
@@ -92,8 +92,8 @@ begin
         jsonb_build_object('stage', stage, 'n', n, 'avg_age_days', avg_age_days,
                            'median_age_days', median_age_days, 'oldest_age_days', oldest_age_days)
         order by case stage
-          when 'Contacted' then 1 when 'Pre-Approved' then 2 when 'Under Contract' then 3
-          when 'Processing' then 4 when 'Clear to Close' then 5 else 6 end)
+          when 'Contacted' then 1 when 'Follow Up' then 2 when 'Pre-Approved' then 3 when 'Under Contract' then 4
+          when 'Processing' then 5 when 'Clear to Close' then 6 else 7 end)
       from by_stage), '[]'::jsonb),
     'active_pipeline_count', (select count(*) from active),
     'stalled_deals', (select items from stalled),

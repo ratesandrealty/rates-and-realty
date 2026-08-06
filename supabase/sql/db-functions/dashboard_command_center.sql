@@ -1,6 +1,6 @@
 -- dashboard_command_center()
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-06. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -12,7 +12,7 @@ CREATE OR REPLACE FUNCTION public.dashboard_command_center()
  SET search_path TO 'public'
 AS $function$
 declare
-  v_active text[] := array['Contacted','Pre-Approved','Under Contract','Processing','Clear to Close'];
+  v_active text[] := array['Contacted','Follow Up','Pre-Approved','Under Contract','Processing','Clear to Close'];
   v_result jsonb;
 begin
   -- Global command center is an ADMIN tool. VAs/agents get a shared-scoped pipeline elsewhere
@@ -36,7 +36,7 @@ begin
     ),
     'pipeline_by_stage', (
       select coalesce(jsonb_agg(jsonb_build_object('stage', s.stage, 'count', coalesce(cnt.c,0)) order by s.ord), '[]'::jsonb)
-      from (values ('New Lead',1),('Contacted',2),('Pre-Approved',3),('Under Contract',4),('Processing',5),('Clear to Close',6),('Closed',7)) s(stage,ord)
+      from (values ('New Lead',1),('Contacted',2),('Follow Up',3),('Pre-Approved',4),('Under Contract',5),('Processing',6),('Clear to Close',7),('Closed',8)) s(stage,ord)
       left join (select pipeline_status, count(*) c from contacts group by 1) cnt on cnt.pipeline_status = s.stage
     ),
     'todays_tasks', (
