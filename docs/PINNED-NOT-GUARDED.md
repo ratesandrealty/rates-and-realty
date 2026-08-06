@@ -21,7 +21,7 @@ control that makes it concrete: the same public anon key against `generate-cma`
 | function | blocked on |
 |---|---|
 | `market-rate` | pg_cron job 24 sends the **anon key**. Move the cron to the service key first, or guarding it breaks the 22:00 weekday run silently — the `send-scheduled-sms` shape. |
-| `submit-showing` | Borrower-facing (`public/search-homes.html`, `public/unified-portal.html`). Borrowers have no Supabase session, so a session guard 401s every real showing request. Needs the `lender-portal` treatment: a row-held token validated in-function. **Do not put `requireStaff` on this.** |
+| `submit-showing` | **verify_jwt flipped to false 2026-08-06 — it was an OUTAGE, not a guard.** Both public pages send no Authorization header, so `true` answered every showing request with UNAUTHORIZED_NO_AUTH_HEADER; nothing reached `showings` from 2026-06-13 until the flip. Still needs a real guard: the `submit-lead` treatment — Cloudflare Turnstile verified in-function (`TURNSTILE_SECRET_KEY` is already set) plus per-IP rate limiting. **Not a session guard** — that would 401 every genuine borrower. |
 | ~~`showing-actions`~~ | **DELETED 2026-08-06** — see below. |
 
 ### `showing-actions` was deleted rather than guarded

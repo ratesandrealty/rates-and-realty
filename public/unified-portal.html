@@ -1884,9 +1884,23 @@ function submitShowings() {
   fetch(SB + '/functions/v1/submit-showing', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email:u?u.email:null, name:u?((u.first_name||'')+' '+(u.last_name||'')).trim():null, phone:phone||null, portal_user_id:u?u.id:null, borrower_id:u?u.borrower_id:null, preferred_date:date, preferred_time:time, notes:notes||null, homes:homes })
-  }).then(function(r) { return r.json(); })
+  /* CHECK r.ok, NOT JUST result.error.
+     This used to test only `result.error`. The gateway's rejection body is
+     {"code":"UNAUTHORIZED_NO_AUTH_HEADER","message":"..."} — no `error` key — so
+     the test passed, the borrower's cart was DELETED, and they were told
+     "Showings requested! Rene will confirm shortly." while nothing had been
+     saved and nobody had been told. That ran from the day submit-showing was
+     flipped to verify_jwt=true until 2026-08-06.
+     The cart is now cleared only after a confirmed success, so a failure leaves
+     the borrower's selections intact to retry. */
+  }).then(function(r) {
+      return r.json().catch(function(){ return {}; }).then(function(body) {
+        if (!r.ok) throw new Error(body.error || body.message || ('Request failed (' + r.status + ')'));
+        if (body.error) throw new Error(body.error);
+        return body;
+      });
+    })
     .then(function(result) {
-      if (result.error) throw new Error(result.error);
       localStorage.removeItem('showingCart');
       loadShowingCart();
       loadShowings();
@@ -1894,7 +1908,7 @@ function submitShowings() {
       showToast('Showings requested! Rene will confirm shortly.', 'success');
       trackPortalAction('showing', 'Showing Request Submitted', { homes_count: homes.length, preferred_date: date });
     })
-    .catch(function(e) { showToast('Error: ' + (e.message||'Call (714) 472-8508'), 'error'); });
+    .catch(function(e) { showToast('Could not send your request: ' + (e.message || 'please call (714) 472-8508') + ' — your selections were kept.', 'error'); });
 }
 
 /* ===== SHOWINGS ===== */

@@ -306,12 +306,27 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.submit-showing]
-# Tier 2. Borrower-facing: public/search-homes.html and public/unified-portal.html
-# call it and borrowers have NO Supabase session. A session guard would 401 every
-# real showing request. Needs the lender-portal treatment (a row-held token
-# validated in-function) or a rate-limited public endpoint with no read surface.
-# Do NOT put a session guard on this one.
-verify_jwt = true
+# FALSE, and this is a CHANGE — it was live at true and that was an outage.
+#
+# Borrower-facing: public/search-homes.html and public/unified-portal.html call
+# it, and borrowers have NO Supabase session — both send no Authorization header
+# at all. Against verify_jwt = true the gateway answered every real showing
+# request with UNAUTHORIZED_NO_AUTH_HEADER. Nothing has reached the showings
+# table since 2026-06-13.
+#
+# It was almost certainly never chosen: the slug was UNPINNED, and the CLI
+# defaults an unpinned function to true on every deploy. Same shape as the
+# send-scheduled-sms outage. Its peers are all false — portal-auth, portal-data,
+# submit-lead, tour-public-view — because they are all reached by borrowers.
+#
+# FALSE IS NOT "unguarded is fine". This function INSERTS CONTACTS from
+# unauthenticated input, so it is a spam-to-CRM vector. The guard it needs is the
+# one submit-lead already uses: a Cloudflare Turnstile token verified in-function
+# (TURNSTILE_SECRET_KEY is already set), plus per-IP rate limiting — NOT a session
+# guard, which would 401 every genuine borrower. Tracked in
+# docs/PINNED-NOT-GUARDED.md; pinning false here restores the borrower path
+# rather than pretending the gateway was protecting anything.
+verify_jwt = false
 
 [functions.market-rate]
 # No browser caller, but NOT uncalled: pg_cron job 24 refresh-market-rate runs it
