@@ -47,6 +47,8 @@ const GUARDED = {
   /* The single attachment viewer behind BOTH the email attachment path and (once
    * mounted) staff chat. Floor measured at 10747 bytes, set at ~85%. */
   'admin/js/attachment-viewer.js': { min: 9000, require: ['})();', 'window.AttachmentViewer', 'function loadPdfJs'] },
+  /* The heartbeat feeding "active time". Floor measured at 5877, set at ~85%. */
+  'admin/js/presence.js': { min: 5000, require: ['})();', 'presence_beat', 'presence_day'] },
   'src/worker.js':            { min: 15000,  require: ['export default'] },
   'tools/stamp-assets.mjs':   { min: 2000,   require: [] },
   /* The lead picker is the single implementation behind three mount points; a
