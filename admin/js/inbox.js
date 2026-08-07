@@ -2503,7 +2503,7 @@
            * no p_mime_type) — the old bare catch meant a mismatch would 404 the RPC
            * and be swallowed, silently leaving the video unregistered. */
           var vc = await vcl.rpc('video_create', {
-            p_title: 'Video message · ' + new Date().toLocaleDateString(),
+            p_title: 'Video message · ' + new Date().toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' }),
             p_storage_path: vpath,
             p_public_url: videoUrl,
             p_duration: secs,

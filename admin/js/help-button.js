@@ -17,7 +17,7 @@
   'use strict';
   if (window.HelpTopic) return;
 
-  var LOOM_SRC = '/admin/js/loom-recorder.js?v=13f432dc07';
+  var LOOM_SRC = '/admin/js/loom-recorder.js?v=027bbb283e';
   var BUCKET = 'video-messages';
   var _cache = {};                 // topic_key -> row
   var _sb = null;

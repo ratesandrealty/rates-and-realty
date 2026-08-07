@@ -39,7 +39,7 @@
     var d = Math.max(0, (Date.now() - t) / 1000);
     if (d < 60) return 'now'; if (d < 3600) return Math.floor(d / 60) + 'm';
     if (d < 86400) return Math.floor(d / 3600) + 'h'; if (d < 604800) return Math.floor(d / 86400) + 'd';
-    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return new Date(iso).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' });
   }
   function nameOf(t) {
     if (t.title) return t.title;

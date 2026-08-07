@@ -122,7 +122,7 @@
   function fmtTime(iso) {
     if (!iso) return '';
     try {
-      return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      return new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit', hour12: true });
     } catch (e) { return ''; }
   }
 
@@ -146,13 +146,13 @@
     if (!titleEl) return;
     var r = getViewRange();
     if (viewMode === 'day') {
-      titleEl.textContent = currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+      titleEl.textContent = currentDate.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
     } else if (viewMode === 'week') {
       var endDay = new Date(r.end); endDay.setDate(endDay.getDate() - 1);
-      titleEl.textContent = r.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-        + ' – ' + endDay.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      titleEl.textContent = r.start.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' })
+        + ' – ' + endDay.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric' });
     } else if (viewMode === 'month') {
-      titleEl.textContent = currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      titleEl.textContent = currentDate.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'long', year: 'numeric' });
     } else {
       titleEl.textContent = 'Next 30 days';
     }
@@ -212,7 +212,7 @@
       var dayEvents = byDay[i];
       return '<div class="cal-week-day' + (d.toDateString() === todayKey ? ' is-today' : '') + '">'
         + '<div class="cal-day-header">'
-        +   '<div class="cal-day-name">' + d.toLocaleDateString('en-US', { weekday: 'short' }) + '</div>'
+        +   '<div class="cal-day-name">' + d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short' }) + '</div>'
         +   '<div class="cal-day-num">' + d.getDate() + '</div>'
         + '</div>'
         + '<div class="cal-day-events">'
@@ -296,9 +296,9 @@
       var evs = groups[key];
       return '<div class="cal-agenda-day">'
         + '<div class="cal-agenda-date">'
-        +   '<div class="cal-agenda-weekday">' + d.toLocaleDateString('en-US', { weekday: 'long' }) + '</div>'
+        +   '<div class="cal-agenda-weekday">' + d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'long' }) + '</div>'
         +   '<div class="cal-agenda-num">' + d.getDate() + '</div>'
-        +   '<div class="cal-agenda-month">' + d.toLocaleDateString('en-US', { month: 'short' }) + '</div>'
+        +   '<div class="cal-agenda-month">' + d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short' }) + '</div>'
         + '</div>'
         + '<div class="cal-agenda-events">' + evs.map(eventRowHtml).join('') + '</div>'
         + '</div>';
@@ -320,7 +320,7 @@
       return '<div class="upcoming-item" data-event-id="' + esc(e.id) + '">'
         + '<div class="up-dot" style="background:' + esc(e.color || '#C9A84C') + '"></div>'
         + '<div class="up-body">'
-        +   '<div class="up-when">' + eventStartDate(e).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + ' · ' + esc(fmtTime(e.start)) + '</div>'
+        +   '<div class="up-when">' + eventStartDate(e).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric' }) + ' · ' + esc(fmtTime(e.start)) + '</div>'
         +   '<div class="up-title">' + esc(e.title) + '</div>'
         + '</div>'
         + '</div>';
@@ -338,7 +338,7 @@
       + '<button class="cal-btn-icon" data-action="popover-close" aria-label="Close">✕</button>'
       + '</div>'
       + '<div class="popover-body">'
-      +   '<div class="popover-when">' + eventStartDate(e).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }) + (e.all_day ? '' : ' · ' + esc(fmtTime(e.start))) + '</div>'
+      +   '<div class="popover-when">' + eventStartDate(e).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'long', month: 'short', day: 'numeric' }) + (e.all_day ? '' : ' · ' + esc(fmtTime(e.start))) + '</div>'
       +   (e.contact_name ? '<div class="popover-row"><strong>Lead:</strong> ' + esc(e.contact_name) + '</div>' : '')
       +   (e.contact_phone ? '<div class="popover-row"><a href="tel:' + esc(String(e.contact_phone).replace(/[^0-9+]/g, '')) + '">📞 ' + esc(e.contact_phone) + '</a></div>' : '')
       +   (e.contact_email ? '<div class="popover-row"><a href="mailto:' + esc(e.contact_email) + '">✉ ' + esc(e.contact_email) + '</a></div>' : '')

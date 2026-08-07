@@ -84,7 +84,7 @@
     if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
     if (diff < 86400 * 7) return Math.floor(diff / 86400) + 'd ago';
     var d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' });
   }
 
   async function rest(path, opts) {
@@ -375,8 +375,8 @@
     if (!iso) return '';
     var d = new Date(iso);
     if (!isFinite(d.getTime())) return '';
-    return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) +
-           ', ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric' }) +
+           ', ' + d.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' });
   }
 
   function closeActivityPopover() {

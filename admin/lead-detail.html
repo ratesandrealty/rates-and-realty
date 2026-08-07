@@ -28,7 +28,7 @@
     .pac-icon{display:none!important;}
     .pac-logo::after{display:none!important;}
   </style>
-  <script src="/admin/js/auth-guard.js?v=730e4a6e69"></script>
+  <script src="/admin/js/auth-guard.js?v=041b379d96"></script>
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
   <!-- Loaded after auth-guard so window._supabaseClient exists when fnFetch reads it. -->
   <script src="/admin/js/fn-call.js?v=62e47af307"></script>
@@ -1764,7 +1764,7 @@
           integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
           crossorigin="anonymous" defer></script>
     <script src="/admin/js/attachment-viewer.js?v=e8f2b14c9f"></script>
-  <script src="/admin/js/inbox.js?v=7a08960b63" defer></script>
+  <script src="/admin/js/inbox.js?v=017e67ea47" defer></script>
 </head>
 <body class="admin-page">
 
@@ -6848,7 +6848,7 @@ async function loadPortalActivity() {
     feed.innerHTML = entries.map(function(e) {
       var session = e[1];
       var totalTime = session.views.reduce(function(s,v){return s+(v.duration_seconds||0);},0);
-      var dateStr = new Date(session.firstAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
+      var dateStr = new Date(session.firstAt).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit' });
       var device = session.views[0]?.device_type === 'mobile' ? '\uD83D\uDCF1' : '\uD83D\uDCBB';
       return '<div style="background:#111113;border-radius:12px;padding:14px;margin-bottom:10px;border:1px solid rgba(255,255,255,0.06);">'
         +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">'
@@ -7974,8 +7974,8 @@ function renderDocsGrid() {
     const icon = _ldFileIconEmoji(f.mimeType, f.name);
     const size = _ldFormatSize(f.size);
     const date = f.modifiedTime
-      ? new Date(f.modifiedTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-      : (f.createdTime ? new Date(f.createdTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '');
+      ? new Date(f.modifiedTime).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric' })
+      : (f.createdTime ? new Date(f.createdTime).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric' }) : '');
     const docType = (f.appProperties && f.appProperties.docType) || '';
     const typeLabel = docType || 'Untagged';
     const safeName = (f.name || 'Untitled').replace(/"/g, '&quot;');
@@ -10036,7 +10036,7 @@ async function lpLoadAppLoanDetails(){
     }
   }catch(e){ /* non-fatal */ }
 }
-function lpFmtDate(v){ if(!v) return ''; const s=String(v).slice(0,10).split('-'); if(s.length!==3) return ''; const d=new Date(+s[0],+s[1]-1,+s[2]); return isNaN(d)?'':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
+function lpFmtDate(v){ if(!v) return ''; const s=String(v).slice(0,10).split('-'); if(s.length!==3) return ''; const d=new Date(+s[0],+s[1]-1,+s[2]); return isNaN(d)?'':d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',year:'numeric' }); }
 /* ═══ PROCESSING QUICK ACTIONS (wired — DB templates) ═══ */
 function _lpEscHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function _lpBorrowerName(){ var c=(typeof contactData!=='undefined'&&contactData)?contactData:{}; return ((c.first_name||'')+' '+(c.last_name||'')).trim()||'the borrower'; }
@@ -10287,7 +10287,7 @@ async function lpRenderSnapshot(cid){
   const money = v => (v||v===0)?'$'+Number(v).toLocaleString():'—';
   const tcase = v => (!v || v==='—') ? (v||'—') : String(v).replace(/_+/g,' ').split(/\s+/).map(w=>({fha:'FHA',va:'VA',usda:'USDA',heloc:'HELOC',arm:'ARM'}[w.toLowerCase()] || (w.charAt(0).toUpperCase()+w.slice(1).toLowerCase()))).join(' ');
   const pct = v => (v||v===0)?Number(v).toFixed(3)+'%':'—';
-  const dd = v => v?new Date(String(v).length<=10?v+'T00:00:00':v).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
+  const dd = v => v?new Date(String(v).length<=10?v+'T00:00:00':v).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',year:'numeric' }):'—';
   let lockChip='';
   if(app.rate_lock_expiry){ const days=Math.ceil((new Date(app.rate_lock_expiry+'T00:00:00')-new Date())/86400000); const col=days<0?'#E5484D':(days<=7?'#C9A84C':'#27AE60'); lockChip=' <span style="color:'+col+';font-weight:600;">('+(days<0?Math.abs(days)+'d ago':days+'d left')+')</span>'; }
   const name = ((c.first_name||'')+' '+(c.last_name||'')).trim()||c.full_name||'—';
@@ -11076,7 +11076,7 @@ async function lpLoadTasks(cid){
     const rows = data || [];
     const open = rows.filter(t=>!_lpTaskIsDone(t.status)).slice(0,10);   // newest first, cap ~10
     const done = rows.filter(t=>_lpTaskIsDone(t.status));
-    const dd = v => v?new Date(v).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
+    const dd = v => v?new Date(v).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric' }):'';
     const rowHtml = t => '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.05);"><span style="font-size:12px;color:#ddd;">'+(t.clickup_url?'<a href="'+lpEsc(t.clickup_url)+'" target="_blank" style="color:#ddd;text-decoration:none;">':'')+lpEsc(t.title||'')+(t.clickup_url?'</a>':'')+'</span><span style="font-size:11px;color:#888;">'+lpEsc(t.status||'')+(t.due_date?' · '+dd(t.due_date):'')+'</span></div>';
     let html = open.length ? open.map(rowHtml).join('') : '<div style="color:#888;font-size:12px;padding:8px;">No open tasks.</div>';
     if(done.length){
@@ -11122,7 +11122,7 @@ let _lpVoes = [];             // VOE card list (multiple per loan)
 let _lpVoeNotReq = null;      // the voe loan_orders row marking VOE not-required (section "Don't Need")
 let _lpBorrowers = [];        // loan_borrowers_for_contact
 function _lpCat(type){ const r = LP_ORDER_ROWS.find(x=>x.type===type); return r ? r.category : type; }
-function _lpDD(v){ return v ? new Date(v).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : ''; }
+function _lpDD(v){ return v ? new Date(v).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric' }) : ''; }
 function _lpVendLabel(v){ return (v.name||'') + (v.company ? (' — ' + v.company) : ''); }
 
 // Color-coded status strip above the orders section (grey/red/yellow/green per type).
@@ -13176,7 +13176,7 @@ function _loeBusy(id, busy, label){
   if(busy){ if(b.dataset.orig==null) b.dataset.orig=b.innerHTML; b.innerHTML=label||'…'; b.disabled=true; b.style.opacity='0.65'; b.style.cursor='not-allowed'; }
   else{ if(b.dataset.orig!=null){ b.innerHTML=b.dataset.orig; delete b.dataset.orig; } b.disabled=false; b.style.opacity='1'; b.style.cursor='pointer'; }
 }
-function _loeFmtDate(d){ if(!d) return ''; try{ var dt=new Date(d); if(isNaN(dt.getTime())) return ''; return dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }catch(e){ return ''; } }
+function _loeFmtDate(d){ if(!d) return ''; try{ var dt=new Date(d); if(isNaN(dt.getTime())) return ''; return dt.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',year:'numeric' }); }catch(e){ return ''; } }
 function _loeBadge(status){ var s=LOE_STATUS_BADGE[status]||LOE_STATUS_BADGE.drafted; return '<span style="flex-shrink:0;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:'+s.c+';background:'+s.bg+';border:1px solid '+s.c+'55;border-radius:9px;padding:1px 7px;">'+s.t+'</span>'; }
 
 // ── Card list (renders into #lpLoeBody; lpLoadLoe is the init entry point) ──
@@ -13627,7 +13627,7 @@ async function lpLoadEsign(cid){
   try{
     const { data } = await _authClient().from('signature_requests').select('id,document_title,document_type,status,signed_at,expires_at,created_at').eq('contact_id',cid).order('created_at',{ascending:false});
     if(!data || !data.length){ body.innerHTML='<div style="color:#888;font-size:12px;padding:8px;">No signature requests.</div>'; return; }
-    const dd = v => v?new Date(v).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
+    const dd = v => v?new Date(v).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric' }):'';
     const badge = (st)=>{
       const m = { signed:{t:'Signed',c:'#3FB950'}, completed:{t:'Signed',c:'#3FB950'}, pending:{t:'Pending',c:'#E5984D'}, sent:{t:'Sent',c:'#5B8DEF'}, expired:{t:'Expired',c:'#E5484D'}, declined:{t:'Declined',c:'#E5484D'}, voided:{t:'Voided',c:'#888888'} };
       const s = m[(st||'').toLowerCase()] || { t:(st||'—'), c:'#888' };
@@ -13793,7 +13793,7 @@ async function openEsignPreviewModal(envelopeId, docTitle, docType){
     var statusEl=document.getElementById('esignPvStatus');
     if(statusEl){
       var st2=(env.status||'').toString();
-      var when=env.completed_at?(' · '+new Date(env.completed_at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})):'';
+      var when=env.completed_at?(' · '+new Date(env.completed_at).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit' })):'';
       statusEl.textContent = st2 ? (st2.charAt(0).toUpperCase()+st2.slice(1)+when) : '—';
     }
 
@@ -15696,7 +15696,7 @@ async function openEsignPdfStatusModal(envelopeId, docTitle){
     var st2=(env.status||'').toString();
     var statusEl=document.getElementById('esignPvStatus');
     if(statusEl){
-      var when=env.completed_at?(' · '+new Date(env.completed_at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})):'';
+      var when=env.completed_at?(' · '+new Date(env.completed_at).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit' })):'';
       statusEl.textContent = st2 ? (st2.charAt(0).toUpperCase()+st2.slice(1)+when) : '—';
     }
     var low=st2.toLowerCase();
@@ -15822,7 +15822,7 @@ function _vaDueDisplay(iso){
   if(!iso) return null;
   const today=new Date(); today.setHours(0,0,0,0);
   const d=new Date(iso); const d0=new Date(d); d0.setHours(0,0,0,0);
-  let txt=d.toLocaleDateString('en-US',{month:'short',day:'numeric'}), color='#888';
+  let txt=d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric' }), color='#888';
   if(d0<today){ color='#E5484D'; txt='Overdue · '+txt; }
   else if(d0.getTime()===today.getTime()){ color='#E5984D'; txt='Today'; }
   return { txt:txt, color:color };
@@ -15889,7 +15889,7 @@ function _vaCompletedHtml(cid){
   const rows = cid ? _vaCompleted.filter(function(t){ return String(t.contact_id)===String(cid); }) : _vaCompleted;
   if(!rows.length) return '<div style="color:#888;font-size:12px;padding:8px;">No completed tasks for this lead yet.</div>';
   return rows.map(function(t){
-    const when=t.completed_at?new Date(t.completed_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+    const when=t.completed_at?new Date(t.completed_at).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',hour:'numeric',minute:'2-digit' }):'';
     const who=t.contact_name?'<span style="color:#888;"> · '+lpEsc(t.contact_name)+'</span>':'';
     return '<div style="padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.05);font-size:12px;color:#ddd;">'
       +'<span style="color:#3FB950;margin-right:5px;">✓</span>'+lpEsc(t.title||'(untitled)')
@@ -16843,7 +16843,7 @@ function openFeeSheetPDF() {
   } catch(e) {}
 
   var borrowerName = (getFeeSheetData().borrower_name || 'Borrower').replace(/[<>"']/g, '');
-  var dateStr = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  var dateStr = new Date().toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'long', day: 'numeric', year: 'numeric' });
   var sheetHTML = sheetEl.outerHTML;
 
   var popup = window.open('', '_blank', 'width=1100,height=900,menubar=no,toolbar=no,scrollbars=yes');
@@ -17250,7 +17250,7 @@ function _cmaLogGenerated(){
   if(typeof loadCmaHistory==='function') loadCmaHistory();
 }
 
-var _cmaHistDate=function(s){ if(!s)return''; var d=new Date(s); return isNaN(d.getTime())?'':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'}); };
+var _cmaHistDate=function(s){ if(!s)return''; var d=new Date(s); return isNaN(d.getTime())?'':d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',year:'2-digit' }); };
 
 /* ── Drive save: resolve-or-create a "CMA" subfolder under the lead's gdrive_folder_id and
    upload the PDF into it (server-authed via gdrive-proxy, Supabase session token only — no
@@ -17766,7 +17766,7 @@ async function exportDealAnalyzerPDF() {
         + '</style></head><body>'
         + '<div class="toolbar">'
         +   '<div><div class="title">📊 Deal Analysis — ' + borrowerName + '</div>'
-        +   '<div class="sub">' + new Date().toLocaleDateString() + ' · ' + (strategy === 'brrrr' ? 'BRRRR' : 'Fix &amp; Flip') + '</div></div>'
+        +   '<div class="sub">' + new Date().toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' }) + ' · ' + (strategy === 'brrrr' ? 'BRRRR' : 'Fix &amp; Flip') + '</div></div>'
         +   '<div class="btns">'
         +     '<button class="btn btn-print" onclick="document.getElementById(\'pf\').contentWindow.print()">🖨️ Print</button>'
         +     '<button class="btn btn-dl" onclick="dl()">⬇️ Download PDF</button>'
@@ -17997,7 +17997,7 @@ function renderConditions(conditions, loanDoc) {
           + '<option value="cleared"' + (c.status==='cleared'?' selected':'') + '>Cleared</option>'
           + '<option value="waived"' + (c.status==='waived'?' selected':'') + '>Waived</option>'
           + '</select>'
-          + (c.cleared_at ? '<span style="font-size:10px;color:#555;">Cleared ' + new Date(c.cleared_at).toLocaleDateString() + '</span>' : '')
+          + (c.cleared_at ? '<span style="font-size:10px;color:#555;">Cleared ' + new Date(c.cleared_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' }) + '</span>' : '')
           + '</div>'
           + '</div>'
           + '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'
@@ -18494,7 +18494,7 @@ async function loadCondNotes(conditionId) {
       return '<div style="padding:4px 0;border-bottom:1px solid var(--border);">'
         + '<div style="font-size:.78rem;color:var(--text);">' + (n.note_text||'') + '</div>'
         + '<div style="font-size:.65rem;color:var(--muted);">' + (n.created_by||'') + ' &middot; '
-        + new Date(n.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}) + '</div></div>';
+        + new Date(n.created_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit' }) + '</div></div>';
     }).join('');
   } catch(e) { el.innerHTML = '<div style="color:var(--muted);font-size:.75rem;">Error loading notes</div>'; }
 }
@@ -18731,13 +18731,15 @@ async function loadContactShowings() {
   var SK_S = window.APP_CONFIG?.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw';
 
   function escHtml(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-  // Pacific Time formatters — matches the public itinerary's timezone so the
-  // admin and the lead see identical clocks, and DST is handled by Intl.
-  function fmtDateTime(iso){
-    if(!iso)return'';
-    try{return new Date(iso).toLocaleString('en-US',{timeZone:'America/Los_Angeles',weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true});}
-    catch(e){return'';}
-  }
+  /* fmtDateTime deliberately NOT redefined here. There used to be a second
+     definition of that exact name in this block, shadowing the global one for
+     this scope only — and it is how a 22:12 UTC row rendered "10:12 PM": the
+     communications timeline is in a different script block, so it resolved to
+     the GLOBAL fmtDateTime, which had no timeZone at all. Two functions, one
+     name, one of them right, and which one you got depended on where you
+     called from.
+     The global one (now backed by window.RRTime, Pacific and PT-labelled) is
+     the only fmtDateTime. fmtTime below is unique and stays. */
   function fmtTime(iso){
     if(!iso)return'';
     try{
@@ -19021,7 +19023,7 @@ async function loadContactAlerts() {
         return '<div data-alert-id="'+a.id+'" style="margin-bottom:8px"><div style="background:#111;border:1px solid #1e1e1e;border-radius:10px;padding:14px 16px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px">'
           +'<div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:7px;margin-bottom:5px;flex-wrap:wrap"><span style="font-size:.88rem;font-weight:700;color:#eee">'+name+'</span><span style="background:'+statusBg+';color:'+statusColor+';border-radius:10px;padding:2px 8px;font-size:.67rem;font-weight:700;text-transform:uppercase">'+(a.is_active?'Active':'Paused')+'</span><span style="font-size:.7rem;color:#444">'+(a.frequency||'Daily')+'</span></div>'
           +'<div style="font-size:.75rem;color:#666;line-height:1.6">'+(filters.join(' &bull; ')||'All listings')+'</div>'
-          +(a.last_sent_at?'<div style="font-size:.68rem;color:#444;margin-top:4px">Last sent: '+new Date(a.last_sent_at).toLocaleDateString()+'</div>':'')
+          +(a.last_sent_at?'<div style="font-size:.68rem;color:#444;margin-top:4px">Last sent: '+new Date(a.last_sent_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' })+'</div>':'')
           +'</div><div style="display:flex;gap:5px;flex-shrink:0">'
           +'<button onclick="openAlertEdit(\''+a.id+'\')" style="background:rgba(201,168,76,0.08);border:1px solid #C9A84C55;color:#C9A84C;border-radius:6px;padding:4px 9px;font-size:.7rem;cursor:pointer;font-family:inherit">Edit</button>'
           +'<button onclick="toggleContactAlert(\''+a.id+'\','+(!a.is_active)+')" style="background:#1a1a1a;border:1px solid #2a2a2a;color:#888;border-radius:6px;padding:4px 9px;font-size:.7rem;cursor:pointer">'+(a.is_active?'Pause':'Resume')+'</button>'
@@ -19625,7 +19627,7 @@ async function slbGenerate() {
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon,'Prefer':'return=representation'},
       body: JSON.stringify({
         contact_id: cid,
-        name: f.name || ('Search ' + new Date().toLocaleDateString()),
+        name: f.name || ('Search ' + new Date().toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' })),
         filters: f,
         search_url: longUrl,
         short_url: _slbShortUrl,
@@ -19683,7 +19685,7 @@ async function loadSavedSearches() {
       if (f.cities) summary.push(f.cities.split(',').slice(0,2).join(', ') + (f.cities.split(',').length>2?' +'+(f.cities.split(',').length-2):''));
       if (f.minPrice || f.maxPrice) summary.push('$' + (f.minPrice||'0') + '-$' + (f.maxPrice||'Any'));
       if (f.minBeds) summary.push(f.minBeds + '+ bd');
-      var when = new Date(s.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+      var when = new Date(s.created_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric' });
       var urlToOpen = s.short_url || s.search_url;
       var urlToCopy = s.short_url || s.search_url;
       var shortDisplay = s.short_url ? s.short_url.replace(/^https?:\/\//,'') : '';
@@ -19768,7 +19770,7 @@ function renderSidebarSmsHistory(messages) {
   var esc = function(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
   container.innerHTML = '<div style="display:flex;flex-direction:column;gap:8px">' + messages.map(function(m) {
     var isOut = m.direction !== 'inbound';
-    var time = new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+    var time = new Date(m.created_at).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',hour:'numeric',minute:'2-digit' });
     var statusDot = m.status === 'sent' ? '\u2713' : m.status === 'delivered' ? '\u2713\u2713' : m.status === 'failed' ? '\u2717' : '\u2026';
     var statusColor = m.status === 'failed' ? '#ef4444' : m.status === 'delivered' ? '#22c55e' : m.status === 'sent' ? '#9ca3af' : '#666';
     var align = isOut ? 'flex-end' : 'flex-start';
@@ -20496,16 +20498,16 @@ function parseNum(s) {
 }
 function fmtDate(d) {
   if (!d) return '';
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return new Date(d).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric' });
 }
 function fmtDateShort(d) {
   if (!d) return '';
   const dt = new Date(d);
   const now = new Date();
   const diff = now - dt;
-  if (diff < 86400000) return dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-  if (diff < 604800000) return dt.toLocaleDateString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  if (diff < 86400000) return dt.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' });
+  if (diff < 604800000) return dt.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  return dt.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' });
 }
 /* Pacific, labelled. This global is what the communications timeline resolves
    to — lead-detail declares fmtDateTime TWICE, and the other one (scoped, and
@@ -20864,7 +20866,7 @@ function generateCommercialPreApproval(lenderName) {
   var m = document.createElement('div');
   m.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;';
   m.innerHTML = '<div style="background:#111;border:1px solid #2a2a2a;border-radius:16px;padding:32px;width:700px;max-height:80vh;overflow-y:auto;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;"><div style="font-size:15px;font-weight:700;color:#fff;">📄 Commercial Pre-Approval Letter</div><button onclick="this.closest(\'[style*=fixed]\').remove()" style="background:none;border:none;color:#555;font-size:22px;cursor:pointer;">×</button></div><div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;padding:20px;font-size:13px;color:#ccc;line-height:1.8;">' +
-    '<p style="margin-bottom:12px;">' + new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) + '</p>' +
+    '<p style="margin-bottom:12px;">' + new Date().toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', year: 'numeric', month: 'long', day: 'numeric' }) + '</p>' +
     '<p style="margin-bottom:12px;">To Whom It May Concern,</p>' +
     '<p style="margin-bottom:12px;">This letter is to confirm that <strong style="color:#fff;">' + contactName + '</strong> has been pre-approved for a commercial mortgage loan in the amount of <strong style="color:#C9A84C;">$' + loan + '</strong>' + (propType ? ' for a <strong style="color:#fff;">' + propType + '</strong> property' : '') + (address ? ' located at ' + address : '') + '.</p>' +
     '<p style="margin-bottom:12px;">Key metrics: LTV ' + (ltv || '—') + '% · DSCR ' + (dscr || '—') + '</p>' +
@@ -20889,7 +20891,7 @@ function generateLetterOfIntent() {
   var m = document.createElement('div');
   m.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;';
   m.innerHTML = '<div style="background:#111;border:1px solid #2a2a2a;border-radius:16px;padding:32px;width:700px;max-height:80vh;overflow-y:auto;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;"><div style="font-size:15px;font-weight:700;color:#fff;">✉ Letter of Intent</div><button onclick="this.closest(\'[style*=fixed]\').remove()" style="background:none;border:none;color:#555;font-size:22px;cursor:pointer;">×</button></div><div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;padding:20px;font-size:13px;color:#ccc;line-height:1.8;">' +
-    '<p style="margin-bottom:12px;">' + new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) + '</p>' +
+    '<p style="margin-bottom:12px;">' + new Date().toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', year: 'numeric', month: 'long', day: 'numeric' }) + '</p>' +
     '<p style="font-weight:700;color:#fff;margin-bottom:12px;">NON-BINDING LETTER OF INTENT</p>' +
     '<p style="margin-bottom:12px;">Borrower: <strong style="color:#fff;">' + contactName + '</strong></p>' +
     '<table style="width:100%;border-collapse:collapse;margin-bottom:16px;"><tr><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#888;font-size:11px;">Loan Amount</td><td style="padding:6px 10px;border:1px solid #2a2a2a;color:#fff;font-size:11px;">$' + loan + '</td></tr>' +
@@ -20995,7 +20997,7 @@ async function loadSavedDeals() {
     }
     container.innerHTML = deals.map(function(d) {
       var loanFmt = d.loan_amount ? '$' + Number(d.loan_amount).toLocaleString() : '—';
-      var date = new Date(d.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      var date = new Date(d.created_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric' });
       var statusColor = { 'active': '#27AE60', 'closed': '#C9A84C', 'dead': '#E74C3C' }[d.status] || '#666';
       return '<div style="background:#111;border:1px solid #1e1e1e;border-radius:10px;padding:16px;margin-bottom:10px;cursor:pointer;" onclick="loadDealIntoMatcher(\'' + d.id + '\')">' +
         '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">' +
@@ -23701,7 +23703,7 @@ function _docWhen(dateStr) {
   if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
   if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
   if (diff < 2592000) return Math.floor(diff / 86400) + 'd ago';
-  return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return new Date(dateStr).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 // Render the document rows (or the empty state) into #documentsList. Each row:
@@ -24721,7 +24723,7 @@ async function lsGenerate1003() {
     var htmlContent = new TextDecoder('utf-8').decode(bytes);
 
     var borrowerName = (data.borrower_name || '').replace(/[<>"']/g, '') || 'Borrower';
-    var today = new Date().toLocaleDateString('en-US');
+    var today = new Date().toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' });
 
     // Write the 1003 HTML directly into the popup body — no iframe, no blob.
     // The htmlContent is passed via a separate document.write() call so its
@@ -25071,7 +25073,7 @@ async function lsGeneratePreApproval() {
 </head>
 <body>
   <div class="toolbar">
-    <div><div class="title">\uD83D\uDCC4 Pre-Approval Letter \u2014 ${contactName}</div><div class="sub">${new Date().toLocaleDateString()}</div></div>
+    <div><div class="title">\uD83D\uDCC4 Pre-Approval Letter \u2014 ${contactName}</div><div class="sub">${new Date().toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' })}</div></div>
     <div class="btns">
       <button class="btn btn-print" onclick="document.getElementById('pf').contentWindow.print()">\uD83D\uDDA8\uFE0F Print</button>
       <button class="btn btn-dl" onclick="dl()">\u2B07\uFE0F Download PDF</button>
@@ -26551,7 +26553,7 @@ async function openForm1003Modal() {
 
   var contactId = new URLSearchParams(window.location.search).get('contact_id');
   var name = contactData ? ((contactData.first_name || '') + ' ' + (contactData.last_name || '')).trim() : 'Borrower';
-  if (subtitle) subtitle.textContent = name + ' \u00b7 ' + new Date().toLocaleDateString('en-US');
+  if (subtitle) subtitle.textContent = name + ' \u00b7 ' + new Date().toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' });
 
   try {
     var res = await fnFetch('generate-1003-pdf',
@@ -26873,7 +26875,7 @@ function renderScoreCardFromApi(r) {
         // Floored: no movement in total, but the lead is sitting at 0 with engagement.
         const floored = d === 0 && Number(h.total_score || 0) === 0 && !!eng;
         const when = (typeof relativeTime === 'function') ? relativeTime(h.scored_at)
-          : new Date(h.scored_at).toLocaleDateString();
+          : new Date(h.scored_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' });
         const why = h.reason || h.trigger || 'recalculated';
         const cls = d > 0 ? 'up' : d < 0 ? 'down' : '';
         const dTxt = d > 0 ? '+' + d : String(d);
@@ -26989,7 +26991,7 @@ async function loadPortalInfo(contactEmail, contactCrmId) {
     document.getElementById('crmBorrowerId').textContent = user.borrower_id || contactCrmId || '—';
     document.getElementById('crmPortalStatus').innerHTML = '<span style="color:#3cb43c">✓ Portal Active</span>';
     document.getElementById('crmLastLogin').textContent = user.last_login
-      ? new Date(user.last_login).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'})
+      ? new Date(user.last_login).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit' })
       : 'Never';
     const pw = user.temp_password || '(custom password)';
     document.getElementById('crmPassword').dataset.plain = pw;
@@ -30897,7 +30899,7 @@ async function ldLoadAITab(lenderId, lenderName) {
       var catColor = catColors[g.category] || '#6b7280';
       var titleEsc = (g.title||'Untitled').replace(/</g,'&lt;').replace(/"/g,'&quot;');
       var catEsc = (g.category||'General').replace(/</g,'&lt;');
-      var dateStr = g.effective_date ? new Date(g.effective_date).toLocaleDateString() : '';
+      var dateStr = g.effective_date ? new Date(g.effective_date).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' }) : '';
       var summary = g.ai_summary ? '<div style="font-size:10px;color:#888;margin-top:6px;line-height:1.4">'+g.ai_summary.slice(0,100).replace(/</g,'&lt;')+(g.ai_summary.length>100?'...':'')+'</div>' : '';
       return '<div onclick="ldOpenGuidelineItem(window._ldGuidelinesCache['+i+'])" style="background:#111;border:1px solid #1e1e1e;border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:pointer;transition:border-color .15s" onmouseover="this.style.borderColor=\'#C9A84C55\'" onmouseout="this.style.borderColor=\'#1e1e1e\'">'+
         '<div style="display:flex;align-items:flex-start;gap:8px">'+
@@ -31070,7 +31072,7 @@ function formatShortDate(s) {
   if (!s) return '';
   const d = new Date(s);
   if (isNaN(d.getTime())) return '';
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+  return d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: '2-digit' });
 }
 
 function _relEscHtml(s) {
@@ -31270,7 +31272,7 @@ function formatNoteTime(s) {
   if (!s) return '';
   const d = new Date(s);
   if (isNaN(d.getTime())) return '';
-  return formatShortDate(s) + ' · ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return formatShortDate(s) + ' · ' + d.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' });
 }
 
 async function loadLenderNotes(lenderId) {
@@ -31569,7 +31571,7 @@ function lhRenderLenderDetail(lender) {
       <div class="detail-avatar" style="background:${color}22;border:1px solid ${color}44;color:${color};">${initials}</div>
       <div>
         <div class="detail-name">${_relEscHtml(lender.name||'')}</div>
-        <div class="detail-meta">${_relEscHtml(lender.list_name || lender.channel || '')}${lender.last_synced_at ? ' · Last synced: ' + new Date(lender.last_synced_at).toLocaleDateString() : ''}</div>
+        <div class="detail-meta">${_relEscHtml(lender.list_name || lender.channel || '')}${lender.last_synced_at ? ' · Last synced: ' + new Date(lender.last_synced_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' }) : ''}</div>
       </div>
     </div>
 
@@ -33778,7 +33780,7 @@ async function confirmSchedule() {
     var data = await res.json();
     if (!res.ok) { alert('Schedule failed: ' + (data.error || JSON.stringify(data))); return; }
     document.getElementById('schedulePicker').style.display = 'none';
-    var friendlyTime = new Date(scheduledAt).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+    var friendlyTime = new Date(scheduledAt).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
     showToast('Scheduled for ' + friendlyTime + ' — will send automatically');
     closeEmailComposer();
   } catch(e) {
@@ -34140,7 +34142,7 @@ async function loadEmailHistory(contactId) {
       var isSent = dir === 'outbound' || dir === 'sent';
       var badge = isSent ? '<span class="ec-hist-dir ec-hist-sent">SENT</span>' : '<span class="ec-hist-dir ec-hist-recv">RECV</span>';
       var preview = (r.body_text || '').substring(0, 60);
-      var date = r.created_at ? new Date(r.created_at).toLocaleDateString('en-US', {month:'short',day:'numeric'}) : '';
+      var date = r.created_at ? new Date(r.created_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric' }) : '';
       var from = r.from_email || '';
       return '<div class="ec-hist-item" onclick="previewPriorEmail(\'' + r.id + '\')">' + badge +
         '<div class="ec-hist-subject">' + (r.subject || '(no subject)') + '</div>' +
@@ -34169,7 +34171,7 @@ function previewPriorEmail(emailId) {
 
   // Meta
   var date = email.sent_at || email.created_at;
-  var dateStr = date ? new Date(date).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}) : '';
+  var dateStr = date ? new Date(date).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit' }) : '';
   var dir = (email.direction === 'inbound' || email.direction === 'received') ? 'Received' : 'Sent';
   document.getElementById('prevMeta').textContent = dir + ' \u00b7 ' + dateStr;
 
@@ -34599,7 +34601,7 @@ var SMS_STORAGE = 'https://ljywhvbmsibwnssxpesh.supabase.co/storage/v1/object';
    and a scheduler (sms_schedule) whose pending messages render distinctly and can be cancelled
    (sms_cancel_scheduled). Self-contained; the legacy sms-modal/openSmsComposer are left intact. ═══ */
 var _tcState = { cid:null, name:'', digits:'', toPhone:null };
-function _tcFmt(iso){ if(!iso) return ''; try{ return new Date(iso).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }catch(_){ return String(iso); } }
+function _tcFmt(iso){ if(!iso) return ''; try{ return new Date(iso).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',hour:'numeric',minute:'2-digit' }); }catch(_){ return String(iso); } }
 function _tcLocalInput(d){ var p=function(n){return String(n).padStart(2,'0');}; return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
 // Contacts store RAW 10-digit phones (no +1/formatting). Normalize: strip non-digits;
 // 11 digits starting with 1 → drop the leading 1; then E.164 as +1XXXXXXXXXX. Returns
@@ -34916,7 +34918,7 @@ function _tcCalRender(){
   var first=new Date(y,m,1), startDow=first.getDay(), daysIn=new Date(y,m+1,0).getDate();
   var today=new Date(); today.setHours(0,0,0,0);
   var sel=_tcParseDate((document.getElementById('tcSchedDate')||{}).value||'');
-  var title=first.toLocaleString('en-US',{month:'long',year:'numeric'});
+  var title=first.toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month:'long',year:'numeric' });
   // Inline styles for layout so the grid never depends on an injected stylesheet.
   var GRID='display:grid;grid-template-columns:repeat(7,1fr);gap:2px;';
   var CELL='text-align:center;font-size:11px;padding:6px 0;border-radius:6px;box-sizing:border-box;';
@@ -35690,9 +35692,9 @@ function smsFormatTimestamp(iso) {
   var d = new Date(iso);
   var now = new Date();
   var sameDay = d.toDateString() === now.toDateString();
-  var time = d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+  var time = d.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour:'numeric', minute:'2-digit' });
   if (sameDay) return 'Today \u00b7 ' + time;
-  return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }) + ' \u00b7 ' + time;
+  return d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short', day:'numeric' }) + ' \u00b7 ' + time;
 }
 
 function smsEscape(s) {
@@ -37088,9 +37090,9 @@ async function recordNewVoicemail() {
     if (s < 3600) return Math.floor(s/60) + 'm ago';
     if (s < 86400) return Math.floor(s/3600) + 'h ago';
     if (s < 604800) return Math.floor(s/86400) + 'd ago';
-    return new Date(date).toLocaleDateString();
+    return new Date(date).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' });
   }
-  function fmtTime(date) { return new Date(date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); }
+  function fmtTime(date) { return new Date(date).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }); }
   function dayLabel(date) {
     var d = new Date(date);
     var today = new Date(); today.setHours(0,0,0,0);
@@ -37098,7 +37100,7 @@ async function recordNewVoicemail() {
     var ds = new Date(d); ds.setHours(0,0,0,0);
     if (ds.getTime() === today.getTime()) return 'Today';
     if (ds.getTime() === yest.getTime()) return 'Yesterday';
-    return d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+    return d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'long', month: 'short', day: 'numeric' });
   }
   function escHtml(s) { return (s || '').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
   function fmtDuration(secs) {
@@ -38029,6 +38031,6 @@ async function recordNewVoicemail() {
 })();
 </script>
 
-  <script src="/admin/js/loom-recorder.js?v=13f432dc07"></script>
+  <script src="/admin/js/loom-recorder.js?v=027bbb283e"></script>
 </body>
 </html>

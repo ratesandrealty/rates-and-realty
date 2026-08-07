@@ -236,7 +236,7 @@
     function mountStaffChat() {
       if (document.querySelector('script[src*="/admin/js/staff-chat.js"]')) return;
       const sc = document.createElement('script');
-      sc.src = '/admin/js/staff-chat.js?v=443262548b';
+      sc.src = '/admin/js/staff-chat.js?v=c1c8cfd043';
       document.head.appendChild(sc);
     }
     // Universal help-video ⓘ buttons (window.HelpTopic). Same app-wide, idempotent
@@ -244,7 +244,7 @@
     function mountHelpButton() {
       if (document.querySelector('script[src*="/admin/js/help-button.js"]')) return;
       const hb = document.createElement('script');
-      hb.src = '/admin/js/help-button.js?v=82c0f23e4e';
+      hb.src = '/admin/js/help-button.js?v=22c7ad6524';
       document.head.appendChild(hb);
     }
     // Universal task capture (📌 + Ctrl+Shift+K). Same reasoning as the two

@@ -73,7 +73,7 @@
     if (!due) return 'No due date';
     var d = new Date(due);
     if (isNaN(d.getTime())) return 'No due date';
-    var opts = { month: 'short', day: 'numeric' };
+    var opts = { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' };
     if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
     return d.toLocaleDateString('en-US', opts);
   }
@@ -221,7 +221,7 @@
     var due = t.due_date ? new Date(t.due_date) : null;
     var open = !isDoneStatus(t.status);
     var overdue = open && due && due.getTime() < Date.now();
-    var dueStr = due ? due.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+    var dueStr = due ? due.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' }) : '';
     return '<div class="board-card" draggable="true" data-task-id="' + esc(t.clickup_task_id) + '" data-current-col="' + colKey(t) + '">'
       + '<input type="checkbox" class="ct-select-box board-card-select" data-action="ct-select-row" data-task-id="' + esc(t.clickup_task_id) + '" aria-label="Select task" />'
       + '<div class="board-card-title">' + esc(t.title) + '</div>'
@@ -332,7 +332,7 @@
     var cal = document.querySelector('[data-target=ct-calendar]');
     if (!cal) return;
     var ref = new Date(calendarRefDate.getFullYear(), calendarRefDate.getMonth(), 1);
-    var monthName = ref.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    var monthName = ref.toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'long', year: 'numeric' });
     var startWeekday = ref.getDay();
     var daysInMonth = new Date(ref.getFullYear(), ref.getMonth() + 1, 0).getDate();
     var today = new Date(); today.setHours(0,0,0,0);

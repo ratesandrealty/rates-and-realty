@@ -527,7 +527,7 @@
   function defaultTitle(mode) {
     var d = new Date();
     var base = mode === 'loom' ? 'Screen + camera' : mode === 'screen' ? 'Screen recording' : mode === 'audio' ? 'Voice note' : 'Video message';
-    return base + ' · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return base + ' · ' + d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' });
   }
 
   async function save() {
