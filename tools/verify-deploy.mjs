@@ -174,9 +174,73 @@ if (failures && !process.argv.includes('--no-retry')) {
   }
 }
 
+/* ── PASS 2: DID THE PAGE ITSELF SHIP? ───────────────────────────────────────
+ *
+ * Pass 1 only looks at pages carrying a `?v=` pin, because that is all it can
+ * check. Every page under public/ has no pins, so ALL of them — search-homes,
+ * unified-portal, portal, contact, property-detail and 25 more — were filtered
+ * out and deployed with nothing verified at all. The borrower-facing half of the
+ * site was invisible to the deploy gate.
+ *
+ * This pass compares the SERVED BYTES to the local file. The worker returns HTML
+ * byte-identically, so an exact hash match is the right test, and it catches two
+ * things pass 1 cannot: a page that never deployed, and a route that serves a
+ * DIFFERENT file than the one someone would edit.
+ *
+ * THE SOFT-404 IS THE REASON THIS MATTERS. Unknown paths answer 200 with
+ * index.html, so /search-homes looks like a working page and is the marketing
+ * homepage — that already produced one false conclusion during this session, and
+ * it is the same soft-404 that once filled the R2 backup with copies of the
+ * homepage. A short URL is reported explicitly rather than as a generic
+ * mismatch, because "it returns 200" is exactly what makes it convincing.
+ *
+ * supabase/functions/** is excluded: those .html files are PDF templates
+ * compiled into an edge function, not pages, and are correctly not web-served. */
+const IS_PAGE = (rel) => !rel.startsWith('supabase/functions/');
+const allPages = walk(ROOT)
+  .map((p) => relative(ROOT, p).split(sep).join('/'))
+  .filter(IS_PAGE);
+
+let indexHash = null;
+try { indexHash = localHash('/index.html'); } catch { /* no homepage, fine */ }
+
+let pageFailures = 0;
+console.log(`\nchecking ${allPages.length} page(s) actually shipped…`);
+for (const rel of allPages) {
+  const want = localHash('/' + rel);
+  if (!want) continue;
+  let matched = null, seen = [];
+  for (const cand of urlCandidates(rel)) {
+    const got = await fetchHash(BASE + cand);
+    seen.push({ cand, ...got });
+    if (got.ok && got.hash === want) { matched = cand; break; }
+  }
+  if (matched) continue;
+  pageFailures++;
+  /* Diagnose from the CANONICAL url — the explicit path, which is the last
+     candidate — because that is the one that should have matched. A soft-404 on
+     the short URL is reported as context, not as the cause: the first version of
+     this said "/public/terms-of-service answers with the homepage" when the
+     actual fault was the local file diverging, which would have sent the next
+     reader chasing routing instead of content. */
+  const canonical = seen[seen.length - 1] || {};
+  const soft = seen.find((s) => s.ok && indexHash && s.hash === indexHash && s.cand !== canonical.cand);
+  const why = canonical.ok
+    ? `served different bytes (${canonical.hash} vs local ${want}) — did this page deploy?`
+    : `HTTP ${canonical.status} (not served)`;
+  console.log(`  FAIL  ${rel}  — ${canonical.cand || '?'} ${why}`);
+  if (soft) console.log(`        note: ${soft.cand} answers 200 with the HOMEPAGE (soft 404) — not a real route.`);
+}
+if (!pageFailures) console.log(`  all ${allPages.length} page(s) serve their own bytes.`);
+
 if (failures) {
   console.log('\nFAIL: the deployed HTML does not match the shipped assets.');
   console.log('Run `node tools/stamp-assets.mjs`, commit, and redeploy.');
   process.exit(1);
 }
-console.log('\nOK: every live page requests exactly the assets that were shipped.');
+if (pageFailures) {
+  console.log(`\nFAIL: ${pageFailures} page(s) are not serving what this repo holds.`);
+  process.exit(1);
+}
+console.log('\nOK: every live page requests exactly the assets that were shipped,');
+console.log('    and every page serves the bytes this repo holds.');
