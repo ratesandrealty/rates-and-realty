@@ -64,6 +64,66 @@ async function greetingConfig(): Promise<{ url: string; text: string }> {
   }
 }
 
+/* ── RECORDING DISCLOSURE ─────────────────────────────────────────────────────
+ *
+ * Every <Dial> in this file carries record="record-from-answer" and until now
+ * played no announcement. California is an all-party consent state and the VA
+ * is in the Philippines, so this was recording people who had not been told.
+ * E Mortgage Capital has approved recording WITH an announcement; the wording
+ * below is theirs.
+ *
+ * WHERE THE ANNOUNCEMENT HAS TO GO, and why it is in two places per call:
+ *
+ * A <Say> before <Dial> is heard ONLY by the parent leg — the party already on
+ * the call. The party being dialled never hears it. So each recorded <Dial>
+ * gets both:
+ *
+ *   1. <Say> before the <Dial>            -> the parent leg (inbound: the
+ *                                            borrower who called us; outbound:
+ *                                            the staff member's browser client)
+ *   2. url= on the nested <Number>        -> a whisper on the CHILD leg, played
+ *                                            when they answer and BEFORE the two
+ *                                            legs are bridged
+ *
+ * Both parties therefore hear it before any conversation audio is captured,
+ * which is the consent requirement. See the note in the deploy report about why
+ * "before capture" and "audible on the recording" cannot both be fully true.
+ *
+ * TEXT IS CONFIG, NOT CODE — same reasoning as greetingConfig above. Compliance
+ * wording changes by memo, not by deploy. app_config keys:
+ *     call_recording_notice_text   ({name} is substituted)
+ *     call_recording_notice_name
+ * Falls back to the approved wording if the rows are missing or unreadable. It
+ * must never fall back to silence: silence here is the violation. */
+async function noticeConfig(): Promise<string> {
+  const fallbackName = 'Rene Duarte';
+  const fallbackText =
+    "Hi, this is {name} with Rates and Realty. Before we get started — this call is " +
+    "recorded for quality assurance and training purposes. If you'd rather I didn't " +
+    "record, just say so and I'll turn it off.";
+  let text = fallbackText, name = fallbackName;
+  try {
+    const { data } = await sb.from('app_config')
+      .select('key, value')
+      .in('key', ['call_recording_notice_text', 'call_recording_notice_name']);
+    const map: Record<string, string> = {};
+    for (const r of data || []) map[(r as any).key] = String((r as any).value ?? '').trim();
+    if (map.call_recording_notice_text) text = map.call_recording_notice_text;
+    if (map.call_recording_notice_name) name = map.call_recording_notice_name;
+  } catch (e) {
+    console.error('[twilio-voice] notice config read failed, using approved default:', String(e));
+  }
+  return text.replace(/\{name\}/g, name);
+}
+
+function xmlEsc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function noticeSay(text: string): string {
+  return `<Say voice="Polly.Joanna">${xmlEsc(text)}</Say>`;
+}
+
 function voicemailTwiml(statusCb: string, g: { url: string; text: string }): string {
   const greet = g.url
     ? `<Play>${g.url.replace(/&/g, '&amp;')}</Play>`
@@ -108,7 +168,9 @@ Deno.serve(async (req) => {
      * play_voicemail is fetched by Twilio and may arrive as GET, so it is
      * validated against an empty parameter set — the signature then covers the
      * URL alone, including the ?url= it is told to play. */
-    const _isTwilioShape = contentType.includes('application/x-www-form-urlencoded') || subAction === 'play_voicemail';
+    const _isTwilioShape = contentType.includes('application/x-www-form-urlencoded')
+      || subAction === 'play_voicemail'
+      || subAction === 'record_notice';
     if (_isTwilioShape) {
       const _raw = contentType.includes('application/x-www-form-urlencoded') ? await req.clone().text() : '';
       const sig = await verifyTwilioRequest(req, _raw, { authToken: AUTH_TOKEN, testKey: Deno.env.get('SMS_TEST_KEY') || '' });
@@ -116,6 +178,27 @@ Deno.serve(async (req) => {
         console.error('[twilio-voice] REJECTED:', sig.reason, 'url=', sig.url);
         return twilioForbidden();
       }
+    }
+
+    /* Sub-action: the recording disclosure, fetched by Twilio as the url= on a
+     * nested <Number>. This is the CHILD leg's copy of the announcement — it
+     * runs on the dialled party's leg after they answer and before the legs are
+     * bridged, so they hear it before any conversation is captured.
+     *
+     * Signature-validated (record_notice is in _isTwilioShape above). Note the
+     * consequence, because it is a real trade-off and not an oversight: if the
+     * signature check ever fails here, Twilio gets a 403, the whisper does not
+     * play, and the call still connects and still records. That is a fail-open
+     * on the disclosure. Closing it means failing the CALL when the notice
+     * cannot be played, which trades a compliance gap for dropped borrower
+     * calls. Flagged for Rene rather than decided here. */
+    if (subAction === 'record_notice') {
+      const noticeText = await noticeConfig();
+      console.log('[twilio-voice] record_notice served');
+      return twimlRes(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  ${noticeSay(noticeText)}
+</Response>`);
     }
 
     // Sub-action: play voicemail TwiML (called by Twilio when dropping a voicemail)
@@ -216,10 +299,16 @@ Deno.serve(async (req) => {
          * lands somewhere the CRM cannot see — the same invisible-recording
          * problem in a different costume. answerOnBridge keeps the caller
          * hearing ringback rather than silence. */
+        /* Disclosure to BOTH legs. The <Say> reaches the borrower who called in,
+         * before Rene's cell is even rung and before recording starts; the
+         * url= whisper reaches Rene when he answers. */
+        const noticeText = await noticeConfig();
+        const noticeUrl = `${statusCb}?action=record_notice`;
         const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+  ${noticeSay(noticeText)}
   <Dial timeout="18" answerOnBridge="true" callerId="${from}" record="record-from-answer" recordingStatusCallback="${statusCb}" action="${statusCb}?phase=inbound_done" method="POST">
-    <Number statusCallback="${statusCb}?phase=leg_status" statusCallbackEvent="completed" statusCallbackMethod="POST">${forwardTo}</Number>
+    <Number url="${xmlEsc(noticeUrl)}" statusCallback="${statusCb}?phase=leg_status" statusCallbackEvent="completed" statusCallbackMethod="POST">${forwardTo}</Number>
   </Dial>
 </Response>`;
         console.log(`[twilio-voice] INBOUND from=${from} to=${to} sid=${callSid} contact=${inboundContactId} -> ringing ${forwardTo}`);
@@ -267,10 +356,17 @@ Deno.serve(async (req) => {
       if (to) {
         const dialTo = to.startsWith('+') || to.startsWith('client:') ? to : formatPhone(to);
         const recordingCb = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice`;
+        /* Disclosure to BOTH legs. The <Say> reaches the staff member on the
+         * browser client — which also makes it audible to them that it fired —
+         * and the url= whisper reaches the person being dialled on answer,
+         * before the bridge. */
+        const noticeText = await noticeConfig();
+        const noticeUrl = `${recordingCb}?action=record_notice`;
         const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+  ${noticeSay(noticeText)}
   <Dial callerId="${TWILIO_PHONE}" timeout="30" record="record-from-answer" recordingStatusCallback="${recordingCb}">
-    <Number>${dialTo}</Number>
+    <Number url="${xmlEsc(noticeUrl)}">${dialTo}</Number>
   </Dial>
 </Response>`;
         console.log('[twilio-voice] dialing', dialTo, 'callerId=', TWILIO_PHONE);
@@ -328,7 +424,10 @@ Deno.serve(async (req) => {
     if (action === 'make_call') {
       if (!to) return err('Missing "to" phone number');
       const auth = btoa(`${ACCOUNT_SID}:${AUTH_TOKEN}`);
-      const dialTwiml = `<Response><Dial callerId="${TWILIO_PHONE}" record="record-from-answer"><Number>${formatPhone(to)}</Number></Dial></Response>`;
+      /* Disclosure on both legs, same shape as the other two recorded Dials. */
+      const mcNotice = await noticeConfig();
+      const mcNoticeUrl = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice?action=record_notice`;
+      const dialTwiml = `<Response>${noticeSay(mcNotice)}<Dial callerId="${TWILIO_PHONE}" record="record-from-answer"><Number url="${xmlEsc(mcNoticeUrl)}">${formatPhone(to)}</Number></Dial></Response>`;
       const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${ACCOUNT_SID}/Calls.json`, {
         method: 'POST',
         headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
