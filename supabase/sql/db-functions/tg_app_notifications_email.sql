@@ -87,7 +87,7 @@ begin
     begin
       perform net.http_post(
         url := 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/email-service',
-        headers := '{"Content-Type": "application/json"}'::jsonb,
+        headers := public.internal_call_headers(),
         body := jsonb_build_object('action','send','to_email',v_email,'subject',v_subject,'html',v_html)
       );
     exception when others then null; end;
@@ -99,7 +99,7 @@ begin
     begin
       perform net.http_post(
         url := 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/clickup-mention-ping',
-        headers := '{"Content-Type": "application/json"}'::jsonb,
+        headers := public.internal_call_headers(),
         body := jsonb_build_object(
           'title', case when v_is_reminder then '🔔 Reminder' else '💬 ' || v_actor_clean || ' mentioned you' end || coalesce(' — ' || v_lead_name, ''),
           'description', v_note || E'\n\nOpen the lead: ' || v_url,
@@ -118,7 +118,7 @@ begin
     begin
       perform net.http_post(
         url := 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service',
-        headers := '{"Content-Type": "application/json"}'::jsonb,
+        headers := public.internal_call_headers(),
         body := jsonb_build_object('trigger','custom','to_phone',v_phone,
                                    'params', jsonb_build_object('message', v_sms))
       );

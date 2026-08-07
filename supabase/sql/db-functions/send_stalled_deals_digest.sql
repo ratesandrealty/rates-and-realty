@@ -85,14 +85,14 @@ begin
       if r.email is not null and r.email <> '' then
         begin perform net.http_post(
           url := 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/email-service',
-          headers := '{"Content-Type": "application/json"}'::jsonb,
+          headers := public.internal_call_headers(),
           body := jsonb_build_object('action','send','to_email',r.email,'subject',v_subject,'html',v_html));
         exception when others then null; end;
       end if;
       if r.notify_phone is not null and r.notify_phone <> '' then
         begin perform net.http_post(
           url := 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service',
-          headers := '{"Content-Type": "application/json"}'::jsonb,
+          headers := public.internal_call_headers(),
           body := jsonb_build_object('trigger','custom','to_phone',r.notify_phone,
                                      'params', jsonb_build_object('message', v_sms)));
         exception when others then null; end;

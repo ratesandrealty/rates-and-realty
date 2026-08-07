@@ -102,7 +102,7 @@ begin
         begin
           perform net.http_post(
             url := 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/email-service',
-            headers := '{"Content-Type": "application/json"}'::jsonb,
+            headers := public.internal_call_headers(),
             body := jsonb_build_object(
               'action','send','to_email',v_pemail,'subject',v_subject,'html',v_html,
               'reply_to','rene@ratesandrealty.com',
