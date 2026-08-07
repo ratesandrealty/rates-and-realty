@@ -214,6 +214,18 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 #followUpCard .fu-name{color:#e8e8e8;font-weight:600;flex-shrink:0}
 #followUpCard .fu-age{margin-left:auto;font-variant-numeric:tabular-nums;font-size:11px}
 #followUpCard .fu-more{font-size:11px;color:var(--muted);padding:4px 8px}
+/* Collapse control. Accent is the card's own teal rather than the page gold —
+   everything else in this card is #4FB3B3, and a gold chevron would read as
+   belonging to something else. */
+#followUpCard .fu-toggle{margin-left:auto;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border-radius:6px;border:1px solid rgba(79,179,179,0.28);background:rgba(79,179,179,0.08);color:#4FB3B3;cursor:pointer;font-family:inherit;line-height:0;transition:background .12s,border-color .12s,transform .15s}
+#followUpCard .fu-toggle:hover{background:rgba(79,179,179,0.18);border-color:rgba(79,179,179,0.5)}
+#followUpCard .fu-toggle:focus-visible{outline:2px solid #4FB3B3;outline-offset:2px}
+#followUpCard .fu-toggle svg{transition:transform .15s ease}
+#followUpCard.is-collapsed .fu-toggle svg{transform:rotate(-90deg)}
+/* Collapsed: the count stays, the list and the ordering hint go. */
+#followUpCard.is-collapsed .fu-head{margin-bottom:0}
+#followUpCard.is-collapsed .fu-hint{display:none}
+@media(prefers-reduced-motion:reduce){#followUpCard .fu-toggle,#followUpCard .fu-toggle svg{transition:none}}
 
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:3px}
@@ -1446,7 +1458,11 @@ function renderFollowUpCard() {
   el.style.display = 'block';
   el.innerHTML =
     '<div class="fu-head">🔁 Follow Up <span class="fu-count">' + rows.length + '</span>'
-    + '<span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);">longest since contact first</span></div>'
+    + '<span class="fu-hint" style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);">longest since contact first</span>'
+    + '<button type="button" class="fu-toggle" data-fu-toggle onclick="fuToggle()" aria-controls="fuBody" aria-label="Collapse Follow Up">'
+    +   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+    + '</button></div>'
+    + '<div class="fu-body" id="fuBody">'
     + '<div class="fu-rows">'
     + shown.map(function(p) {
         var age = fuRelAge(p.last_contact_date);
@@ -1459,7 +1475,48 @@ function renderFollowUpCard() {
     + '</div>'
     + (rows.length > FU_MAX_ROWS
         ? '<div class="fu-more">+ ' + (rows.length - FU_MAX_ROWS) + ' more — <a href="#" onclick="fuShowAll();return false;" style="color:#4FB3B3;">show all in list</a></div>'
-        : '');
+        : '')
+    + '</div>';
+  fuApplyCollapsed();          // re-render wipes the DOM; restore the saved state
+}
+
+/* ---- Follow Up collapse state ----------------------------------------------
+ * PER USER, not per browser. admin/people is reached by both Rene and the VA,
+ * and the VA login is shared, so a single flat key would mean one person's
+ * preference silently following the next one in. Keyed on the signed-in user id
+ * that auth-guard already exposes.
+ *
+ * Default EXPANDED: absent key means never chosen, and hiding an overdue-contact
+ * list from someone who has never seen it is the wrong default. Only an explicit
+ * '1' collapses.
+ *
+ * Every localStorage touch is guarded — Safari private mode throws on write, and
+ * a card that cannot collapse beats a card that cannot render. */
+function fuKey() {
+  var u = (window._adminUser && (window._adminUser.id || window._adminUser.email)) || 'anon';
+  return 'rr_fu_collapsed:' + u;
+}
+function fuCollapsed() {
+  try { return localStorage.getItem(fuKey()) === '1'; } catch (_) { return false; }
+}
+function fuApplyCollapsed() {
+  var el = document.getElementById('followUpCard');
+  if (!el) return;
+  var c = fuCollapsed();
+  el.classList.toggle('is-collapsed', c);
+  var body = el.querySelector('.fu-body');
+  if (body) body.style.display = c ? 'none' : '';
+  var btn = el.querySelector('[data-fu-toggle]');
+  if (btn) {
+    btn.setAttribute('aria-expanded', c ? 'false' : 'true');
+    btn.setAttribute('aria-label', c ? 'Expand Follow Up' : 'Collapse Follow Up');
+    btn.title = c ? 'Expand' : 'Collapse';
+  }
+}
+function fuToggle() {
+  var next = !fuCollapsed();
+  try { localStorage.setItem(fuKey(), next ? '1' : '0'); } catch (_) {}
+  fuApplyCollapsed();
 }
 
 /* Filters the main list to Follow Up rather than expanding the card. The card is
