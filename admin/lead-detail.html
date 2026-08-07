@@ -24932,10 +24932,13 @@ function lsCalcTaxFromPct() {
  * name. Reading the live fields blindly would print the co-borrower as the
  * primary. So live values are only trusted for whichever role is currently
  * displayed, and the other role comes from stored data. */
-function _lsLiveName() {
+function _lsLiveParts() {
   var g = function (id) { var e = document.getElementById(id); return e ? (e.value || '').trim() : ''; };
-  var parts = [g('f_first_name'), g('f_middle_name'), g('f_last_name'), g('f_suffix')].filter(Boolean);
-  return parts.join(' ').trim();
+  return { first: g('f_first_name'), middle: g('f_middle_name'), last: g('f_last_name'), suffix: g('f_suffix') };
+}
+function _lsLiveName() {
+  var p = _lsLiveParts();
+  return [p.first, p.middle, p.last, p.suffix].filter(Boolean).join(' ').trim();
 }
 
 function _lsResolveNames(app, lbRows, contact) {
@@ -24948,20 +24951,38 @@ function _lsResolveNames(app, lbRows, contact) {
     return parts.filter(Boolean).join(' ').trim();
   };
 
-  /* Primary */
-  var primary = '';
-  if (live && !coActive) primary = live;                                   // 1
-  if (!primary) primary = joined(app.first_name, app.middle_name, app.last_name);   // 2
+  /* PRIMARY — resolved PER PART, not per source.
+     The first version took the whole name from the first source that had
+     anything, so a live "Shelly" + "Hurle" with the middle box empty discarded a
+     stored middle name entirely, and the reverse discarded a typed one. Each of
+     first/middle/last/suffix now comes from the most-trusted source that
+     actually has it, so no part is lost because a different part was present. */
+  var liveP = (live && !coActive) ? _lsLiveParts() : { first:'', middle:'', last:'', suffix:'' };
+  var pick = function () {
+    for (var i = 0; i < arguments.length; i++) {
+      var v = arguments[i];
+      if (v != null && String(v).trim()) return String(v).trim();
+    }
+    return '';
+  };
+  var primary = joined(
+    pick(liveP.first,  app.first_name,  contact.first_name),
+    pick(liveP.middle, app.middle_name, contact.middle_name),
+    pick(liveP.last,   app.last_name,   contact.last_name),
+    pick(liveP.suffix, app.suffix)
+  );
   if (!primary) {
     var lbP = lbRows.find(function (r) { return r.is_primary; }) || lbRows[0];
-    if (lbP && lbP.vesting_name) primary = String(lbP.vesting_name).trim();  // 3
+    if (lbP) primary = String(lbP.vesting_name || lbP.contact_name || '').trim();
   }
-  if (!primary) primary = joined(contact.first_name, contact.middle_name, contact.last_name); // 4
 
   /* Co-borrower — "--" only when there genuinely is not one. */
-  var co = '';
-  if (live && coActive) co = live;
-  if (!co) co = joined(app.co_borrower_first_name, app.co_borrower_middle_name, app.co_borrower_last_name);
+  var liveC = (live && coActive) ? _lsLiveParts() : { first:'', middle:'', last:'' };
+  var co = joined(
+    pick(liveC.first,  app.co_borrower_first_name),
+    pick(liveC.middle, app.co_borrower_middle_name),
+    pick(liveC.last,   app.co_borrower_last_name)
+  );
   if (!co) {
     var lbC = lbRows.filter(function (r) { return !r.is_primary; })
                     .sort(function (a, b) { return (a.borrower_order || 99) - (b.borrower_order || 99); })[0];
