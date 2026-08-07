@@ -120,6 +120,34 @@ Three separate fixes have now closed the same shape of bug in this one function
 the payload is not a soft 404. Assume the next one is also a place where
 something checks a status code and never looks at the bytes.
 
+## `net.http_post` results ARE knowable — `net._http_response`
+
+It is easy to assume the opposite, because `net.http_post` returns a request id
+immediately and `cron.job_run_details.status = 'succeeded'` only ever means "the
+request was queued". Neither says whether anything answered. That assumption is
+why cron breakages here have historically been found by noticing missing data
+days later.
+
+pg_net writes the actual result to `net._http_response`, keyed by that id:
+
+```sql
+select net.http_post(url := '…', headers := '…', body := '{}'::jsonb);  -- → id
+select status_code, content, error_msg from net._http_response where id = <id>;
+```
+
+Used on 2026-08-07 to prove `market-rate`'s new guard accepts the real cron call
+(200, rates written) rather than inferring it from a `succeeded` job row.
+
+Two limits worth knowing. Retention is short — about **six hours** — so this is
+for verifying a change now, not for auditing last week. And
+`net.http_request_queue` drains, so once the row is gone you can no longer join
+back to the URL that failed; capture what you need in the same session.
+
+A first look showed **9 failed calls** sitting there unnoticed (8×500 "No item to
+return was found", one 401, one 5 s timeout). Nothing watches this table. A
+periodic sweep of it is the cheapest cron-failure alarm available, and does not
+exist yet.
+
 ## Security boundaries worth not breaking
 
 - `gmail-inbox` downloads outbound attachments with the **service role**, which
