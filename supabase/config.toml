@@ -338,9 +338,15 @@ verify_jwt = false
 # before the function is reached. The anon key identifies nobody; the cron secret
 # is the credential.
 #
-# NOT YET ENFORCED. The in-function check lands only after a real 22:00 weekday
-# run is observed carrying the header. A guard added before that is a silent cron
-# break — the send-scheduled-sms shape, and the reason for the order.
+# ENFORCED since 2026-08-07. The run observed first, then the guard: the
+# 2026-08-06 22:00 weekday run carried the header and landed rates (fetched
+# 22:43, rate_date 2026-08-06, 30yr 6.77). cron.job_run_details alone would not
+# have proved it — net.http_post is fire-and-forget, so "succeeded" only means
+# the request was queued; the ROW is the evidence.
+#
+# The check itself lives in Postgres (public.verify_cron_secret), not in a Deno
+# env var, so the plaintext never leaves the database — see the header comment in
+# the function for why that matters.
 # A dedicated secret was chosen over reading the JWT role claim because the latter
 # would touch all 17 working guards to fix one function.
 verify_jwt = true

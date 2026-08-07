@@ -5,6 +5,52 @@ const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const UA = "Mozilla/5.0 (compatible; RatesAndRealtyBot/1.0; +https://ratesandrealty.com)";
 
+/* THE GUARD.
+ *
+ * The gateway lets anyone through — the anon key that satisfies it is printed in
+ * every page — and this function scrapes a third party on every call and writes
+ * market_rates with the service role. Open, it costs someone else's bandwidth
+ * and lets a stranger overwrite the rate the site publishes.
+ *
+ * pg_cron job 24 (refresh-market-rate, weekdays 22:00) is the ONLY caller. No
+ * page invokes it: the `market-rates` matches in dashboard/admin.html are a
+ * dashboard SECTION id, and post-close-followups and refi-watch read the
+ * market_rates TABLE, not this function. So there is no frontend half to ship
+ * first — checked rather than assumed, because "Tier 4, no browser caller" was
+ * already wrong for three of five functions once.
+ *
+ * WHY THE CHECK IS IN THE DATABASE, NOT IN AN ENV VAR HERE
+ * The usual shape — same secret in Deno's env, compared in this file — needs the
+ * plaintext to travel from the vault into the secrets store, and every hop on
+ * that trip (a transcript, a shell history, a CI log) is somewhere it can
+ * outlive its usefulness. proactive_followups_secret was rotated once for
+ * exactly that. verify_cron_secret() keeps it inside Postgres: pg_cron reads it
+ * from the vault to send, this function hands back what it received, and the
+ * database answers only yes or no. Nothing to provision here, no second copy to
+ * leak, nothing to keep in sync.
+ *
+ * FAILS CLOSED — a missing vault entry, an empty header and a wrong-but-
+ * right-length value are all NO. */
+async function secretOk(req: Request): Promise<boolean> {
+  const got = req.headers.get("x-cron-secret") ?? "";
+  if (!got) return false;
+  try {
+    const sb = createClient(SUPABASE_URL, SERVICE_KEY);
+    const { data, error } = await sb.rpc("verify_cron_secret", {
+      p_name: "market_rate_cron_secret",
+      p_secret: got,
+    });
+    if (error) {
+      console.error("[market-rate] secret check failed:", error.message);
+      return false;
+    }
+    return data === true;
+  } catch (e) {
+    console.error("[market-rate] secret check threw:", String(e));
+    return false;
+  }
+}
+
 function parseRate(html: string, label: string): number | null {
   // Find `label`, then the FIRST NN.NNN% that follows it (the current rate,
   // which precedes the 52-week-range values).
@@ -16,7 +62,13 @@ function parseRate(html: string, label: string): number | null {
   return (v > 1 && v < 20) ? v : null;
 }
 
-Deno.serve(async (_req: Request) => {
+Deno.serve(async (req: Request) => {
+  /* Before req.json() and before the outbound scrape, so an unauthorised call
+   * costs nothing and reaches nothing. */
+  if (!(await secretOk(req))) {
+    return new Response(JSON.stringify({ ok: false, error: "forbidden" }),
+      { status: 403, headers: { "Content-Type": "application/json" } });
+  }
   try {
     const res = await fetch("https://www.mortgagenewsdaily.com/mortgage-rates", { headers: { "User-Agent": UA } });
     if (!res.ok) {
