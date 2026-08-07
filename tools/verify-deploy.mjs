@@ -209,8 +209,14 @@ console.log(`\nchecking ${allPages.length} page(s) actually shipped…`);
 for (const rel of allPages) {
   const want = localHash('/' + rel);
   if (!want) continue;
+  /* Always include the EXPLICIT path as a candidate. urlCandidates('index.html')
+     returns only '/', and the root is host-dependent: admin.ratesandrealty.com/
+     serves the admin shell while /index.html serves this file on every host. The
+     first version of this pass failed the deploy on that difference alone. */
+  const cands = urlCandidates(rel);
+  if (!cands.includes('/' + rel)) cands.push('/' + rel);
   let matched = null, seen = [];
-  for (const cand of urlCandidates(rel)) {
+  for (const cand of cands) {
     const got = await fetchHash(BASE + cand);
     seen.push({ cand, ...got });
     if (got.ok && got.hash === want) { matched = cand; break; }
