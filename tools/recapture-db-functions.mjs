@@ -23,8 +23,26 @@ import { join } from 'node:path';
 const REF = 'ljywhvbmsibwnssxpesh';
 const BASELINE = 'supabase/sql/db-functions';
 
+/* PINNED, and NOT to the latest — 2.112.0 is broken and 2.111.0 is not.
+ *
+ * `supabase projects api-keys` validates the API response against a schema the
+ * CLI ships, and 2.112.0 rejects the `inserted_at` timestamp on the API-key rows
+ * created 2026-08-07: "SchemaError(Expected a string matching the RegExp ...)".
+ * Every output format fails, because it is the RESPONSE being validated, not the
+ * formatting. This took down observe-db-functions and recapture-db-functions
+ * together, since both read the key the same way.
+ *
+ * The instinct is to upgrade. That is exactly wrong here: the newest version IS
+ * the broken one. Verified both directions on 2026-08-07 —
+ *   supabase@2.111.0  OK
+ *   supabase@2.112.0  FAILS
+ * Retest before moving the pin; only `projects api-keys` is affected, so the
+ * other tools that call the CLI (check-function-drift, deploy-function.sh) are
+ * unaffected and deliberately left alone. */
+const SUPABASE_CLI = 'supabase@2.111.0';
+
 function serviceKey() {
-  const out = execFileSync('npx', ['supabase', 'projects', 'api-keys', '--project-ref', REF, '--output', 'json'],
+  const out = execFileSync('npx', ['-y', SUPABASE_CLI, 'projects', 'api-keys', '--project-ref', REF, '--output', 'json'],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], shell: true });
   const k = JSON.parse(out).find((r) => r.name === 'service_role');
   if (!k) throw new Error('service_role key not returned by the CLI');
