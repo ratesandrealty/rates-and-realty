@@ -204,31 +204,40 @@ const allPages = walk(ROOT)
 let indexHash = null;
 try { indexHash = localHash('/index.html'); } catch { /* no homepage, fine */ }
 
-let pageFailures = 0;
-console.log(`\nchecking ${allPages.length} page(s) actually shipped…`);
-for (const rel of allPages) {
-  const want = localHash('/' + rel);
-  if (!want) continue;
-  /* Always include the EXPLICIT path as a candidate. urlCandidates('index.html')
-     returns only '/', and the root is host-dependent: admin.ratesandrealty.com/
-     serves the admin shell while /index.html serves this file on every host. The
-     first version of this pass failed the deploy on that difference alone. */
-  const cands = urlCandidates(rel);
-  if (!cands.includes('/' + rel)) cands.push('/' + rel);
-  let matched = null, seen = [];
-  for (const cand of cands) {
-    const got = await fetchHash(BASE + cand);
-    seen.push({ cand, ...got });
-    if (got.ok && got.hash === want) { matched = cand; break; }
+/* Propagation retry, same as pass 1 has. Without it this pass fails on almost
+ * every deploy — the edge has not caught up yet — and a check that cries wolf
+ * routinely is one that gets ignored or switched off. Observed immediately: the
+ * first run of this pass failed on admin/lead-detail.html and matched cleanly
+ * seconds later. */
+async function pageMismatches(list) {
+  const out = [];
+  for (const rel of list) {
+    const want = localHash('/' + rel);
+    if (!want) continue;
+    const cands = urlCandidates(rel);
+    if (!cands.includes('/' + rel)) cands.push('/' + rel);
+    let matched = null; const seen = [];
+    for (const cand of cands) {
+      const got = await fetchHash(BASE + cand);
+      seen.push({ cand, ...got });
+      if (got.ok && got.hash === want) { matched = cand; break; }
+    }
+    if (!matched) out.push({ rel, want, seen });
   }
-  if (matched) continue;
-  pageFailures++;
-  /* Diagnose from the CANONICAL url — the explicit path, which is the last
-     candidate — because that is the one that should have matched. A soft-404 on
-     the short URL is reported as context, not as the cause: the first version of
-     this said "/public/terms-of-service answers with the homepage" when the
-     actual fault was the local file diverging, which would have sent the next
-     reader chasing routing instead of content. */
+  return out;
+}
+
+console.log(`\nchecking ${allPages.length} page(s) actually shipped…`);
+let bad = await pageMismatches(allPages);
+if (bad.length && !process.argv.includes('--no-retry')) {
+  for (let i = 1; i <= 3 && bad.length; i++) {
+    console.log(`  ${bad.length} not matching yet — propagation retry ${i}/3 in 10s…`);
+    await new Promise((r) => setTimeout(r, 10000));
+    bad = await pageMismatches(bad.map((b) => b.rel));
+  }
+}
+let pageFailures = bad.length;
+for (const { rel, want, seen } of bad) {
   const canonical = seen[seen.length - 1] || {};
   const soft = seen.find((s) => s.ok && indexHash && s.hash === indexHash && s.cand !== canonical.cand);
   const why = canonical.ok
@@ -238,6 +247,7 @@ for (const rel of allPages) {
   if (soft) console.log(`        note: ${soft.cand} answers 200 with the HOMEPAGE (soft 404) — not a real route.`);
 }
 if (!pageFailures) console.log(`  all ${allPages.length} page(s) serve their own bytes.`);
+
 
 if (failures) {
   console.log('\nFAIL: the deployed HTML does not match the shipped assets.');
