@@ -42,7 +42,7 @@ export type StaffCheck = {
 
 export async function requireStaff(
   req: Request,
-  opts?: { roles?: string[]; what?: string },
+  opts?: { roles?: string[]; what?: string; allowInternal?: boolean },
 ): Promise<StaffCheck> {
   const roles = opts?.roles || STAFF_ROLES;
   const what = opts?.what || "This endpoint";
@@ -54,6 +54,46 @@ export async function requireStaff(
   // Internal callers: service key in EITHER header. See note 1 above.
   if (SERVICE_KEY && apikey === SERVICE_KEY) return { ok: true, role: "service", userId: null };
   if (SERVICE_KEY && token === SERVICE_KEY) return { ok: true, role: "service", userId: null };
+
+  /* 3. CALLERS THAT ARE POSTGRES ITSELF, and cannot hold a key.
+   *
+   * Triggers and pg_cron functions reach an edge function through
+   * net.http_post. They have no user, no session, and no way to obtain the
+   * service key: it is an edge-function environment variable, and Postgres
+   * cannot read it. The only ways to give them one are to paste the key into
+   * pg_proc in cleartext — trigger_score_recalc and fire_lender_automation both
+   * do exactly that today — or to copy it into the vault by hand, which means
+   * the plaintext travelling through whoever wires it up.
+   *
+   * So instead they send a secret the DATABASE owns. gen_random_bytes minted it
+   * server-side into the vault; the DB function reads it from there at call
+   * time; this asks Postgres to confirm it via verify_cron_secret(), which
+   * returns only a boolean. The credential never exists outside the database.
+   *
+   * OPT-IN per call site. Widening a shared guard for every caller of it is how
+   * a check meant for one path ends up covering destructive actions too, so a
+   * function has to ask for this. email-service does, for its send actions —
+   * five DB functions had been 401ing against it since 2026-08-04, silently,
+   * because net.http_post never looks at the response.
+   *
+   * Checked AFTER the service-key paths and BEFORE the session path, so a real
+   * internal caller never pays for a getUser() round trip. */
+  if (opts?.allowInternal) {
+    const internal = (req.headers.get("x-internal-secret") || "").trim();
+    if (internal) {
+      try {
+        const sb = createClient(SUPABASE_URL, SERVICE_KEY);
+        const { data, error } = await sb.rpc("verify_cron_secret", {
+          p_name: "internal_db_caller_secret",
+          p_secret: internal,
+        });
+        if (!error && data === true) return { ok: true, role: "internal", userId: null };
+      } catch (_e) {
+        /* fall through to the normal paths — a failed lookup must not become a
+         * way in, and must not turn a valid session into a 500 either. */
+      }
+    }
+  }
 
   if (!token) return { ok: false, status: 401, msg: "missing authorization" };
 

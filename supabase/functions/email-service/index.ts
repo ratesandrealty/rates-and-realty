@@ -415,8 +415,15 @@ Deno.serve(async (req: Request) => {
        * of her job. Bulk sends and stored settings are a different risk: one
        * mistake reaches the whole list, so those keep requireAdmin. */
       const STAFF_SENDABLE = ['send','send_test','save_draft','preview','get_history'];
+      /* allowInternal: five SECURITY DEFINER DB functions send mail through here
+       * — send_daily_digest, send_stalled_deals_digest, app_notify_mentions,
+       * tg_app_notifications_chat and tg_app_notifications_email. Postgres holds
+       * no service key, so before this they sent Content-Type and nothing else
+       * and were 401ed on every run from 2026-08-04. The daily brief went out
+       * twice a day for a week and then not once in four days, and nothing said
+       * so, because net.http_post never reads the response. */
       const adm = STAFF_SENDABLE.includes(action)
-        ? await requireStaff(req, { what: 'Email sending' })
+        ? await requireStaff(req, { what: 'Email sending', allowInternal: true })
         : await requireAdmin(req);
       if (!adm.ok) return err(adm.msg || 'unauthorized', adm.status || 403);
       // requireAdmin already resolved the user to check the role; keep the id.
