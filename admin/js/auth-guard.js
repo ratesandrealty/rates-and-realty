@@ -263,6 +263,17 @@
      * and it only shows an action whose original button is actually in the DOM,
      * so each widget's own role gate still decides. Mounted LAST so both sources
      * are more likely to exist on first render; it re-checks either way. */
+    /* One clock, app-wide: window.RRTime renders every business timestamp in
+     * America/Los_Angeles with a PT label, and reads zone-less Postgres
+     * `timestamp` values as UTC instead of as the viewer's local time. Mounted
+     * FIRST of the group and synchronously-ish, because page scripts format
+     * timestamps during their initial render. */
+    function mountRRTime() {
+      if (window.RRTime || document.querySelector('script[src*="/admin/js/rr-time.js"]')) return;
+      const rt = document.createElement('script');
+      rt.src = '/admin/js/rr-time.js?v=561d9fe9fb';
+      document.head.appendChild(rt);
+    }
     function mountActionFab() {
       if (document.querySelector('script[src*="/admin/js/action-fab.js"]')) return;
       const af = document.createElement('script');
@@ -270,8 +281,9 @@
       document.head.appendChild(af);
     }
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function () { mountStaffChat(); mountHelpButton(); mountTaskCapture(); mountActionFab(); });
+      document.addEventListener('DOMContentLoaded', function () { mountRRTime(); mountStaffChat(); mountHelpButton(); mountTaskCapture(); mountActionFab(); });
     } else {
+      mountRRTime();
       mountStaffChat();
       mountHelpButton();
       mountTaskCapture();

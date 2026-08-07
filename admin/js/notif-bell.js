@@ -70,9 +70,9 @@
     if (diff < 60) return 'Just now';
     if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
     if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-    if (diff < 172800) return 'Yesterday ' + new Date(dateStr).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    if (diff < 172800) return 'Yesterday ' + (window.RRTime ? window.RRTime.time(dateStr) : '');
     if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
-    return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return window.RRTime ? window.RRTime.dateShort(dateStr) : '';
   }
 
   function fail(err, msg) {

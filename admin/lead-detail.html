@@ -28,14 +28,14 @@
     .pac-icon{display:none!important;}
     .pac-logo::after{display:none!important;}
   </style>
-  <script src="/admin/js/auth-guard.js?v=50d01ecb61"></script>
+  <script src="/admin/js/auth-guard.js?v=730e4a6e69"></script>
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
   <!-- Loaded after auth-guard so window._supabaseClient exists when fnFetch reads it. -->
   <script src="/admin/js/fn-call.js?v=62e47af307"></script>
   <script src="/admin/js/lead-share.js?v=323b40bde5"></script>
   <script src="/admin/js/share-nudge.js?v=06ab25599e"></script>
   <script src="/admin/js/crm-comms.js?v=077bc202a3"></script>
-  <script src="/admin/js/notif-bell.js?v=2d40dafbe7"></script>
+  <script src="/admin/js/notif-bell.js?v=a47a3dc1f3"></script>
   <script>if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList.add('light-preload');</script>
   <style>
     html.light-preload body, html.light-preload { background: #f5f5f5 !important; }
@@ -1764,7 +1764,7 @@
           integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
           crossorigin="anonymous" defer></script>
     <script src="/admin/js/attachment-viewer.js?v=e8f2b14c9f"></script>
-  <script src="/admin/js/inbox.js?v=ba4f781481" defer></script>
+  <script src="/admin/js/inbox.js?v=7a08960b63" defer></script>
 </head>
 <body class="admin-page">
 
@@ -6791,14 +6791,8 @@ function actColor(type) { return ACT_COLORS[type] || '#666'; }
 
 function relativeTime(dateStr) {
   if (!dateStr) return '';
-  var now = Date.now(), d = new Date(dateStr).getTime();
-  var diff = Math.floor((now - d) / 1000);
-  if (diff < 60) return 'Just now';
-  if (diff < 3600) return Math.floor(diff/60) + 'm ago';
-  if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
-  if (diff < 172800) return 'Yesterday ' + new Date(dateStr).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
-  if (diff < 604800) return Math.floor(diff/86400) + 'd ago';
-  return new Date(dateStr).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  if (window.RRTime) return window.RRTime.relative(dateStr);
+  return '';
 }
 
 function dirBadge(dir) {
@@ -11739,7 +11733,7 @@ function lpRenderOrders(){
 let _lpVoeSeq = 0;
 function _lpVoeFind(k){ return _lpVoes.find(x=>x.key===k); }
 function _lpToLocalDT(iso){ if(!iso) return ''; const d=new Date(iso); if(isNaN(d.getTime())) return ''; const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
-function _lpFmtDT(iso){ if(!iso) return ''; const d=new Date(iso); if(isNaN(d.getTime())) return ''; return d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }
+function _lpFmtDT(iso){ if(!iso) return ''; if(window.RRTime) return window.RRTime.dateTime(iso); return ''; }
 
 function lpRenderVoe(){
   const host=document.getElementById('lpVoeCards'); if(!host) return;
@@ -20513,9 +20507,14 @@ function fmtDateShort(d) {
   if (diff < 604800000) return dt.toLocaleDateString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
   return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
+/* Pacific, labelled. This global is what the communications timeline resolves
+   to — lead-detail declares fmtDateTime TWICE, and the other one (scoped, and
+   already zoned) never applied here. That is how a 22:12 UTC row rendered
+   "10:12 PM". */
 function fmtDateTime(d) {
   if (!d) return '';
-  return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  if (window.RRTime) return window.RRTime.dateTimeFull(d);
+  return new Date(d).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' PT';
 }
 function getCreditRating(score) {
   if (!score) return 'Unknown';

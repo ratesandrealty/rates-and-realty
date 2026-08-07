@@ -203,9 +203,9 @@
       var startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       var startOfDate = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
       var dayDiff = Math.round((startOfToday - startOfDate) / 86400000);
-      if (dayDiff === 0) return dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      if (dayDiff === 0) return dt.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' });
       if (dayDiff === 1) return 'Yesterday';
-      var opts = { month: 'short', day: 'numeric' };
+      var opts = { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' };
       if (dt.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
       return dt.toLocaleDateString('en-US', opts);
     } catch (_) { return ''; }
@@ -2733,7 +2733,7 @@
 
       try {
         var res = await invoke(cl, mailbox, 'send', payload);
-        var when = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        var when = new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' PT';
         var filed = res && res.filed_as
           ? 'Filed to the lead (' + esc(res.filed_as) + ').'
           : 'Not filed to a lead — no recipient matched a contact. Tag the thread to file it.';

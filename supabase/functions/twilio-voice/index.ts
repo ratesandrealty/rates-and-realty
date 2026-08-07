@@ -458,23 +458,40 @@ Deno.serve(async (req) => {
         if (!rec.ok) console.error(`[twilio-voice] OUTBOUND NOT RECORDED — ${rec.reason}`);
         const recAttr = rec.ok ? ` record="record-from-answer" recordingStatusCallback="${recordingCb}"` : '';
         const whisper = rec.ok ? ` url="${xmlEsc(noticeUrl)}"` : '';
-        /* answerOnBridge="true" — RINGBACK. Without it the browser hears dead
-         * silence from the moment the disclosure ends until the other party
-         * picks up, so there is no way to tell the call is working; Rene
-         * reported exactly that. With it, Twilio holds the parent leg
-         * un-answered and passes the real carrier ringback through instead.
-         * The inbound branch has always set it, for the same reason.
+        /* RINGBACK — ringTone, not answerOnBridge alone.
          *
-         * It does NOT touch the disclosure. The <Say> runs to completion before
-         * <Dial> starts, and the whisper runs on the child leg after it answers
-         * and before the bridge — answerOnBridge only changes what the CALLER
-         * hears during the dial. If anything it tightens the compliance
+         * answerOnBridge was added first and did not fix it; Rene still heard
+         * silence, and client_ref proved the new code was running, so it was not
+         * caching. The reason is in Twilio's own wording: without ringTone,
+         * "Twilio will play ringback or pass ringback from the carrier (if
+         * provided)". The parent here is a WebRTC client leg that is already
+         * in-progress by the time it reaches the TwiML app — there is no
+         * upstream carrier supplying a tone to pass through, so "pass ringback
+         * from the carrier" resolves to nothing and the caller gets dead air.
+         * ringTone="us" makes Twilio GENERATE the tone instead of forwarding
+         * one, which is the documented override for exactly this case.
+         *
+         * answerOnBridge is KEPT, and is doing a second job: per the <Number
+         * url> docs, "if the answerOnBridge attribute is used on <Dial>, the
+         * current caller will continue to hear ringing while the TwiML document
+         * executes on the other end" — i.e. it is what keeps the ringback
+         * playing during the compliance whisper instead of cutting to silence.
+         * The two attributes are complementary; neither is sufficient alone.
+         *
+         * NEITHER TOUCHES THE DISCLOSURE ORDER. The <Say> runs to completion
+         * before <Dial> starts, and the whisper still runs on the child leg
+         * after it answers and before the bridge. ringTone only decides what
+         * the caller hears DURING the dial. If anything the pair tightens the
          * ordering: the parent is not marked answered until the bridge, so
-         * record-from-answer starts after the child has heard the notice. */
+         * record-from-answer begins after the child has heard the notice.
+         *
+         * The inbound branch is deliberately left alone — its parent is a real
+         * PSTN caller whose carrier does supply ringback, and it is not the
+         * reported defect. */
         const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   ${rec.ok ? noticeSay(noticeText) : ''}
-  <Dial callerId="${TWILIO_PHONE}" timeout="30" answerOnBridge="true"${recAttr}>
+  <Dial callerId="${TWILIO_PHONE}" timeout="30" answerOnBridge="true" ringTone="us"${recAttr}>
     <Number${whisper}>${dialTo}</Number>
   </Dial>
 </Response>`;

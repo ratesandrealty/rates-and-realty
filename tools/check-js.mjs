@@ -44,6 +44,11 @@ const GUARDED = {
    * and the two things a truncated tail would drop. */
   'admin/js/staff-chat.js':   { min: 77000,  require: ['})();', 'function attViewHtml', 'function openLightbox'] },
   'admin/js/loom-recorder.js':{ min: 5000,   require: [] },
+  /* The one clock. Every converted surface calls window.RRTime and renders
+   * nothing at all if it is missing, so a truncated copy blanks timestamps
+   * app-wide rather than showing a wrong one — which is the safer failure, but
+   * still a failure worth gating. Floor measured at 6362, set at ~85%. */
+  'admin/js/rr-time.js':      { min: 5400,   require: ['})();', 'window.RRTime', 'America/Los_Angeles'] },
   /* The single bottom-right FAB. It is app-wide (auth-guard mounts it on every
    * authenticated page) and it HIDES the two original floating buttons, so a
    * truncated copy takes the pin and chat entrances with it — the widgets would
