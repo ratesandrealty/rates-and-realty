@@ -118,6 +118,26 @@ Deno.serve(async (req: Request) => {
          * delete failed on an FK, those edits stayed — a refused delete silently
          * detached the contact's referrals and co-borrower links anyway. Checking
          * first means a blocked contact is left exactly as it was found. */
+        /* Does it exist at all? Asked FIRST, and asked here rather than inferred
+         * from the DELETE, because PostgREST's DELETE + return=representation
+         * answered 200 with an empty array for a row it had just deleted — so a
+         * real deletion reported as not_found. Verified live on 2026-08-07: the
+         * contact was gone from the table while the response said nothing was
+         * removed. An existence check before the delete does not depend on that
+         * behaviour at all. */
+        const exists = await fetch(`${SUPABASE_URL}/rest/v1/contacts?id=eq.${id}&select=id`, {
+          headers: { ...h, 'Prefer': 'count=exact', 'Range': '0-0' },
+        });
+        const existsCount = parseInt((exists.headers.get('content-range') || '').split('/')[1] || '0', 10);
+        if (exists.ok && existsCount === 0) {
+          console.error(`[delete-contacts] NOT FOUND ${id}`);
+          results.push({
+            id, deleted: false, reason: 'not_found',
+            error: 'No contact with this id — nothing was deleted. It may already have been removed.',
+          });
+          continue;
+        }
+
         const blockers = await findBlockers(id);
         if (blockers.length) {
           const detail = blockers
@@ -159,28 +179,11 @@ Deno.serve(async (req: Request) => {
         }
 
         /* The delete itself. Everything remaining is ON DELETE CASCADE.
-         *
-         * return=representation, NOT the shared return=minimal. With minimal a
-         * DELETE that matches nothing still answers 204, so an id that does not
-         * exist — a stale row in the browser's list, a mistyped id — was counted
-         * as deleted. Asking for the deleted rows back makes "did anything
-         * actually go" answerable instead of assumed. */
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/contacts?id=eq.${id}&select=id`, {
-          method: 'DELETE',
-          headers: { ...h, 'Prefer': 'return=representation' },
-        });
+         * The row was confirmed to exist above and nothing blocks it, so a 2xx
+         * here means it went. */
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/contacts?id=eq.${id}`, { method: 'DELETE', headers: h });
 
         if (res.ok) {
-          let rows: any[] = [];
-          try { rows = await res.json(); } catch (_) { rows = []; }
-          if (!Array.isArray(rows) || rows.length === 0) {
-            console.error(`[delete-contacts] NOT FOUND ${id} — delete matched 0 rows`);
-            results.push({
-              id, deleted: false, reason: 'not_found', status: res.status,
-              error: 'No contact with this id — nothing was deleted. It may already have been removed.',
-            });
-            continue;
-          }
           console.log(`[delete-contacts] ✓ deleted ${id}`);
           results.push({ id, deleted: true, status: res.status });
           continue;
