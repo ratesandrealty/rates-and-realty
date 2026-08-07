@@ -208,14 +208,14 @@ document, no code comment, no commit message and no commit diff in this repo's
 entire history (`git log --all -S"18%"` returns nothing relevant). It was
 asserted in conversation and never had a basis. Do not carry it forward.
 
-One written trace of the same false premise survives in code — a comment in
-`supabase/functions/gdrive-health-monitor/index.ts:777` (commit `7f1abef`) refers
+One written trace of the same false premise survived in code — a comment in
+`supabase/functions/gdrive-health-monitor/index.ts` (commit `7f1abef`) referring
 to "the toll-free deliverability problem" as established fact while arguing for
-shorter alert bodies. **The segment-reduction change it justifies is still
-correct on its own merits** — one emoji really does force GSM-7 to UCS-2 and cut
-a segment from 153 characters to 67, which is a real cost and a real
-truncation risk. Only the deliverability premise is wrong. Left in place
-pending a decision; it is a comment, not behaviour.
+shorter alert bodies. **Amended 2026-08-07.** The segment-reduction change it
+justifies is still correct on its own merits — one emoji really does force
+GSM-7 to UCS-2 and cut a segment from 153 characters to 67, which is a real
+cost and a real truncation risk — so the change stands and only the stated
+reason was replaced.
 
 **What is actually true is worse, and is a visibility gap rather than a
 delivery problem:**
@@ -256,10 +256,40 @@ No schema change is needed — `sms_log.status` and `sms_log.twilio_sid` both
 already exist and the SID is already stored on every send. `twilio-inbound` is
 already pinned `verify_jwt = false`, so Twilio can reach it.
 
-Worth knowing before building it: `twilio-inbound` does **not** validate the
-Twilio signature, so a status-callback branch would accept forged delivery
-statuses. That is pre-existing on the inbound path, not created by this change,
-but it is the moment to fix it.
+**CORRECTION 2026-08-07 — `twilio-inbound` IS signature-validated.** An earlier
+version of this section said it was not. That was wrong, and wrong in a way
+worth naming: the result is assigned to `const _sig`, and the leading underscore
+reads as "deliberately unused". It is used, on the very next line:
+
+```ts
+    const _sig = await verifyTwilioRequest(req, rawText, { authToken: Deno.env.get("TWILIO_AUTH_TOKEN") || "", testKey: Deno.env.get("SMS_TEST_KEY") || "" });
+    if (!_sig.ok) {
+      console.error("[twilio-inbound] REJECTED:", _sig.reason, "url=", _sig.url);
+      return twilioForbidden();
+    }
+```
+
+The same reverse check was run across every other function guarded on a Twilio
+signature. **None is a fail-open** — all three branch on the result and return
+`twilioForbidden()`:
+
+| function | line | assigned to | branched on? |
+|---|---|---|---|
+| `twilio-inbound` | 139–142 | `const _sig` | yes |
+| `twilio-voice` | 114–118 | `const _sig` | yes, but only when `_isTwilioShape` |
+| `sms-assistant` | 1104–1108 | `const auth` | yes |
+
+`twilio-voice` is the one worth understanding rather than filing as fine. Its
+check is inside `if (_isTwilioShape)` — form-urlencoded bodies or
+`play_voicemail`. That is deliberate and documented: the same function also
+serves the browser's JSON admin actions (`get_token`, `make_call`,
+`voicemail_drop`, `call_status`, `log_call`), which carry no Twilio signature
+and would break if validated. So signature validation is not the gap there —
+**the gap is that those JSON actions have no authorization of their own at
+all**, which is a different finding and belongs with the 65 in §3.
+
+Rename `_sig` to `sig` in both files at some point. The convention says
+"unused" about the only line that makes these endpoints safe.
 
 ---
 

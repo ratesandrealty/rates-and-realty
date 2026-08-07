@@ -774,8 +774,22 @@ async function markAlertSent(alertKey: string, summary: string) {
  * because of one character. A single emoji forces the whole body from GSM-7
  * into UCS-2, and a segment shrinks from 153 characters to 67. So the red
  * circle at the top was costing nine times the money and nine times the
- * exposure to the toll-free deliverability problem, on the channel whose
- * entire job is reporting that things are broken.
+ * chance of being truncated or dropped mid-alert, on the channel whose entire
+ * job is reporting that things are broken.
+ *
+ * CORRECTED 2026-08-07. This comment used to justify itself with "the
+ * toll-free deliverability problem". There is no such problem: toll-free
+ * verification on +18668919394 has been APPROVED since 2023-12-05 (Twilio
+ * console, Regulatory Information), and approved toll-free numbers have no
+ * sending caps. A companion claim that ~18% of outbound SMS fails for that
+ * reason had no source anywhere in this repo's history and was simply untrue.
+ *
+ * The change itself stands on its own and is unaffected: nine segments really
+ * is nine times the cost and nine times the surface for a partial delivery,
+ * and multi-segment reassembly is the one thing that genuinely does fail. Only
+ * the stated reason was wrong. See docs/OPEN-FINDINGS-2026-08-07.md §8 — which
+ * also records that we have NO delivery data at all, because sms-service sets
+ * no StatusCallback and nothing consumes Twilio message-status webhooks.
  *
  * The SMS now carries the headline and one line of reason. The full text still
  * goes to the CRM notification, which has no length limit and no per-segment
