@@ -118,6 +118,26 @@ Deno.serve(async (req: Request) => {
          * delete failed on an FK, those edits stayed — a refused delete silently
          * detached the contact's referrals and co-borrower links anyway. Checking
          * first means a blocked contact is left exactly as it was found. */
+        /* Does it exist at all? Asked FIRST, and asked here rather than inferred
+         * from the DELETE, because PostgREST's DELETE + return=representation
+         * answered 200 with an empty array for a row it had just deleted — so a
+         * real deletion reported as not_found. Verified live on 2026-08-07: the
+         * contact was gone from the table while the response said nothing was
+         * removed. An existence check before the delete does not depend on that
+         * behaviour at all. */
+        const exists = await fetch(`${SUPABASE_URL}/rest/v1/contacts?id=eq.${id}&select=id`, {
+          headers: { ...h, 'Prefer': 'count=exact', 'Range': '0-0' },
+        });
+        const existsCount = parseInt((exists.headers.get('content-range') || '').split('/')[1] || '0', 10);
+        if (exists.ok && existsCount === 0) {
+          console.error(`[delete-contacts] NOT FOUND ${id}`);
+          results.push({
+            id, deleted: false, reason: 'not_found',
+            error: 'No contact with this id — nothing was deleted. It may already have been removed.',
+          });
+          continue;
+        }
+
         const blockers = await findBlockers(id);
         if (blockers.length) {
           const detail = blockers
@@ -158,7 +178,9 @@ Deno.serve(async (req: Request) => {
           continue;
         }
 
-        // The delete itself. Everything remaining is ON DELETE CASCADE.
+        /* The delete itself. Everything remaining is ON DELETE CASCADE.
+         * The row was confirmed to exist above and nothing blocks it, so a 2xx
+         * here means it went. */
         const res = await fetch(`${SUPABASE_URL}/rest/v1/contacts?id=eq.${id}`, { method: 'DELETE', headers: h });
 
         if (res.ok) {

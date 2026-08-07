@@ -2052,23 +2052,55 @@ async function deleteContacts(ids) {
       method: 'POST',
       body: JSON.stringify({ contact_ids: ids })
     });
-    var data = await res.json();
+    /* Parse the body BEFORE looking at res.ok. delete-contacts answers 200 when
+       every id went, 207 when only some did, 409 when none did — and the per-id
+       detail is in the body in all three cases. Throwing on !res.ok first would
+       discard exactly the information the user needs. */
+    var data = await res.json().catch(function(){ return null; });
     console.log('[deleteContacts] Response:', data);
-    if (!res.ok || data.error) throw new Error(data.error || 'Delete failed');
-    var deleted = data.deleted || 0;
-    if (deleted === 0) {
-      // All failed — show the first row's error for diagnostics (usually FK violation)
-      var firstFail = (data.results || []).find(function(r){return !r.success;});
-      var detail = firstFail && firstFail.error ? firstFail.error.substring(0, 180) : 'unknown error';
-      throw new Error('0 of ' + ids.length + ' deleted. ' + detail);
+    if (!data || !Array.isArray(data.results)) {
+      throw new Error((data && data.error) || ('Delete failed — HTTP ' + res.status));
     }
-    showToast('Deleted ' + deleted + ' contact' + (deleted > 1 ? 's' : ''));
-    // Remove from local data and re-render — only the ones actually deleted
-    var deletedIds = (data.results || []).filter(function(r){return r.success;}).map(function(r){return r.id;});
+
+    var okRows   = data.results.filter(function(r){ return r.deleted; });
+    var failRows = data.results.filter(function(r){ return !r.deleted; });
+
+    /* Drop ONLY the ids the server confirmed. A contact that survived stays in
+       the table, still selected, so the next action starts from the truth. */
+    var deletedIds = okRows.map(function(r){ return r.id; });
     _allPeople = _allPeople.filter(function(p) { return deletedIds.indexOf(p.id) === -1; });
     deletedIds.forEach(function(id) { _selected.delete(id); });
     applyFilters();
     updateBulkBar();
+
+    if (!failRows.length) {
+      showToast('Deleted ' + okRows.length + ' contact' + (okRows.length === 1 ? '' : 's'));
+      return;
+    }
+
+    /* PARTIAL OR TOTAL FAILURE — must not look like a success.
+       This is the case that misreported on 2026-08-07: 1 of 2 deleted showed a
+       green "Deleted 1 contact" and said nothing about the one still sitting in
+       the list. Name the survivors and say why each one survived. */
+    var lines = failRows.map(function(r){
+      var p = _allPeople.find(function(x){ return x.id === r.id; });
+      var who = p ? (((p.first_name || '') + ' ' + (p.last_name || '')).trim() || p.email || r.id)
+                  : r.id;
+      var why;
+      if (r.blocked_by && r.blocked_by.length) {
+        why = r.blocked_by.map(function(b){
+          return (b.rows == null ? '' : b.rows + ' ') + b.table + (b.note ? ' — ' + b.note : '');
+        }).join('; ');
+      } else {
+        why = (r.error || 'unknown error');
+      }
+      return who + ': ' + why;
+    });
+    var head = okRows.length
+      ? okRows.length + ' of ' + ids.length + ' deleted. ' + failRows.length + ' could not be deleted'
+      : 'Nothing was deleted. ' + failRows.length + ' blocked';
+    showToast(head + ' — ' + lines.join(' · '), true);
+    console.error('[deleteContacts] failures:', failRows);
   } catch(err) {
     /* isError:true — red styling and 6s instead of 2.5s. Without the flag a
        "not signed in" failure looked identical to a success toast. */
