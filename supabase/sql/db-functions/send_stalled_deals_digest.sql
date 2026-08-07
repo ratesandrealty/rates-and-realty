@@ -1,6 +1,6 @@
 -- send_stalled_deals_digest(p_dry_run boolean)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-07. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -77,7 +77,7 @@ begin
         || 'd, ' || (stalled->0->>'stage') || '). ' || v_dash;
 
   for r in
-    select distinct on (aur.user_id) aur.user_id, u.email::text as email, aur.notify_phone
+    select distinct on (aur.user_id) aur.user_id, u.email::text as email
     from auth_user_roles aur join auth.users u on u.id = aur.user_id
     where aur.role = 'admin'
   loop
@@ -89,20 +89,18 @@ begin
           body := jsonb_build_object('action','send','to_email',r.email,'subject',v_subject,'html',v_html));
         exception when others then null; end;
       end if;
-      if r.notify_phone is not null and r.notify_phone <> '' then
-        begin perform net.http_post(
-          url := 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service',
-          headers := public.internal_call_headers(),
-          body := jsonb_build_object('trigger','custom','to_phone',r.notify_phone,
-                                     'params', jsonb_build_object('message', v_sms)));
-        exception when others then null; end;
-      end if;
+      /* SMS half removed 2026-08-07 — see send_daily_digest for the full
+       * reasoning: it duplicated the email, reached only the one admin
+       * phone, had been dead since 2026-07-31 with no establishable cause,
+       * and restoring it meant granting a Postgres function the ability to
+       * send from the business line. Use send-push and the existing VAPID
+       * keys if a phone nudge is wanted, not SMS. */
     end if;
     v_sent := v_sent + 1;
-    v_results := v_results || jsonb_build_object('email', r.email, 'sms', (r.notify_phone is not null));
+    v_results := v_results || jsonb_build_object('email', r.email);
   end loop;
 
   return jsonb_build_object('dry_run', p_dry_run, 'sent', v_sent, 'stalled', n,
-                            'subject', v_subject, 'sms_preview', v_sms, 'detail', v_results);
+                            'subject', v_subject, 'detail', v_results);
 end;
 $function$;

@@ -1,6 +1,6 @@
 -- send_daily_digest(p_dry_run boolean)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-07. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -13,7 +13,7 @@ CREATE OR REPLACE FUNCTION public.send_daily_digest(p_dry_run boolean DEFAULT fa
 AS $function$
 declare
   d jsonb; v_new int; v_new7 int; v_active int; v_due int; v_open int; v_hot int; v_quiet int;
-  v_quiet_names text; v_subject text; v_html text; v_sms text;
+  v_quiet_names text; v_subject text; v_html text;
   vp jsonb; v_va_done7 int; v_va_open int; v_va_overdue int; v_va_median numeric;
   v_link text := 'https://admin.ratesandrealty.com/dashboard/admin.html';
   r record; v_sent int := 0; v_results jsonb := '[]'::jsonb;
@@ -40,10 +40,6 @@ begin
     from (select value as x from jsonb_array_elements(d->'attention') limit 3) t;
 
   v_subject := '☀️ Daily brief — ' || v_new || ' new leads, ' || v_active || ' active (' || v_quiet || ' quiet)';
-  v_sms := '☀️ R&R: ' || v_new || ' new leads to work, ' || v_active || ' active deals (' || v_quiet ||
-           ' gone quiet), ' || v_due || ' tasks due. VA: ' || v_va_done7 || ' done/7d, ' || v_va_open ||
-           ' open' || case when v_va_overdue > 0 then ' (' || v_va_overdue || ' overdue)' else '' end ||
-           '. ' || v_link;
   v_html := '<div style="font-family:Arial,sans-serif;max-width:560px;">'
     || '<h2 style="color:#1a1a1a;margin:0 0 8px;">☀️ Your daily brief</h2>'
     || '<ul style="font-size:15px;color:#333;line-height:1.7;">'
@@ -69,7 +65,7 @@ begin
     || '</div>';
 
   for r in
-    select distinct on (aur.user_id) aur.user_id, u.email::text as email, aur.notify_phone, aur.role
+    select distinct on (aur.user_id) aur.user_id, u.email::text as email, aur.role
     from auth_user_roles aur join auth.users u on u.id = aur.user_id
     where aur.role in ('admin','va')
   loop
@@ -81,21 +77,34 @@ begin
           body := jsonb_build_object('action','send','to_email',r.email,'subject',v_subject,'html',v_html));
         exception when others then null; end;
       end if;
-      if r.notify_phone is not null and r.notify_phone <> '' then
-        begin perform net.http_post(
-          url := 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service',
-          headers := public.internal_call_headers(),
-          body := jsonb_build_object('trigger','custom','to_phone',r.notify_phone,
-                                     'params', jsonb_build_object('message', v_sms)));
-        exception when others then null; end;
-      end if;
+      /* THE SMS HALF WAS REMOVED ON 2026-08-07. Do not restore it.
+       *
+       * It sent a condensed copy of the email above — same numbers, plus the
+       * dashboard link — so it carried nothing the email does not. It reached
+       * ONE number: only the admin row has a notify_phone, so the VA never got
+       * it, while the email reaches them both.
+       *
+       * It had also been dead since 2026-07-31 with no establishable cause. Three
+       * separate blockers accumulated afterwards (sms-service pinned verify_jwt
+       * on 08-03, an in-function getUser() gate on 08-05, and this call carrying
+       * no Authorization at all), but none of them explains the original stop,
+       * and the Postgres layer had no git history before 08-05 to check against.
+       *
+       * Restoring it would have meant granting a database function the ability
+       * to send from the business line — sms-service, which was an open SMS
+       * relay on 2026-08-06. That is a bad trade for ~34 duplicate messages a
+       * month to one phone.
+       *
+       * IF A PHONE NUDGE IS WANTED LATER, USE PUSH, NOT SMS. send-push and the
+       * VAPID keys already exist, cost nothing per message, and need no grant on
+       * the SMS relay. */
     end if;
     v_sent := v_sent + 1;
-    v_results := v_results || jsonb_build_object('email', r.email, 'role', r.role, 'sms', (r.notify_phone is not null));
+    v_results := v_results || jsonb_build_object('email', r.email, 'role', r.role);
   end loop;
 
   return jsonb_build_object('dry_run', p_dry_run, 'recipients', v_sent, 'subject', v_subject,
-                            'sms_preview', v_sms, 'va', jsonb_build_object(
+                            'va', jsonb_build_object(
                               'completed_7d', v_va_done7, 'open_now', v_va_open, 'overdue_now', v_va_overdue,
                               'median_turnaround_hrs', v_va_median),
                             'detail', v_results);

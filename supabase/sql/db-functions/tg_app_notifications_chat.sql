@@ -26,17 +26,14 @@ begin
     end if;
   exception when others then null; end;
 
-  begin
-    select notify_phone into v_phone from public.auth_user_roles
-      where user_id = new.recipient_user_id and notify_phone is not null limit 1;
-    if v_phone is not null and v_phone <> '' and not public.is_quiet_hours(new.recipient_user_id) then
-      perform net.http_post(
-        url := 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service',
-        headers := public.internal_call_headers(),
-        body := jsonb_build_object('trigger','custom','to_phone',v_phone,
-          'params', jsonb_build_object('message','💬 New message from '||v_sender||': '||left(v_prev,110)||E'\n'||v_url)));
-    end if;
-  exception when others then null; end;
+  /* SMS half removed 2026-08-07 — see send_daily_digest for the full reasoning.
+   * It duplicated what the chat notification already delivers in-app and by
+   * email, reached only the one admin phone, and restoring it meant granting a
+   * Postgres function the ability to send from the business line. This path was
+   * also the riskiest of the four: it fired per app_notifications INSERT, and
+   * that table went from 22 rows all-time to 16 in a single week once the
+   * share-nudge and task-note work started writing to it. If a phone nudge is
+   * wanted, use send-push and the existing VAPID keys, not SMS. */
 
   begin
     select clickup_user_id into v_cuid from public.auth_user_roles

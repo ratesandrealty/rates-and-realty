@@ -109,21 +109,13 @@ begin
     exception when others then null; end;
   end if;
 
-  select notify_phone into v_phone
-  from auth_user_roles where user_id = new.recipient_user_id and notify_phone is not null limit 1;
-  if v_phone is not null and v_phone <> '' and not public.is_quiet_hours(new.recipient_user_id) then
-    v_sms := case when v_is_reminder then '🔔 Reminder' else '💬 ' || v_actor_clean || ' mentioned you' end
-             || coalesce(' on ' || v_lead_name, '') || ': '
-             || left(v_note, 90) || E'\n' || v_url;
-    begin
-      perform net.http_post(
-        url := 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service',
-        headers := public.internal_call_headers(),
-        body := jsonb_build_object('trigger','custom','to_phone',v_phone,
-                                   'params', jsonb_build_object('message', v_sms))
-      );
-    exception when others then null; end;
-  end if;
+  /* SMS half removed 2026-08-07 — see send_daily_digest for the full reasoning.
+   * It duplicated what the notification already delivers in-app and by email,
+   * reached only the one admin phone, and restoring it meant granting a
+   * Postgres function the ability to send from the business line. This path
+   * was the riskiest of the four: it fired per app_notifications INSERT, and
+   * that table went from 22 rows all-time to 16 in one week once the
+   * share-nudge and task-note work began writing to it. Use send-push. */
 
   return new;
 exception when others then
