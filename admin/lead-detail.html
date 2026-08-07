@@ -2903,6 +2903,8 @@
         <div class="ls-actbar">
           <button type="button" class="ls-actbtn" onclick="openOCRUpload()">&#128247; Scan Doc &rarr; Auto-fill</button>
           <button type="button" class="ls-actbtn ls-actbtn--primary" onclick="save1003()">&#128190; Save Application</button>
+          <!-- Hidden until a f_* field changes; cleared only after the upsert succeeds. -->
+          <span id="ld1003DirtyBadge" title="These 1003 edits exist only in this page. Save Application to write them." style="display:none;align-items:center;gap:5px;font-size:10px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:#E0B84C;background:rgba(224,184,76,.12);border:1px solid rgba(224,184,76,.45);border-radius:100px;padding:3px 10px;">&#9679; Unsaved changes</span>
           <button type="button" id="download1003Btn" class="ls-actbtn" onclick="openForm1003Modal()">&#128065; View 1003 PDF</button>
           <button type="button" id="lsPreApprovalBtn" class="ls-actbtn ls-actbtn--primary" onclick="lsGeneratePreApproval()">&#128196; Generate Pre-Approval</button>
           <button type="button" id="lsEmailPreApprovalBtn" class="ls-actbtn" onclick="emailPreApprovalPdf()" title="Email a public link to the pre-approval (borrower or realtor partner)">&#128231; Email PDF</button>
@@ -3762,6 +3764,9 @@
       <!-- BOTTOM SAVE + EXPORT BUTTONS -->
       <div style="padding:24px; display:flex; gap:12px; justify-content:flex-end;">
         <button class="ld-btn-save" onclick="save1003()">Save Application</button>
+        <!-- Second Save button, second badge. _ld1003SetDirty writes by id, so this
+             one carries a distinct id and is synced alongside the first. -->
+        <span id="ld1003DirtyBadge2" title="These 1003 edits exist only in this page. Save Application to write them." style="display:none;align-items:center;gap:5px;font-size:10px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:#E0B84C;background:rgba(224,184,76,.12);border:1px solid rgba(224,184,76,.45);border-radius:100px;padding:3px 10px;margin-left:8px;">&#9679; Unsaved changes</span>
       </div>
 
         </div><!-- /app-content-scroll -->
@@ -23099,6 +23104,61 @@ var _LP_1A_NOTWIN = [
 ];
 
 /* ── 1003 — SAVE TO SUPABASE ── */
+/* ── UNSAVED 1003 CHANGES ────────────────────────────────────────────────────
+ * Nothing told Rene his 1003 edits were unsaved. A pre-approval was generated
+ * for a borrower whose FIRST/MIDDLE/LAST name and DOB were on screen and in no
+ * table at all — typed or OCR-scanned into the form, never written. The fields
+ * look identical whether they were loaded or typed, because load1003 skips
+ * undefined values and simply leaves whatever is in the input.
+ *
+ * That got worse, not better, when the pre-approval letter started READING those
+ * live fields: they are now load-bearing, so losing them silently costs more.
+ *
+ * Dirty is set by a DELEGATED listener on the panel rather than per-field
+ * handlers — the 1003 has hundreds of f_* inputs and more are rendered
+ * dynamically, so anything registered per element would miss whatever is added
+ * next. */
+var _ld1003Dirty = false;
+
+function _ld1003SetDirty(on) {
+  _ld1003Dirty = !!on;
+  /* Two Save Application buttons exist (the qualifier action bar and the Lead
+     Details panel), so there are two badges. Updating only the first would leave
+     the other silently stale — the same "one of two copies" mistake the bell has. */
+  ['ld1003DirtyBadge', 'ld1003DirtyBadge2'].forEach(function (id) {
+    var b = document.getElementById(id);
+    if (b) b.style.display = _ld1003Dirty ? 'inline-flex' : 'none';
+  });
+}
+
+function _ld1003WireDirty() {
+  if (window.__ld1003DirtyWired) return;
+  window.__ld1003DirtyWired = true;
+
+  /* Capture phase on document: catches inputs inside panels that are re-rendered
+     later, and fires before any handler that might stopPropagation(). */
+  document.addEventListener('input', function (e) {
+    var t = e.target;
+    if (t && t.id && /^f_/.test(t.id)) _ld1003SetDirty(true);
+  }, true);
+  document.addEventListener('change', function (e) {
+    var t = e.target;
+    if (t && t.id && /^f_/.test(t.id)) _ld1003SetDirty(true);
+  }, true);
+
+  /* The guard. Browsers ignore the message and show their own wording, but the
+     prompt itself is the point — leaving must take a deliberate second action. */
+  window.addEventListener('beforeunload', function (e) {
+    if (!_ld1003Dirty) return;
+    e.preventDefault();
+    e.returnValue = '';       // required by Chrome/Safari to trigger the prompt
+    return '';
+  });
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _ld1003WireDirty);
+else _ld1003WireDirty();
+
 async function save1003() {
   const cid = getContactId();
   if (!cid) { toast('No contact ID found.', true); return; }
@@ -23403,6 +23463,10 @@ async function save1003() {
         .eq('id', window._coBorrowerContactId)
         .then(function(r) { if (r.error) console.warn('[co-borrower link]', r.error); });
     }
+    /* Cleared only HERE — after the upsert resolved without throwing. Clearing it
+       when the button is pressed would put the badge back to "saved" on a failed
+       write, which is the same shape as the phantom-ordered VOE. */
+    _ld1003SetDirty(false);
     toast('Application saved!');
     // Sync updated data to fee sheet iframe if loaded
     if (_feeSheetLoaded) syncFeeSheetData();
