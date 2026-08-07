@@ -93,14 +93,19 @@ async function greetingConfig(): Promise<{ url: string; text: string }> {
  * wording changes by memo, not by deploy. app_config keys:
  *     call_recording_notice_text   ({name} is substituted)
  *     call_recording_notice_name
- * Falls back to the approved wording if the rows are missing or unreadable. It
- * must never fall back to silence: silence here is the violation. */
+ * Falls back to the approved wording if the rows are missing or unreadable.
+ *
+ * NO OPT-OUT SENTENCE. The wording used to end "...just say so and I'll turn it
+ * off." Nothing in this system can stop a recording mid-call — Twilio supports
+ * it via POST /Calls/{sid}/Recordings/{rsid} Status=stopped, but nothing here
+ * calls it and no UI exposes it. A promise that is silently ignored on a
+ * recorded borrower call is worse than no promise. The sentence returns when the
+ * stop control exists, and not before. */
 async function noticeConfig(): Promise<string> {
-  const fallbackName = 'Rene Duarte';
+  const fallbackName = 'Rates and Realty';
   const fallbackText =
-    "Hi, this is {name} with Rates and Realty. Before we get started — this call is " +
-    "recorded for quality assurance and training purposes. If you'd rather I didn't " +
-    "record, just say so and I'll turn it off.";
+    "Hi, this is {name}. Before we get started — this call is recorded for " +
+    "quality assurance and training purposes.";
   let text = fallbackText, name = fallbackName;
   try {
     const { data } = await sb.from('app_config')
@@ -108,12 +113,54 @@ async function noticeConfig(): Promise<string> {
       .in('key', ['call_recording_notice_text', 'call_recording_notice_name']);
     const map: Record<string, string> = {};
     for (const r of data || []) map[(r as any).key] = String((r as any).value ?? '').trim();
-    if (map.call_recording_notice_text) text = map.call_recording_notice_text;
+    /* An EXPLICITLY BLANK row means "no notice", and no notice means no
+     * recording (see canRecord below). It does not fall back to the default —
+     * that would make it impossible to turn the announcement off without also
+     * leaving recording on, which is the exact combination we are preventing. */
+    if ('call_recording_notice_text' in map) text = map.call_recording_notice_text;
     if (map.call_recording_notice_name) name = map.call_recording_notice_name;
   } catch (e) {
     console.error('[twilio-voice] notice config read failed, using approved default:', String(e));
   }
-  return text.replace(/\{name\}/g, name);
+  return text.replace(/\{name\}/g, name).trim();
+}
+
+/* ── FAIL CLOSED ON THE RECORDING, NOT ON THE CALL ───────────────────────────
+ *
+ * Losing a recording is free. Capturing audio nobody was told about is not. So
+ * when the disclosure cannot be played, the Dial is returned WITHOUT
+ * record="record-from-answer": the call still connects, and nothing is captured.
+ *
+ * "Cannot be played" is MEASURED, not assumed. Two conditions, both checked
+ * before the Dial TwiML is built:
+ *
+ *   1. the notice text resolves to something non-empty, and
+ *   2. the record_notice endpoint actually answers 200 with a <Say> in it
+ *
+ * (2) costs one same-region HTTP round trip per call setup, bounded at 2.5s. The
+ * alternative is assuming the whisper will play and being wrong silently, which
+ * is the failure this change exists to remove.
+ *
+ * record_notice is NO LONGER signature-validated, deliberately. Requiring a
+ * Twilio signature on it was what created the fail-open in the first place: a
+ * signature mismatch meant the whisper 403'd, the call connected, and recording
+ * ran anyway. The endpoint returns a fixed disclosure sentence — no caller data,
+ * no side effects, nothing an attacker gains by reading it aloud to themselves.
+ * Dropping the signature removes a failure mode and protects nothing less. */
+async function canRecord(noticeUrl: string, text: string): Promise<{ ok: boolean; reason: string }> {
+  if (!text) return { ok: false, reason: 'notice text is empty' };
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 2500);
+    const res = await fetch(noticeUrl, { signal: ctl.signal });
+    clearTimeout(timer);
+    if (!res.ok) return { ok: false, reason: `notice endpoint HTTP ${res.status}` };
+    const xml = await res.text();
+    if (!xml.includes('<Say')) return { ok: false, reason: 'notice endpoint returned no <Say>' };
+    return { ok: true, reason: 'ok' };
+  } catch (e) {
+    return { ok: false, reason: `notice endpoint unreachable: ${String((e as Error)?.message || e)}` };
+  }
 }
 
 function xmlEsc(s: string): string {
@@ -168,9 +215,14 @@ Deno.serve(async (req) => {
      * play_voicemail is fetched by Twilio and may arrive as GET, so it is
      * validated against an empty parameter set — the signature then covers the
      * URL alone, including the ?url= it is told to play. */
-    const _isTwilioShape = contentType.includes('application/x-www-form-urlencoded')
-      || subAction === 'play_voicemail'
-      || subAction === 'record_notice';
+    /* record_notice is deliberately EXCLUDED — see canRecord above. The
+     * exclusion is explicit rather than "it isn't form-encoded", because Twilio
+     * fetches a <Number url=""> whisper as a form-encoded POST by default, which
+     * would otherwise land right back in the signature branch and restore the
+     * fail-open this change removes. */
+    const _isTwilioShape = subAction !== 'record_notice'
+      && (contentType.includes('application/x-www-form-urlencoded')
+          || subAction === 'play_voicemail');
     if (_isTwilioShape) {
       const _raw = contentType.includes('application/x-www-form-urlencoded') ? await req.clone().text() : '';
       const sig = await verifyTwilioRequest(req, _raw, { authToken: AUTH_TOKEN, testKey: Deno.env.get('SMS_TEST_KEY') || '' });
@@ -304,11 +356,15 @@ Deno.serve(async (req) => {
          * url= whisper reaches Rene when he answers. */
         const noticeText = await noticeConfig();
         const noticeUrl = `${statusCb}?action=record_notice`;
+        const rec = await canRecord(noticeUrl, noticeText);
+        if (!rec.ok) console.error(`[twilio-voice] INBOUND NOT RECORDED — ${rec.reason}`);
+        const recAttr = rec.ok ? ` record="record-from-answer" recordingStatusCallback="${statusCb}"` : '';
+        const whisper = rec.ok ? ` url="${xmlEsc(noticeUrl)}"` : '';
         const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  ${noticeSay(noticeText)}
-  <Dial timeout="18" answerOnBridge="true" callerId="${from}" record="record-from-answer" recordingStatusCallback="${statusCb}" action="${statusCb}?phase=inbound_done" method="POST">
-    <Number url="${xmlEsc(noticeUrl)}" statusCallback="${statusCb}?phase=leg_status" statusCallbackEvent="completed" statusCallbackMethod="POST">${forwardTo}</Number>
+  ${rec.ok ? noticeSay(noticeText) : ''}
+  <Dial timeout="18" answerOnBridge="true" callerId="${from}"${recAttr} action="${statusCb}?phase=inbound_done" method="POST">
+    <Number${whisper} statusCallback="${statusCb}?phase=leg_status" statusCallbackEvent="completed" statusCallbackMethod="POST">${forwardTo}</Number>
   </Dial>
 </Response>`;
         console.log(`[twilio-voice] INBOUND from=${from} to=${to} sid=${callSid} contact=${inboundContactId} -> ringing ${forwardTo}`);
@@ -362,11 +418,15 @@ Deno.serve(async (req) => {
          * before the bridge. */
         const noticeText = await noticeConfig();
         const noticeUrl = `${recordingCb}?action=record_notice`;
+        const rec = await canRecord(noticeUrl, noticeText);
+        if (!rec.ok) console.error(`[twilio-voice] OUTBOUND NOT RECORDED — ${rec.reason}`);
+        const recAttr = rec.ok ? ` record="record-from-answer" recordingStatusCallback="${recordingCb}"` : '';
+        const whisper = rec.ok ? ` url="${xmlEsc(noticeUrl)}"` : '';
         const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  ${noticeSay(noticeText)}
-  <Dial callerId="${TWILIO_PHONE}" timeout="30" record="record-from-answer" recordingStatusCallback="${recordingCb}">
-    <Number url="${xmlEsc(noticeUrl)}">${dialTo}</Number>
+  ${rec.ok ? noticeSay(noticeText) : ''}
+  <Dial callerId="${TWILIO_PHONE}" timeout="30"${recAttr}>
+    <Number${whisper}>${dialTo}</Number>
   </Dial>
 </Response>`;
         console.log('[twilio-voice] dialing', dialTo, 'callerId=', TWILIO_PHONE);
@@ -424,10 +484,15 @@ Deno.serve(async (req) => {
     if (action === 'make_call') {
       if (!to) return err('Missing "to" phone number');
       const auth = btoa(`${ACCOUNT_SID}:${AUTH_TOKEN}`);
-      /* Disclosure on both legs, same shape as the other two recorded Dials. */
+      /* Disclosure on both legs, same shape and same fail-closed rule as the
+       * other two recorded Dials. */
       const mcNotice = await noticeConfig();
       const mcNoticeUrl = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice?action=record_notice`;
-      const dialTwiml = `<Response>${noticeSay(mcNotice)}<Dial callerId="${TWILIO_PHONE}" record="record-from-answer"><Number url="${xmlEsc(mcNoticeUrl)}">${formatPhone(to)}</Number></Dial></Response>`;
+      const mcRec = await canRecord(mcNoticeUrl, mcNotice);
+      if (!mcRec.ok) console.error(`[twilio-voice] make_call NOT RECORDED — ${mcRec.reason}`);
+      const mcRecAttr = mcRec.ok ? ' record="record-from-answer"' : '';
+      const mcWhisper = mcRec.ok ? ` url="${xmlEsc(mcNoticeUrl)}"` : '';
+      const dialTwiml = `<Response>${mcRec.ok ? noticeSay(mcNotice) : ''}<Dial callerId="${TWILIO_PHONE}"${mcRecAttr}><Number${mcWhisper}>${formatPhone(to)}</Number></Dial></Response>`;
       const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${ACCOUNT_SID}/Calls.json`, {
         method: 'POST',
         headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
