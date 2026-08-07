@@ -26,11 +26,13 @@
  * refusing the delete. The constraint is doing its job. What was broken was
  * the reporting.
  *
- * Still no in-function authorization — verify_jwt = false, service role.
- * That is the NEXT change, deliberately separate: this one must not alter
- * who can call it while we are proving the reporting is honest.
+ * GUARDED 2026-08-07 (requireStaff, ADMIN ONLY) and every outcome is now
+ * written to audit_log with the verified uid before anything is destroyed.
+ * verify_jwt stays pinned false: the anon key is a project-signed JWT printed
+ * in every page, so the pin is a stability control, not an access one.
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -85,6 +87,90 @@ async function findBlockers(id: string) {
   return found;
 }
 
+/* ── WHO DELETED WHAT ─────────────────────────────────────────────────────────
+ *
+ * This function had NO record of its own actions beyond console.log, which is
+ * why the seven contacts removed in April–May are unanswerable: nothing says
+ * who asked, or whether a given removal was a borrower's erasure request or
+ * routine list cleanup. Those are different obligations and we could not tell
+ * them apart after the fact.
+ *
+ * USES THE EXISTING audit_log TABLE — no new table. It already carries exactly
+ * this shape (table_name, row_id, operation, old_data, new_data, changed_by,
+ * changed_at) and already holds 1,163 rows for six other tables via the
+ * fn_audit_row() trigger.
+ *
+ * WHY NOT JUST PUT fn_audit_row ON contacts AS A TRIGGER. Two reasons, and both
+ * are disqualifying on their own:
+ *   1. It stamps changed_by = auth.uid(), which is NULL for an edge function
+ *      holding the service role — so "who", the entire point, would be lost.
+ *   2. A DELETE trigger only fires when a row is actually deleted. It can never
+ *      record a refusal, and fk_blocked / not_found are precisely the outcomes
+ *      we need to distinguish from a real deletion.
+ * So the row is written here, explicitly, with the uid from the verified JWT.
+ *
+ * IT CANNOT SILENTLY FAIL. The audit row is written BEFORE the delete, and if
+ * the write fails the delete does not happen — that ordering is the only one
+ * where "audited" and "deleted" cannot come apart. A post-hoc audit that fails
+ * leaves a destroyed record with no trace, which is the situation this exists
+ * to end. */
+async function writeAudit(
+  actorUid: string | null,
+  id: string,
+  operation: string,
+  snapshot: any,
+  detail: Record<string, unknown>,
+): Promise<{ ok: boolean; auditId?: number; error?: string }> {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/audit_log`, {
+      method: 'POST',
+      headers: { ...h, 'Prefer': 'return=representation' },
+      body: JSON.stringify({
+        table_name: 'contacts',
+        row_id: String(id),
+        operation,
+        old_data: snapshot || null,
+        new_data: detail,
+        changed_by: actorUid,
+      }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      return { ok: false, error: `audit_log HTTP ${res.status}: ${t.slice(0, 200)}` };
+    }
+    const rows = await res.json().catch(() => []);
+    return { ok: true, auditId: Array.isArray(rows) && rows[0] ? rows[0].id : undefined };
+  } catch (e) {
+    return { ok: false, error: `audit_log unreachable: ${String((e as Error)?.message || e)}` };
+  }
+}
+
+/** Correct an audit row when the delete failed AFTER it was written. */
+async function amendAudit(auditId: number | undefined, detail: Record<string, unknown>) {
+  if (!auditId) return;
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/audit_log?id=eq.${auditId}`, {
+      method: 'PATCH', headers: h, body: JSON.stringify({ new_data: detail }),
+    });
+  } catch (e) {
+    // Loud: an uncorrected row would claim a deletion that did not happen.
+    console.error('[delete-contacts] AUDIT AMEND FAILED', auditId, String(e));
+  }
+}
+
+/** The snapshot stored in old_data — enough to answer "which person was this". */
+async function contactSnapshot(id: string): Promise<any | null> {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/contacts?id=eq.${id}&select=id,first_name,last_name,email,phone,pipeline_status,lead_source,created_at`,
+      { headers: h },
+    );
+    if (!res.ok) return null;
+    const rows = await res.json().catch(() => []);
+    return Array.isArray(rows) && rows[0] ? rows[0] : null;
+  } catch (_) { return null; }
+}
+
 /** Pull the referencing table + constraint out of a PostgREST 23503 body. */
 function parseFkError(raw: string): { code?: string; table?: string; constraint?: string; message: string } {
   let body: any = null;
@@ -102,15 +188,39 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
 
   try {
+    /* GUARDED. Placed before req.json() — see require-staff's note 2: a check
+     * after body parsing is one a later action can be written in front of.
+     *
+     * ADMIN ONLY, deliberately, and this is a POLICY CALL FOR RENE, not an
+     * engineering default. The VA login is shared and rotating, and a contact
+     * delete cascades the borrower's whole tree with no undo. Starting closed is
+     * the reversible choice: widening this to ['admin','va'] later is one word,
+     * un-deleting a borrower is nothing.
+     *
+     * verify_jwt stays pinned false. The pin is a STABILITY control, not an
+     * access one — the anon key is a project-signed JWT printed in every page,
+     * so flipping it would add nothing this check does not already do. */
+    const staff = await requireStaff(req, { roles: ['admin'], what: 'Deleting contacts' });
+    if (!staff.ok) {
+      console.error('[delete-contacts] REJECTED:', staff.status, staff.msg);
+      return new Response(JSON.stringify({ success: false, error: staff.msg || 'unauthorized' }),
+        { status: staff.status || 403, headers: cors });
+    }
+    const actorUid = staff.userId || null;
+
     const { contact_ids } = await req.json();
     if (!Array.isArray(contact_ids) || !contact_ids.length)
       return new Response(JSON.stringify({ success: false, error: 'contact_ids array required' }), { status: 400, headers: cors });
 
-    console.log(`[delete-contacts] Deleting ${contact_ids.length}:`, contact_ids.join(', '));
+    console.log(`[delete-contacts] ${contact_ids.length} requested by ${actorUid}:`, contact_ids.join(', '));
     const results: any[] = [];
 
     for (const id of contact_ids) {
       try {
+        /* Snapshot BEFORE anything. Once the row is gone we cannot describe who
+           it was, and "which borrower was contact 93724c8a" is the question an
+           audit trail exists to answer. */
+        const snap = await contactSnapshot(id);
         /* PREFLIGHT. Deliberately before the PATCHes below.
          *
          * The old order nulled other contacts' referred_by_contact_id and
@@ -131,6 +241,11 @@ Deno.serve(async (req: Request) => {
         const existsCount = parseInt((exists.headers.get('content-range') || '').split('/')[1] || '0', 10);
         if (exists.ok && existsCount === 0) {
           console.error(`[delete-contacts] NOT FOUND ${id}`);
+          const a = await writeAudit(actorUid, id, 'DELETE_NOT_FOUND', snap, { outcome: 'not_found' });
+          if (!a.ok) {
+            results.push({ id, deleted: false, reason: 'audit_failed', error: `Refused: the audit record could not be written (${a.error}). Nothing was deleted.` });
+            continue;
+          }
           results.push({
             id, deleted: false, reason: 'not_found',
             error: 'No contact with this id — nothing was deleted. It may already have been removed.',
@@ -144,6 +259,11 @@ Deno.serve(async (req: Request) => {
             .map(b => `${b.rows < 0 ? '?' : b.rows} row(s) in ${b.table} (${b.note})`)
             .join('; ');
           console.error(`[delete-contacts] BLOCKED ${id}: ${detail}`);
+          const a = await writeAudit(actorUid, id, 'DELETE_BLOCKED', snap, { outcome: 'fk_blocked', blocked_by: blockers });
+          if (!a.ok) {
+            results.push({ id, deleted: false, reason: 'audit_failed', error: `Refused: the audit record could not be written (${a.error}). Nothing was deleted.` });
+            continue;
+          }
           results.push({
             id, deleted: false, reason: 'fk_blocked', blocked_by: blockers,
             error: `Blocked by ${detail}. These references are retained on purpose, so the contact cannot be deleted while they exist.`,
@@ -171,6 +291,7 @@ Deno.serve(async (req: Request) => {
         const badPatch = patches.find(p => !p.ok);
         if (badPatch) {
           console.error(`[delete-contacts] PRESTEP FAILED ${id}: ${badPatch.what} (${badPatch.status}) ${badPatch.body}`);
+          await writeAudit(actorUid, id, 'DELETE_FAILED', snap, { outcome: 'prestep_failed', what: badPatch.what, status: badPatch.status });
           results.push({
             id, deleted: false, reason: 'prestep_failed', status: badPatch.status,
             error: `Could not ${badPatch.what} (HTTP ${badPatch.status}): ${badPatch.body.slice(0, 300)}`,
@@ -181,6 +302,19 @@ Deno.serve(async (req: Request) => {
         /* The delete itself. Everything remaining is ON DELETE CASCADE.
          * The row was confirmed to exist above and nothing blocks it, so a 2xx
          * here means it went. */
+        /* AUDIT BEFORE DELETE. If this write fails, the contact is NOT deleted
+           — an unaudited deletion is the failure this whole change exists to
+           prevent, and refusing is recoverable where deleting is not. */
+        const audit = await writeAudit(actorUid, id, 'DELETE', snap, { outcome: 'deleted' });
+        if (!audit.ok) {
+          console.error(`[delete-contacts] AUDIT FAILED, NOT DELETING ${id}: ${audit.error}`);
+          results.push({
+            id, deleted: false, reason: 'audit_failed',
+            error: `Refused: the audit record could not be written (${audit.error}). Nothing was deleted.`,
+          });
+          continue;
+        }
+
         const res = await fetch(`${SUPABASE_URL}/rest/v1/contacts?id=eq.${id}`, { method: 'DELETE', headers: h });
 
         if (res.ok) {
@@ -200,6 +334,12 @@ Deno.serve(async (req: Request) => {
             `${fk.constraint ? `, constraint ${fk.constraint}` : ''}. ${fk.message}`
           : fk.message;
         console.error(`[delete-contacts] FAILED ${id} (${res.status}) ${fk.code || ''}: ${errText}`);
+        /* The audit row already says 'deleted'. It is not true — correct it
+           rather than leave a record claiming a deletion that never happened. */
+        await amendAudit(audit.auditId, {
+          outcome: isFk ? 'fk_blocked' : 'delete_failed',
+          pg_code: fk.code, table: fk.table, message: fk.message,
+        });
         results.push({
           id, deleted: false, reason: isFk ? 'fk_blocked' : 'delete_failed',
           status: res.status, pg_code: fk.code,
