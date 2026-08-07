@@ -32,6 +32,10 @@ const GUARD_PATTERNS = [
   [/auth_user_roles/,                               'auth_user_roles lookup'],
   [/requireAdmin|requireStaff|requireRole|assertAdmin/, 'require* helper'],
   [/SERVICE_ROLE_KEY\s*(===|==|!==|!=)|(===|==|!==|!=)\s*SERVICE/, 'service-key comparison'],
+  /* A caller that IS the database proves itself with a vault secret verified
+   * in Postgres — market-rate reads as UNGUARDED without this, and it is not.
+   * See verify_cron_secret() and _shared/require-staff.ts allowInternal. */
+  [/verify_cron_secret|x-cron-secret|x-internal-secret/,   'vault-secret check'],
   [/form_token|row_token|shared_secret|SHARED_SECRET/, 'row/shared token'],
   [/TEST_KEY|_SECRET\b/,                            'secret header'],
 ];
