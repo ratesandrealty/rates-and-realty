@@ -136,9 +136,9 @@ Deno.serve(async (req: Request) => {
      * +17149092526. Everything below trusts From= to identify a contact and to
      * record opt-outs, so an unsigned caller could suppress any number or
      * fabricate inbound traffic. */
-    const _sig = await verifyTwilioRequest(req, rawText, { authToken: Deno.env.get("TWILIO_AUTH_TOKEN") || "", testKey: Deno.env.get("SMS_TEST_KEY") || "" });
-    if (!_sig.ok) {
-      console.error("[twilio-inbound] REJECTED:", _sig.reason, "url=", _sig.url);
+    const sig = await verifyTwilioRequest(req, rawText, { authToken: Deno.env.get("TWILIO_AUTH_TOKEN") || "", testKey: Deno.env.get("SMS_TEST_KEY") || "" });
+    if (!sig.ok) {
+      console.error("[twilio-inbound] REJECTED:", sig.reason, "url=", sig.url);
       return twilioForbidden();
     }
     const params = new URLSearchParams(rawText);

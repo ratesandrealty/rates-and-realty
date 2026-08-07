@@ -111,9 +111,9 @@ Deno.serve(async (req) => {
     const _isTwilioShape = contentType.includes('application/x-www-form-urlencoded') || subAction === 'play_voicemail';
     if (_isTwilioShape) {
       const _raw = contentType.includes('application/x-www-form-urlencoded') ? await req.clone().text() : '';
-      const _sig = await verifyTwilioRequest(req, _raw, { authToken: AUTH_TOKEN, testKey: Deno.env.get('SMS_TEST_KEY') || '' });
-      if (!_sig.ok) {
-        console.error('[twilio-voice] REJECTED:', _sig.reason, 'url=', _sig.url);
+      const sig = await verifyTwilioRequest(req, _raw, { authToken: AUTH_TOKEN, testKey: Deno.env.get('SMS_TEST_KEY') || '' });
+      if (!sig.ok) {
+        console.error('[twilio-voice] REJECTED:', sig.reason, 'url=', sig.url);
         return twilioForbidden();
       }
     }
