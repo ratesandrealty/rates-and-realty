@@ -35,6 +35,45 @@ const PUBLIC_HOSTS = new Set([
 ]);
 const ADMIN_HOST = 'admin.ratesandrealty.com';
 
+/* Pages reachable at a SHORT URL: /portal serves public/portal.html, the way
+ * /admin/people already serves admin/people.html.
+ *
+ * WHY AN EXPLICIT LIST. The obvious implementation — try public/<slug>.html and
+ * fall through if it 404s — cannot work: the asset binding used to answer a
+ * missing file with index.html and a 200, so "does this file exist" had no
+ * answer. That is fixed below, but an explicit list is still the right shape:
+ * it makes the set of public URLs reviewable, and tools/check-short-urls.mjs
+ * fails the build if it drifts from public/*.html.
+ *
+ * DELIBERATE OMISSIONS, all four for different reasons:
+ *   fee, cma        — already routed as /fee/<slug> and /cma/<slug>; the pages
+ *                     read that slug from location.pathname, so a bare /fee
+ *                     would render a snapshot page with nothing to render.
+ *   admin-chat      — moving to admin/chat-conversations.html, behind the gate.
+ *   privacy-policy,
+ *   terms-of-service — NOT duplicates of the root privacy.html / terms.html.
+ *                     They carry the credit-repair funnel's CROA disclaimer,
+ *                     payment terms and 30-day refund policy, which the root
+ *                     pair does not; the root pair carries SMS terms and CCPA
+ *                     rights, which these do not. Pending a merge, neither
+ *                     version gets promoted to a short URL. */
+const PUBLIC_PAGES = new Set([
+  'about', 'apply', 'bank-statement', 'commercial', 'contact', 'conventional',
+  'credit-optimization', 'down-payment-assistance', 'dscr', 'dscr-investor',
+  'fha', 'first-time-buyer', 'fix-flip', 'jumbo', 'lender-form', 'portal',
+  'property-detail', 'realtor-referral', 'refinance', 'refund-policy',
+  'search-homes', 'thank-you-credit', 'unified-portal', 'va',
+]);
+/* Old paths that must keep resolving, as a 301 rather than a page. public/
+ * search.html is a 248-byte stub whose entire body is a meta-refresh to
+ * search-homes.html — a redirect pretending to be a page. Served here it costs
+ * one round trip instead of two, and tells a crawler what actually happened. */
+const REDIRECTS = new Map([['search', '/search-homes']]);
+/* Marketing pages that live at the repo root rather than under public/. The
+ * legal pair here is the one linked from all 48 footers and updated most
+ * recently; see the note above. */
+const ROOT_PAGES = new Set(['privacy', 'terms', 'sms-consent']);
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -86,6 +125,21 @@ export default {
       }
     }
     // === END CANONICAL HOST REDIRECTS ==============================
+
+    /* === THE HOMEPAGE, ROUTED EXPLICITLY ===========================
+     * "/" used to arrive here through the asset binding's not_found_handling
+     * = "single-page-application", which answered EVERY unmatched path with
+     * index.html and a 200. That fallback is gone (see the 404 handler at the
+     * bottom), and html_handling = "none" means "/" resolves to no asset on its
+     * own — so the homepage has to be named. This must stay ABOVE every
+     * clean-URL rule below; it is the one path the fallback was load-bearing
+     * for. */
+    if ((request.method === 'GET' || request.method === 'HEAD') && (path === '/' || path === '/index.html')) {
+      const newUrl = new URL(request.url);
+      newUrl.pathname = '/index.html';
+      return withCsp(await env.ASSETS.fetch(new Request(newUrl, request)), path);
+    }
+    // === END HOMEPAGE ==============================================
 
     /* === VIDEO LANDING PAGE (/v/{slug}) ============================
      * Canonical route for a personal video. Three sub-paths, all same-origin so
@@ -487,7 +541,46 @@ export default {
       return withCsp(await env.ASSETS.fetch(new Request(newUrl, request)), path);
     }
 
-    return withAssetCache(withCsp(await env.ASSETS.fetch(request), path), url);
+    /* Clean-URL routing for the PUBLIC site (/portal → public/portal.html,
+     * /privacy → privacy.html). Mirrors the /admin and /areas rules above; the
+     * allowlists at the top of this file decide, because a rewrite that guessed
+     * would 404 on every typo instead of falling through. Single segment only,
+     * no dot — so /public/portal.html and every static asset skip this. */
+    if ((request.method === 'GET' || request.method === 'HEAD') && /^\/[A-Za-z0-9_-]+$/.test(path)) {
+      const slug = path.slice(1);
+      if (REDIRECTS.has(slug)) {
+        const dest = new URL(request.url);
+        dest.pathname = REDIRECTS.get(slug);
+        return Response.redirect(dest.toString(), 301);
+      }
+      const target = PUBLIC_PAGES.has(slug) ? `/public/${slug}.html`
+                   : ROOT_PAGES.has(slug) ? `/${slug}.html`
+                   : null;
+      if (target) {
+        const newUrl = new URL(request.url);
+        newUrl.pathname = target;
+        return withCsp(await env.ASSETS.fetch(new Request(newUrl, request)), path);
+      }
+    }
+
+    /* Anything still unmatched is genuinely not a route. It used to be answered
+     * with index.html and a 200 — which is how /search-homes looked like a
+     * working page while being the marketing homepage, how two borrowers were
+     * texted a pre-filtered search that silently became the front page, and how
+     * the R2 backup filled with copies of index.html while reporting errors: 0.
+     * A 404 that says 404 is the whole point of this change. */
+    const res = await env.ASSETS.fetch(request);
+    if (res.status === 404) {
+      const page = await env.ASSETS.fetch(new Request(new URL('/404.html', request.url), request));
+      return new Response(page.ok ? page.body : 'Not found', {
+        status: 404,
+        headers: {
+          'Content-Type': page.ok ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-store',
+        },
+      });
+    }
+    return withAssetCache(withCsp(res, path), url);
   }
 };
 

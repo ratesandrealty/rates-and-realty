@@ -53,11 +53,14 @@ function localHash(urlPath) {
 }
 
 /* File path → the URL the worker serves it at. App HTML is served extensionless
- * (topbar links are href="inbox"), so try that first and fall back to the .html. */
+ * (topbar links are href="inbox"), so try that first and fall back to the .html.
+ * public/foo.html is ALSO served at the short URL /foo, which is the canonical
+ * one and therefore the one worth checking first. */
 function urlCandidates(relPath) {
   const noExt = relPath.replace(/\.html$/, '');
-  if (noExt === 'index') return ['/'];
+  if (noExt === 'index') return ['/', '/index.html'];
   if (noExt.endsWith('/index')) return ['/' + noExt.replace(/\/index$/, '') + '/', '/' + relPath];
+  if (noExt.startsWith('public/')) return ['/' + noExt.slice('public/'.length), '/' + noExt, '/' + relPath];
   return ['/' + noExt, '/' + relPath];
 }
 
@@ -247,6 +250,34 @@ for (const { rel, want, seen } of bad) {
   if (soft) console.log(`        note: ${soft.cand} answers 200 with the HOMEPAGE (soft 404) — not a real route.`);
 }
 if (!pageFailures) console.log(`  all ${allPages.length} page(s) serve their own bytes.`);
+
+/* ── PASS 3: DOES A WRONG URL SAY SO? ────────────────────────────────────────
+ *
+ * The asset binding used to answer every unmatched path with index.html and a
+ * 200. Everything downstream believed it: /search-homes looked like a working
+ * page, two borrowers were texted a pre-filtered search that silently became
+ * the marketing homepage, and the R2 backup filled with copies of index.html
+ * while reporting errors: 0.
+ *
+ * That is now `not_found_handling = "none"` plus a 404 handler in the worker —
+ * a one-line config away from coming back, with no visible symptom. So assert
+ * it: a path that does not exist must not answer 200, and must not answer with
+ * the homepage. */
+console.log('\nchecking that unknown paths 404…');
+{
+  const probes = ['/definitely-not-a-page-xyzzy', '/public/definitely-not-a-page-xyzzy.html', '/admin/not-a-real-admin-page-xyzzy'];
+  let softFound = 0;
+  for (const p of probes) {
+    const r = await fetch(BASE + p, { redirect: 'manual', headers: { 'cache-control': 'no-cache' } });
+    const body = r.status === 200 ? await r.text() : '';
+    const isHome = !!(body && indexHash && createHash('sha256').update(body).digest('hex').slice(0, 10) === indexHash);
+    if (r.status === 404) { console.log(`  ok   ${p} → 404`); continue; }
+    softFound++;
+    console.log(`  FAIL ${p} → HTTP ${r.status}${isHome ? ' serving the HOMEPAGE — the soft-404 is back' : ''}`);
+    if (isHome) console.log('        check not_found_handling in wrangler.toml; it must be "none".');
+  }
+  if (softFound) pageFailures += softFound;
+}
 
 
 if (failures) {

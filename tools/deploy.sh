@@ -69,6 +69,18 @@ if ! node tools/check-functions.mjs; then
 fi
 
 echo
+echo "── 3b/6 short-URL allowlist ─────────────────────────────"
+# The worker serves /portal from public/portal.html via an allowlist, and adding
+# a page to public/ does not make anyone edit the worker. A page missing from the
+# list is a page whose short URL 404s — silent, and only ever noticed by whoever
+# was sent the link.
+if ! node tools/check-short-urls.mjs; then
+  echo
+  echo "The short-URL allowlist has drifted from public/. Nothing was deployed."
+  exit 1
+fi
+
+echo
 echo "── 4/6 cache pins ───────────────────────────────────────"
 if ! node tools/stamp-assets.mjs --check; then
   echo
