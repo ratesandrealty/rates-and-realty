@@ -423,3 +423,23 @@ verify_jwt = true
 # Staff-guarded in-function via _shared/require-staff.ts — the VA sends VOEs.
 # true is the CLI default; pinned so it is a choice rather than a default.
 verify_jwt = true
+
+[functions.chat-ai]
+# The public website's chat widget (public/js/chat-widget.js, on the homepage and
+# ~20 public pages) posts here with NO Authorization and NO apikey header at all,
+# so the gateway must not require one. Confirmed against the deployed function on
+# 2026-08-06: an unauthenticated POST reaches the function and returns its own
+# validation error, not a gateway 401.
+#
+# Pinned at its CURRENT value. This changes nothing about who can call it — it
+# stops the next deploy choosing for us. Unpinned, the CLI defaults verify_jwt
+# back to true, which would have 401'd every visitor's chat message with the
+# widget showing "Sorry, something went wrong" and nothing alerting; that is the
+# same failure that left send-scheduled-sms returning UNAUTHORIZED_NO_AUTH_HEADER
+# for days. tools/deploy-function.sh also refuses an unpinned slug, so until now
+# this function could not be deployed through the wrapper at all.
+#
+# NOT a guard, and this one is genuinely open: no session (visitors have none),
+# no row token, no rate limit, and it spends money per call on an LLM. Listed in
+# docs/PINNED-NOT-GUARDED.md with its guard type.
+verify_jwt = false

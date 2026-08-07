@@ -187,6 +187,48 @@ is a spend risk), `loe-generate`, `market-rate`, `parse-signature`,
 
 ---
 
+## A different class: open and never pinned at all
+
+The 19 above are pinned `verify_jwt = true` and unguarded — reachable because the
+anon key is a project-signed JWT. These are reachable because **nothing is asked
+for at all**, and they were never pinned, so the CLI has been choosing on every
+deploy.
+
+| function | callers | why it is open, and what it costs |
+|---|---|---|
+| **`chat-ai`** | `public/js/chat-widget.js` — the homepage and ~20 public pages | Site visitors have no session, and the widget sends **no `Authorization` and no `apikey` header at all**. Verified 2026-08-06: an unauthenticated POST reaches the function and returns its own validation error, not a gateway 401. It calls an LLM, so **every call spends money**, and there is no rate limit in front of it. |
+
+**Pinned `verify_jwt = false` on 2026-08-06** — its current value, so nothing
+about access changed. The pin is the stability control: unpinned, the CLI
+defaults it back to `true`, which would 401 every visitor's chat message while
+the widget displayed "Sorry, something went wrong" and nothing alerted. That is
+exactly how `send-scheduled-sms` returned `UNAUTHORIZED_NO_AUTH_HEADER` for days.
+`tools/deploy-function.sh` also refuses an unpinned slug, so until the pin this
+function could not be deployed through the wrapper at all.
+
+**Guard type: rate limit, not authentication.** There is no caller identity to
+check — that is the point of a public chat widget. The shape that fits is the one
+`submit-showing` is getting: per-IP limiting in `video_chat_limits` with its own
+prefix (noting the missing unique index on `bucket_key`), plus a cap on message
+length and turns per session. A Turnstile token is the stronger option and the
+widget already has a natural place to render one.
+
+**Not urgent on current evidence, and worth saying why:** 101 page views between
+2026-04-04 and 2026-07-14, four conversations, all from launch week. The spend
+risk is real but unrealised, and it becomes real the moment the site gets traffic
+— which is the wrong moment to discover it.
+
+### 74 of 127 deployed functions are unpinned
+
+`chat-ai` was not special, it was just the one we tripped over. 73 of those 74
+run `verify_jwt = false`. Every one of them is undeployable through
+`tools/deploy-function.sh` (step 3 refuses an unpinned slug) and has its value
+chosen by the CLI rather than by anyone. Sweeping them is its own task; pin at
+the current live value, which changes no behaviour, and record the ones that are
+genuinely open here.
+
+---
+
 ## Method for each
 
 The order is not optional — it is in `CLAUDE.md` and was learned by breaking
