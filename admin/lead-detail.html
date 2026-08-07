@@ -36729,13 +36729,25 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
     document.getElementById('cmSaveBtn').addEventListener('click', saveAndClose);
   }
 
+  /* Sends the SIGNED-IN USER via fn-call.js, not the anon key — same helper and
+   * pattern as admin/js/crm-comms.js. get_token mints a one-hour Twilio Voice
+   * capability JWT that can dial any number from the business line, so the anon
+   * key (printed in this page's own source, identifying nobody) was the wrong
+   * credential for it by a wide margin.
+   *
+   * FRONTEND HALF ONLY — twilio-voice still has no guard on its JSON actions, so
+   * a mistake here shows up as a dialer that still works rather than an outage.
+   * No anon fallback: a fallback authenticates nobody and turns a clear "not
+   * signed in" into an unexplainable 401 once the guard lands. */
+  function _voiceFetch(payload) {
+    if (typeof window.fnFetch !== 'function') {
+      return Promise.reject(new Error('fn-call.js is not loaded — cannot call twilio-voice as the signed-in user.'));
+    }
+    return window.fnFetch('twilio-voice', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
   function fetchToken() {
-    var anon = getAnon();
-    return fetch(VOICE_FN, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: anon, Authorization: 'Bearer ' + anon },
-      body: JSON.stringify({ action: 'get_token' })
-    }).then(function(r) { return r.json(); });
+    return _voiceFetch({ action: 'get_token' }).then(function(r) { return r.json(); });
   }
 
   function getDevice() {
@@ -36808,7 +36820,6 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
 
   function saveAndClose() {
     var notes = (document.getElementById('cmEndNotes') && document.getElementById('cmEndNotes').value) || '';
-    var anon = getAnon();
     var sid = (activeCall && activeCall.parameters && activeCall.parameters.CallSid) || window._currentCallSid || '';
     var contactIdForRefresh = (currentContact && currentContact.id) || null;
 
@@ -36819,19 +36830,15 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       try { window.dispatchEvent(new CustomEvent('call-logged', { detail: { contact_id: contactIdForRefresh } })); } catch(_) {}
     }
 
-    fetch(VOICE_FN, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: anon, Authorization: 'Bearer ' + anon },
-      body: JSON.stringify({
-        action: 'log_call',
-        contact_id: contactIdForRefresh,
-        to: (currentContact && currentContact.phone) || null,
-        duration: callDuration,
-        status: 'completed',
-        notes: notes,
-        outcome: selectedOutcome,
-        twilio_call_sid: sid
-      })
+    _voiceFetch({
+      action: 'log_call',
+      contact_id: contactIdForRefresh,
+      to: (currentContact && currentContact.phone) || null,
+      duration: callDuration,
+      status: 'completed',
+      notes: notes,
+      outcome: selectedOutcome,
+      twilio_call_sid: sid
     }).then(refreshPanels, function(e) {
       console.warn('[log_call]', e);
       refreshPanels();
@@ -36936,11 +36943,15 @@ async function loadVoicemailLibrary() {
 async function dropVoicemail(vmUrl) {
   closeVmPicker();
   if (typeof showToast === 'function') showToast('Dropping voicemail...');
-  var anon = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+  /* Signed-in user, not the anon key. This function sits OUTSIDE the browser-
+     calling IIFE, so it cannot use _voiceFetch and calls fn-call.js directly —
+     same contract, no anon fallback, loud failure if the helper is absent. */
   try {
-    var res = await fetch(VOICE_FN, {
+    if (typeof window.fnFetch !== 'function') {
+      throw new Error('fn-call.js is not loaded — cannot call twilio-voice as the signed-in user.');
+    }
+    var res = await window.fnFetch('twilio-voice', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': anon, 'Authorization': 'Bearer ' + anon },
       body: JSON.stringify({ action: 'voicemail_drop', to: window._callPhone, voicemail_url: vmUrl, contact_id: window._callContactId })
     });
     var data = await res.json();
