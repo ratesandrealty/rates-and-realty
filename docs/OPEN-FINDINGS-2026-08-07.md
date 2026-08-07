@@ -196,6 +196,73 @@ not be read as one.
 
 ---
 
+## 8. SMS delivery is not recorded anywhere — and the "18%" figure was invented
+
+**CORRECTION FIRST.** Toll-free verification on **+18668919394 has been APPROVED
+since 2023-12-05**, confirmed in the Twilio console's Regulatory Information tab.
+Approved toll-free numbers have no sending caps.
+
+Any claim that verification was never started, or that ~18% of outbound SMS fails
+because of it, is **FALSE**. The 18% figure has no source: it appears in no
+document, no code comment, no commit message and no commit diff in this repo's
+entire history (`git log --all -S"18%"` returns nothing relevant). It was
+asserted in conversation and never had a basis. Do not carry it forward.
+
+One written trace of the same false premise survives in code — a comment in
+`supabase/functions/gdrive-health-monitor/index.ts:777` (commit `7f1abef`) refers
+to "the toll-free deliverability problem" as established fact while arguing for
+shorter alert bodies. **The segment-reduction change it justifies is still
+correct on its own merits** — one emoji really does force GSM-7 to UCS-2 and cut
+a segment from 153 characters to 67, which is a real cost and a real
+truncation risk. Only the deliverability premise is wrong. Left in place
+pending a decision; it is a comment, not behaviour.
+
+**What is actually true is worse, and is a visibility gap rather than a
+delivery problem:**
+
+`sms_log` holds 413 `sent`, 2 `blocked` (both genuine opt-outs, working as
+intended), 19 `received`, and **zero** `failed`, since 2026-04-02. That looks
+like a flawless channel. It is not evidence of one.
+
+`sms-service`'s `sendTwilioSMS()` posts exactly three parameters:
+
+```ts
+const params: Record<string,string> = {To:formatPhone(to),From:(fromOverride||'').trim()||TWILIO_FROM,Body:body};
+if (mediaUrl) params.MediaUrl = mediaUrl;
+```
+
+**There is no `StatusCallback`.** `status` is written once, at insert, from
+`result.sent` — which is true whenever the Twilio *API* returned a SID. That is
+"Twilio accepted it for sending", not "it arrived". A message accepted and then
+rejected by the carrier, or silently dropped, is recorded as `sent` forever.
+
+Nothing anywhere consumes Twilio message-status webhooks. `StatusCallback` /
+`MessageStatus` appear nowhere in any edge function except the **voice** paths
+(`twilio-voice`, `click-to-call`). `twilio-inbound` handles only inbound bodies
+(`From`, `Body`), writing `status: 'received'`.
+
+So the honest statement is: **we have no delivery data at all, and never have.**
+The zero-failure record is the absence of a sensor, not a clean signal.
+
+**Smallest change that would fix it** (not built):
+
+1. `sms-service` → `sendTwilioSMS()`: add one parameter,
+   `params.StatusCallback = '<SUPABASE_URL>/functions/v1/twilio-inbound'`.
+2. `twilio-inbound`: branch when the form body carries `MessageStatus`, and
+   `update sms_log set status = <MessageStatus>, error_message = <ErrorCode>
+   where twilio_sid = <MessageSid>`.
+
+No schema change is needed — `sms_log.status` and `sms_log.twilio_sid` both
+already exist and the SID is already stored on every send. `twilio-inbound` is
+already pinned `verify_jwt = false`, so Twilio can reach it.
+
+Worth knowing before building it: `twilio-inbound` does **not** validate the
+Twilio signature, so a status-callback branch would accept forged delivery
+statuses. That is pre-existing on the inbound path, not created by this change,
+but it is the moment to fix it.
+
+---
+
 ## Method note, because it changed three answers
 
 Three claims in this session were wrong in the same way: a pattern matched text
