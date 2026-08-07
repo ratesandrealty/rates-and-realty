@@ -29,6 +29,14 @@
  * for a gate: it under-reports rather than crying wolf, and a gate that cries
  * wolf gets switched off.
  *
+ * WHERE THE BUGS IN THIS TOOL LIVE — read before changing scrub()
+ * Every false positive it has produced came from the scrubber, never from the
+ * matching. Blanking comments and strings in the wrong order deletes real code,
+ * and the symptom is a confident report that a function nobody touched has
+ * ceased to exist. It once announced eighteen of those. `--self-test` pins the
+ * exact constructs that broke earlier versions; run it before believing any
+ * change here.
+ *
  *   node tools/check-symbols.mjs                 every page
  *   node tools/check-symbols.mjs public/search-homes.html
  */
@@ -55,12 +63,12 @@ Element HTMLElement Node NodeList DOMParser XMLSerializer TextEncoder TextDecode
 IntersectionObserverEntry CSS getComputedStyle matchMedia scrollTo scrollBy open close print
 Uint8Array Uint16Array Uint32Array Int8Array Int16Array Int32Array Float32Array Float64Array ArrayBuffer DataView
 crypto performance caches indexedDB
+addEventListener removeEventListener dispatchEvent postMessage getSelection focus blur
+scroll scrollX scrollY innerWidth innerHeight outerWidth outerHeight devicePixelRatio
+requestIdleCallback cancelIdleCallback reportError isSecureContext origin name status
 supabase turnstile google grecaptcha Stripe gtag dataLayer Chart L flatpickr pdfjsLib DOMPurify html2canvas jspdf
 Cal Calendly Intercom fbq
 require module exports process globalThis self top parent frames
-calc rgb rgba hsl hsla url translate translateX translateY translate3d scale scaleX scaleY
-rotate skew matrix blur brightness grayscale opacity cubic-bezier steps clamp minmax repeat
-linear-gradient radial-gradient conic-gradient attr counter env
 `.trim().split(/\s+/));
 
 /* ── extraction ─────────────────────────────────────────────────────────── */
@@ -71,34 +79,77 @@ linear-gradient radial-gradient conic-gradient attr counter env
  * collapsed each comment to a single space, and every line number after the
  * first comment in the file was wrong. */
 const blank = (s) => s.replace(/[^\n]/g, ' ');
-const stripComments = (js) => js
-  .replace(/\/\*[\s\S]*?\*\//g, blank)
-  .replace(/(^|[^:\\])\/\/[^\n]*/g, (m, p1) => p1 + blank(m.slice(p1.length)));
 
-/* Scrub a chunk LINE BY LINE: comments stripped, then string literals blanked
- * within each line independently, so a misread quote cannot leak past the
- * newline and scan the rest of the file inside-out. */
-const scrub = (js) => stripComments(js).split('\n').map(blankStrings).join('\n');
-
-/* Blank out string and template literals so their contents are never mistaken
- * for code. Character-wise, because a regex cannot tell a quote from an
- * apostrophe inside another quote. */
-function blankStrings(js) {
-  let out = '', i = 0;
+/* ONE pass, one state machine, because the ordering problem has no answer.
+ *
+ * Stripping comments first breaks on a string that contains `/*`:
+ *     +'<input type="file" accept="image/*" onchange="…">'
+ * That `image/*` opened a phantom block comment which ran to the next real
+ * `* /` — blanking 10,192 characters of live code in lead-detail.html, taking
+ * `function closeTextComposer` and eight other declarations with it. Every call
+ * to them was then reported as undefined.
+ *
+ * Blanking strings first breaks the other way, on an apostrophe in a comment
+ * (`// don't do this`), which opens a string that swallows the rest of the file.
+ *
+ * So neither can go first, and scanning per line only bounds the damage instead
+ * of fixing it. A single walk that knows which construct it is inside at every
+ * character has no ordering to get wrong. Output is the same length as the
+ * input with newlines preserved, so offsets still map to real line numbers.
+ *
+ * Template `${…}` holes are returned to code, not blanked: they hold real calls.
+ * The literal TEXT around them stays blanked, which is what keeps prose like
+ * "Cooldown between replies (seconds)" from reading as a call to replies(). */
+function scrub(js) {
+  let out = '', i = 0, mode = 'code', lastSig = '', inClass = false;
+  const tpl = [];                       // brace depth per open ${ } hole
+  const sp = (c) => (c === '\n' ? '\n' : ' ');
   while (i < js.length) {
-    const c = js[i];
-    /* NO regex-literal handling here, deliberately. Blanking regex literals
-     * removes one real false positive — `/(^|[^a-z])va([^a-z]|\d|$)/` reads as
-     * a call to va() — but telling a regex from a division without a parser
-     * needs context this scanner does not have, and every version I tried
-     * swallowed real code instead: declarations vanished and the calls to them
-     * were reported as undefined. A handful of regex-shaped false positives is
-     * the cheaper error. `va` is in KNOWN_NOISE below. */
-    if (c === '"' || c === "'" || c === '`') {
-      const q = c; let j = i + 1;
-      while (j < js.length && js[j] !== q) { if (js[j] === '\\') j++; j++; }
-      out += blank(js.slice(i, Math.min(j, js.length) + 1)); i = j + 1;
-    } else { out += c; i++; }
+    const c = js[i], d = js[i + 1];
+    if (mode === 'code') {
+      if (c === '/' && d === '/') { mode = 'line'; out += '  '; i += 2; continue; }
+      if (c === '/' && d === '*') { mode = 'block'; out += '  '; i += 2; continue; }
+      /* A `/` is a regex only where a value can start. After an identifier, a
+       * number or a `)` it is division. lastSig is reliable here precisely
+       * because this walk never confuses a string for code. */
+      if (c === '/' && (lastSig === '' || '([{,;:=!&|?+-*%~^<>'.includes(lastSig))) {
+        mode = 'regex'; inClass = false; out += ' '; i++; continue;
+      }
+      if (c === '"' || c === "'") { mode = c; out += ' '; i++; continue; }
+      if (c === '`') { mode = '`'; out += ' '; i++; continue; }
+      if (tpl.length) {
+        if (c === '{') { tpl[tpl.length - 1]++; }
+        else if (c === '}') {
+          if (tpl[tpl.length - 1] === 0) { tpl.pop(); mode = '`'; out += ' '; i++; continue; }
+          tpl[tpl.length - 1]--;
+        }
+      }
+      out += c;
+      if (!/\s/.test(c)) lastSig = c;
+      i++; continue;
+    }
+    if (mode === 'line') {
+      if (c === '\n') { mode = 'code'; out += '\n'; } else out += ' ';
+      i++; continue;
+    }
+    if (mode === 'block') {
+      if (c === '*' && d === '/') { mode = 'code'; out += '  '; i += 2; continue; }
+      out += sp(c); i++; continue;
+    }
+    if (mode === 'regex') {
+      if (c === '\\') { out += '  '; i += 2; continue; }
+      if (c === '\n') { mode = 'code'; out += '\n'; i++; continue; }   // unterminated → it was division
+      if (c === '[') inClass = true;
+      else if (c === ']') inClass = false;
+      else if (c === '/' && !inClass) { mode = 'code'; lastSig = 'x'; out += ' '; i++; continue; }
+      out += ' '; i++; continue;
+    }
+    // inside a string or template literal
+    if (c === '\\') { out += '  '; i += 2; continue; }
+    if (mode === '`' && c === '$' && d === '{') { tpl.push(0); mode = 'code'; out += '  '; i += 2; continue; }
+    if (c === mode) { mode = 'code'; lastSig = 'x'; out += ' '; i++; continue; }
+    if (mode !== '`' && c === '\n') { mode = 'code'; out += '\n'; i++; continue; }  // unterminated quote
+    out += sp(c); i++; continue;
   }
   return out;
 }
@@ -224,10 +275,10 @@ await async yield break continue default export import from as get set static`.t
  * the number printed is the one you can jump to. */
 function calledIn(js, lineOf) {
   const hits = new Map();
-  const lines = stripComments(js).split('\n');
+  const lines = scrub(js).split('\n');   // one scan; already comment/string/regex aware
   let pos = 0;
   lines.forEach((raw, idx) => {
-    const src = blankStrings(raw);
+    const src = raw;   // scrub() already applied above
     /* No \s* before the paren, and no hyphen before the name. `foo (x)` with a
        space is prose inside a template literal far more often than a call —
        "Cooldown between replies (seconds)" reported `replies` as undefined —
@@ -258,7 +309,7 @@ function handlersIn(html) {
     const line = html.slice(0, m.index).split('\n').length;
     /* A handler's own strings are data: onmouseover="...'rgba(1,2,3)'" is CSS,
        not a call to rgba(). */
-    for (const [, , name] of blankStrings(m[2]).matchAll(/(^|[^\w$.?])([A-Za-z_$][\w$]*)\s*\(/g)) {
+    for (const [, , name] of scrub(m[2]).matchAll(/(^|[^\w$.?])([A-Za-z_$][\w$]*)\s*\(/g)) {
       if (KEYWORD.has(name)) continue;
       if (!hits.has(name)) hits.set(name, line);
     }
@@ -296,16 +347,16 @@ function checkPage(file) {
     [...html.matchAll(/typeof\s+([A-Za-z_$][\w$]*)\s*[!=]==?\s*['"](?:function|undefined)['"]/g)].map((m) => m[1])
   );
 
-  /* Names that read as calls but are not, and that the scanner cannot tell apart
-   * without a parser. Each is verified by hand and named with its cause, so this
-   * list stays short and honest rather than becoming a place to hide findings. */
-  const KNOWN_NOISE = new Set([
-    'va',   // public/fee.html:471 — inside the regex /(^|[^a-z])va([^a-z]|\d|$)/
-  ]);
+  /* There is no suppression list. There was one — `va`, from the regex
+   * /(^|[^a-z])va([^a-z]|\d|$)/ in fee.html — and it existed only because the
+   * scanner could not tell a regex literal from division. The single-pass
+   * scrubber can, so the entry was deleted rather than kept. A suppression list
+   * is where a checker goes to stop being true; if something needs suppressing,
+   * fix the scanner or explain it as a browser global. */
 
   const missing = new Map();
   const consider = (name, line, how) => {
-    if (declared.has(name) || BROWSER.has(name) || guarded.has(name) || KNOWN_NOISE.has(name)) return;
+    if (declared.has(name) || BROWSER.has(name) || guarded.has(name)) return;
     if (!missing.has(name)) missing.set(name, { line, how });
   };
   for (const [n, l] of handlersIn(html)) consider(n, l, 'onclick=');
@@ -321,7 +372,67 @@ function checkPage(file) {
   return { rel, missing };
 }
 
+/* Exported so the internals can be bisected from a test without re-running the
+ * whole sweep. Finding a false positive means asking WHICH stage lost a name —
+ * script extraction, scrubbing, or the declaration patterns — and guessing at
+ * that from the outside is how four wrong fixes got made. */
+export { inlineScripts, declaredIn, calledIn, handlersIn, scrub, checkPage };
+
+/* Self-test for the scrubber, which is where every false positive this tool has
+ * ever produced came from. Each case below is a real construct out of this
+ * codebase that broke an earlier version. Run with --self-test; the deploy runs
+ * it before the sweep, so a scrubber regression fails loudly instead of quietly
+ * blanking code and reporting the calls to it as undefined.
+ *
+ *   node tools/check-symbols.mjs --self-test
+ */
+function selfTest() {
+  const cases = [
+    ['string containing /* does not open a comment',
+     `var a='<input accept="image/*">';\nfunction survivor(){}`, 'survivor', true],
+    ['apostrophe in a line comment does not open a string',
+     `// don't do this\nfunction survivor(){}`, 'survivor', true],
+    ['real block comment IS removed',
+     `/* function ghost(){} */\nfunction survivor(){}`, 'ghost', false],
+    ['real line comment IS removed',
+     `// function ghost(){}\nfunction survivor(){}`, 'ghost', false],
+    ['regex literal is not code',
+     `if(/(^|[^a-z])va([^a-z])/.test(s)){}\nfunction survivor(){}`, 'va', false],
+    ['a / that is division does not start a regex',
+     `var r = a / b; var q = c / d;\nfunction survivor(){}`, 'survivor', true],
+    ['slash inside a regex character class does not end it',
+     `var re = /[/]x/; function survivor(){}`, 'survivor', true],
+    ['template ${} holes are still code',
+     'var h = `<b>${fmt(x)}</b>`;', 'fmt', true],
+    ['template literal TEXT is not code',
+     'var h = `Cooldown between replies (seconds)`;', 'replies', false],
+    ['escaped quote does not end the string',
+     `var s='it\\'s fine'; function survivor(){}`, 'survivor', true],
+  ];
+  let bad = 0;
+  for (const [name, src, needle, shouldSurvive] of cases) {
+    const out = scrub(src);
+    const survived = new RegExp('\\b' + needle + '\\b').test(out);
+    const ok = survived === shouldSurvive;
+    if (!ok) bad++;
+    console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}`);
+    if (!ok) console.log(`       expected ${needle} ${shouldSurvive ? 'to survive' : 'to be blanked'}\n       got: ${JSON.stringify(out)}`);
+  }
+  const lenOk = ((s) => scrub(s).length === s.length)(`var a='x/*y'; /* c */ // d\nfunction f(){}`);
+  if (!lenOk) { bad++; console.log('  FAIL scrub is not length-preserving — line numbers would be wrong'); }
+  else console.log('  ok   scrub is length-preserving (line numbers stay true)');
+  console.log(bad ? `\ncheck-symbols self-test: ${bad} FAILED` : '\ncheck-symbols self-test: all passed');
+  return bad;
+}
+
+/* Importing this file must not run the sweep — a test that imports it to poke at
+ * one function should not also print findings and call process.exit. */
+const IS_CLI = process.argv[1] && process.argv[1].replace(/\\/g, '/').endsWith('tools/check-symbols.mjs');
+
 const argv = process.argv.slice(2);
+if (IS_CLI) {
+if (argv.includes('--self-test')) process.exit(selfTest() ? 1 : 0);
+
 const files = argv.filter((a) => !a.startsWith('-')).length
   ? argv.filter((a) => !a.startsWith('-')).map((a) => join(ROOT, a))
   : walk(ROOT);
@@ -336,23 +447,16 @@ for (const f of files) {
   total += missing.size;
 }
 
-/* GATED vs OBSERVED.
+/* EVERY page blocks.
  *
- * On public/ and the root marketing pages this has a verified zero false-
- * positive rate: every name it reported was checked by hand, the two real ones
- * (renderCart, addToCart) were fixed, and a deliberately renamed function is
- * still caught. Those pages BLOCK.
- *
- * The big admin pages are reported but do not block, because the rate there is
- * NOT zero and I know it: `closeTextComposer` is reported as undefined in
- * admin/lead-detail.html and is plainly declared at line 34732 of the same file.
- * The cause is somewhere in scanning a 2.3 MB file with twelve inline script
- * blocks and I have not found it. Blocking a deploy on a check I know to be
- * wrong teaches everyone to pass --no-verify, which costs more than the bug.
- *
- * Move a page into GATED once its output has been verified clean by hand. That
- * direction is one-way and deliberate. */
-const GATED = (rel) => rel.startsWith('public/') || !rel.includes('/');
+ * This was briefly split — public/ blocking, admin/ observed only — because the
+ * admin pages produced eighteen findings and one of them, `closeTextComposer`,
+ * was plainly declared at lead-detail.html:34732. Every one of those eighteen
+ * turned out to be the same defect in this tool, not eighteen defects in the
+ * pages: `accept="image/*"` inside a string opened a phantom block comment that
+ * blanked 10,192 characters of real code. Fixing the scrubber took all eighteen
+ * to zero, so there is nothing left to excuse and nothing to split. */
+const GATED = () => true;
 
 const gatedRows = rows.filter((r) => GATED(r.rel));
 const observedRows = rows.filter((r) => !GATED(r.rel));
@@ -382,3 +486,4 @@ if (observedRows.length) {
 }
 
 process.exit(gatedTotal ? 1 : 0);
+}

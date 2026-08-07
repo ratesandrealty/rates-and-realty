@@ -71,8 +71,14 @@ fi
 echo
 echo "── 1b/6 undefined symbols ───────────────────────────────"
 # check-js proves a file PARSES. `renderCart is not defined` parses perfectly and
-# threw the moment a borrower clicked the cart. Blocks on public/ + root pages,
-# where the output is verified clean; reports the admin pages without blocking.
+# threw the moment a borrower clicked the cart. Blocks on all 97 pages.
+# Its own scrubber first: every false positive this tool ever produced came from
+# there, and the failure mode is a confident report that live code is missing.
+if ! node tools/check-symbols.mjs --self-test; then
+  echo
+  echo "check-symbols' scrubber is broken. Its findings cannot be trusted."
+  exit 1
+fi
 if ! node tools/check-symbols.mjs; then
   echo
   echo "A called name does not exist. Nothing was deployed."
