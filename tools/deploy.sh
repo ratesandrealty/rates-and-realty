@@ -69,6 +69,17 @@ if ! node tools/check-functions.mjs; then
 fi
 
 echo
+echo "── 1b/6 undefined symbols ───────────────────────────────"
+# check-js proves a file PARSES. `renderCart is not defined` parses perfectly and
+# threw the moment a borrower clicked the cart. Blocks on public/ + root pages,
+# where the output is verified clean; reports the admin pages without blocking.
+if ! node tools/check-symbols.mjs; then
+  echo
+  echo "A called name does not exist. Nothing was deployed."
+  exit 1
+fi
+
+echo
 echo "── 3b/6 short-URL allowlist ─────────────────────────────"
 # The worker serves /portal from public/portal.html via an allowlist, and adding
 # a page to public/ does not make anyone edit the worker. A page missing from the
