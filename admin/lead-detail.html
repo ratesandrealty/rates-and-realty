@@ -35,6 +35,7 @@
   <script src="/admin/js/lead-share.js?v=323b40bde5"></script>
   <script src="/admin/js/share-nudge.js?v=06ab25599e"></script>
   <script src="/admin/js/crm-comms.js?v=d4687bb733"></script>
+  <script src="/admin/js/notif-bell.js?v=2d40dafbe7"></script>
   <script>if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList.add('light-preload');</script>
   <style>
     html.light-preload body, html.light-preload { background: #f5f5f5 !important; }
@@ -16212,113 +16213,23 @@ function renderMentions(text){
   return lpEsc(text||'').replace(/@([A-Za-z0-9_.\-]+)/g, '<span style="color:#C9A84C;font-weight:600;">@$1</span>');
 }
 
-/* ── PART 2: notification bell ── */
-let _notifTimer=null;
-function _notifBox(){
-  let b=document.getElementById('notifDropdown');
-  if(!b){
-    b=document.createElement('div'); b.id='notifDropdown';
-    b.style.cssText='position:fixed;z-index:10000;display:none;width:340px;max-height:440px;overflow-y:auto;background:#15140f;border:1px solid rgba(201,168,76,.35);border-radius:10px;box-shadow:0 18px 44px rgba(0,0,0,.6);';
-    document.body.appendChild(b);
-  }
-  return b;
-}
-function _notifHide(){ const b=document.getElementById('notifDropdown'); if(b) b.style.display='none'; }
-async function notifRefreshCount(){
-  try{
-    const { data, error } = await _authClient().rpc('notifications_unread_count');
-    if(error) return;
-    const n=Number(data)||0, badge=document.getElementById('notifBadge');
-    if(badge){ if(n>0){ badge.textContent=n>99?'99+':String(n); badge.style.display='block'; } else { badge.style.display='none'; } }
-  }catch(_){}
-}
-async function notifRenderList(){
-  const box=_notifBox();
-  const head='<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.08);position:sticky;top:0;background:#15140f;"><span style="font-size:12px;font-weight:700;color:#C9A84C;">Notifications</span><button onclick="notifMarkAll()" style="background:transparent;border:none;color:#888;font-size:11px;cursor:pointer;font-family:inherit;">Mark all read</button></div>';
-  box.innerHTML=head+'<div style="padding:14px;color:#888;font-size:12px;">Loading…</div>';
-  try{
-    const { data, error } = await _authClient().rpc('notifications_list', { p_limit:30, p_only_unread:false });
-    if(error){ _vaToast(error,'Could not load notifications'); box.innerHTML=head+'<div style="padding:14px;color:#E5484D;font-size:12px;">Could not load.</div>'; return; }
-    const rows=data||[];
-    if(!rows.length){ box.innerHTML=head+'<div style="padding:20px;text-align:center;color:#888;font-size:12px;">No notifications</div>'; return; }
-    box.innerHTML=head+rows.map(function(n){
-      const unread=!n.is_read, bg=unread?'rgba(201,168,76,.07)':'transparent';
-      const kicon=n.kind==='sms_inbound'?'<span style="flex-shrink:0;margin-right:1px;">💬</span>'
-                :n.kind==='doc_uploaded'?'<span style="flex-shrink:0;margin-right:1px;">📄</span>':'';
-      /* Same rule as the dashboard bell: notifOpen navigates only when there is
-         a contact behind the row. Monitor alerts have contact_id null, so a
-         pointer cursor advertised a jump that never came. */
-      const canNav = !!(n.link || n.contact_id);
-      const navTitle = n.link ? 'Open' : (n.contact_id ? 'Open lead' : 'Click to mark read');
-      return '<div onclick="notifOpen(\''+n.id+'\',\''+(n.contact_id||'')+'\',\''+(n.source_kind||'')+'\',\''+(n.source_id||'')+'\',\''+(n.kind||'')+'\',\''+lpEsc(n.link||'')+'\')" title="'+navTitle+'" style="padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.05);cursor:'+(canNav?'pointer':'default')+';background:'+bg+';" onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" onmouseout="this.style.background=\''+bg+'\'">'
-        +'<div style="display:flex;gap:6px;align-items:baseline;">'+(unread?'<span style="flex-shrink:0;width:7px;height:7px;border-radius:50%;background:#C9A84C;display:inline-block;"></span>':'')
-        +kicon
-        +'<span style="font-size:12px;color:#eee;font-weight:600;">'+lpEsc(n.actor_display||'Someone')+'</span>'
-        +'<span style="margin-left:auto;font-size:10px;color:#777;flex-shrink:0;">'+lpEsc(relativeTime(n.created_at))+'</span></div>'
-        +'<div style="font-size:11px;color:#bbb;margin-top:2px;">'+renderMentions(n.preview||'')+'</div></div>';
-    }).join('');
-  }catch(e){ _vaToast(e,'Could not load notifications'); }
-}
-function notifToggle(ev){
-  if(ev){ ev.stopPropagation(); }
-  const box=_notifBox();
-  if(box.style.display==='block'){ _notifHide(); return; }
-  const bell=document.getElementById('notifBell'), rc=bell?bell.getBoundingClientRect():{bottom:48,right:240};
-  box.style.left=Math.max(8,Math.min(rc.right-340, window.innerWidth-348))+'px';
-  box.style.top=(rc.bottom+6)+'px';
-  box.style.display='block';
-  notifRenderList();
-}
-async function notifOpen(id, contactId, sourceKind, sourceId, kind, link){
-  try{ await _authClient().rpc('notification_mark_read', { p_id:id }); }catch(_){}
-  notifRefreshCount();
-  _notifHide();
-  /* An explicit target wins over the contact_id rule. "Someone chatted on your
-     video" from a visitor who left no details has no lead to open, but it does
-     name a session /admin/video-chats can read — that was a dead click.
-     Site-relative paths only; anything else is ignored rather than followed. */
-  if(link && /^\/[^/]/.test(link)){ window.location.href = link; return; }
-  // A task note is identifiable by either source_kind='task_note' (legacy) or kind='task_note'
-  // (add_task_note sets kind='task_note', source_kind='task', source_id=<task_id>).
-  const isTaskNote = !!sourceId && (sourceKind==='task_note' || kind==='task_note');
-  const isSms = (kind==='sms_inbound');
-  const isDoc = (kind==='doc_uploaded');
-  const cur=new URLSearchParams(window.location.search).get('contact_id');
-  if(contactId){
-    if(cur===contactId){
-      if(isTaskNote) _vaEnsureTaskOpen(sourceId);
-      else if(isSms && typeof openTextComposer==='function') openTextComposer();
-      else if(isDoc && typeof switchTab==='function') switchTab('documents');
-    }
-    else { const hash=isSms?'#text':isDoc?'#documents':(isTaskNote?('#vatask='+encodeURIComponent(sourceId)):''); window.location.href='lead-detail?contact_id='+encodeURIComponent(contactId)+hash; }
-  } else if(isTaskNote){
-    _vaEnsureTaskOpen(sourceId);
-  }
-}
-async function notifMarkAll(){
-  try{ const { error } = await _authClient().rpc('notifications_mark_all_read'); if(error){ _vaToast(error,'Could not mark all read'); return; } }
-  catch(e){ _vaToast(e,'Could not mark all read'); return; }
-  notifRefreshCount(); notifRenderList();
-}
-function _notifLiveRefresh(){
-  notifRefreshCount();
-  const b=document.getElementById('notifDropdown');
-  if(b && b.style.display==='block') notifRenderList();
-}
+/* ── PART 2: notification bell — /admin/js/notif-bell.js ──
+   Shared with dashboard/admin.html. The two copies had drifted: this one had
+   the correct task-note rule, the dashboard had the 'system' icon, and only
+   this one rendered @mentions. The module keeps all three.
+   The name notifInit is kept because the collaboration-layer boot above calls
+   it by name; the shortcuts are what make this page act in place rather than
+   reload when the notification belongs to the lead already on screen. */
 function notifInit(){
-  notifRefreshCount();
-  if(_notifTimer) clearInterval(_notifTimer);
-  _notifTimer=setInterval(notifRefreshCount, 30000);
-  if(!window.__notifLiveBound){
-    window.__notifLiveBound=true;
-    // Light real-time: surface new lead replies on tab focus / visibility without a manual reload.
-    window.addEventListener('focus', _notifLiveRefresh);
-    document.addEventListener('visibilitychange', function(){ if(!document.hidden) _notifLiveRefresh(); });
-  }
-  document.addEventListener('click', function(e){
-    const b=document.getElementById('notifDropdown'); if(!b || b.style.display!=='block') return;
-    if(e.target.closest && (e.target.closest('#notifDropdown') || e.target.closest('#notifBell'))) return;
-    _notifHide();
+  NotifBell.mount({
+    client: function(){ return _authClient(); },
+    onError: function(err, msg){ _vaToast(err, msg); },
+    currentContactId: function(){ return new URLSearchParams(window.location.search).get('contact_id'); },
+    shortcuts: {
+      taskNote: function(id){ _vaEnsureTaskOpen(id); },
+      sms: function(){ if(typeof openTextComposer==='function') openTextComposer(); },
+      doc: function(){ if(typeof switchTab==='function') switchTab('documents'); }
+    }
   });
 }
 
@@ -16384,7 +16295,7 @@ async function lpVaPostNote(id){
     ta.value='';
     if(typeof showToast==='function') showToast('Note added');
     await lpVaLoadHistory(id);     // refresh this task's note thread (prepends newest)
-    if(typeof notifRefreshCount==='function') notifRefreshCount();
+    if(window.NotifBell) NotifBell.refreshCount();   // adding a note notifies others; reflect it in the badge
   }catch(e){ _vaToast(e,'Could not add note'); }
 }
 

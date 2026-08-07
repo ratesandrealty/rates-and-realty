@@ -75,8 +75,13 @@ const GUARDED = {
    * file that was broken. Anchors are the LAST thing in each page's script, so
    * a truncated tail fails the check even if what survives happens to parse. */
   'admin/people.html':          { min: 180000, require: ['function applyFilters', 'writeFiltersToUrl'] },
-  'admin/lead-detail.html':     { min: 2000000, require: ['function goBack', 'function notifOpen'] },
-  'dashboard/admin.html':       { min: 300000, require: ['window.notifOpen'] },
+  /* notifOpen/window.notifOpen were the tail anchors until the bell moved to
+   * admin/js/notif-bell.js. Replaced with the LAST function each file defines,
+   * which is what the anchor was always meant to be — proof the tail arrived. */
+  'admin/lead-detail.html':     { min: 2000000, require: ['function goBack', 'function _mfRenderLenderBody'] },
+  'dashboard/admin.html':       { min: 300000, require: ['function _activity', 'NotifBell.mount'] },
+  /* The bell both of the above now depend on. Floor measured at 11-12 KB. */
+  'admin/js/notif-bell.js':     { min: 9000,   require: ['})();', 'window.NotifBell', 'function open'] },
   'admin/email-marketing.html': { min: 95000,  require: ['function emVideo'] },
   'admin/pipeline.html':        { min: 12000,  require: [] },
   'admin/lenders.html':         { min: 140000, require: [] },
