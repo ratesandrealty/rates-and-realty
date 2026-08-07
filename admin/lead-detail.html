@@ -28,7 +28,7 @@
     .pac-icon{display:none!important;}
     .pac-logo::after{display:none!important;}
   </style>
-  <script src="/admin/js/auth-guard.js?v=0fb9a60f46"></script>
+  <script src="/admin/js/auth-guard.js?v=50d01ecb61"></script>
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
   <!-- Loaded after auth-guard so window._supabaseClient exists when fnFetch reads it. -->
   <script src="/admin/js/fn-call.js?v=62e47af307"></script>
@@ -36544,6 +36544,7 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
 
   var modal, closeBtn, avatar, nameEl, phoneEl, status, statusText, timer, actions, footer, pulse1, pulse2;
   var device = null, activeCall = null, callStart = null, timerInterval = null;
+  var currentCallRef = '';          // correlation token for the row twilio-voice logs at dial time
   var muted = false, speakerOn = false, currentContact = null, selectedOutcome = null, callDuration = 0;
 
   function bindRefs() {
@@ -36777,8 +36778,18 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
     }
     getDevice().then(function(dev) {
       renderRinging();
+      /* Ref is an opaque correlation token, NOT a call id and NOT a credential.
+       * Twilio forwards custom connect params to the TwiML app, so the server
+       * sees this Ref and the real CallSid in the same signed request; it logs
+       * the row there and we echo the Ref back on log_call so it updates that
+       * row rather than inserting a second, SID-less one.
+       *
+       * The browser deliberately does not send a CallSid. It never reliably had
+       * one — activeCall is null by the time Save & close runs — and a SID from
+       * the browser is a value the server never verified. */
+      currentCallRef = 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
       // v2 SDK: device.connect() returns a Promise that resolves to a Call
-      return dev.connect({ params: { To: toE164(currentContact.phone) } });
+      return dev.connect({ params: { To: toE164(currentContact.phone), Ref: currentCallRef } });
     }).then(function(conn) {
       if (!conn) return;
       activeCall = conn;
@@ -36820,7 +36831,11 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
 
   function saveAndClose() {
     var notes = (document.getElementById('cmEndNotes') && document.getElementById('cmEndNotes').value) || '';
-    var sid = (activeCall && activeCall.parameters && activeCall.parameters.CallSid) || window._currentCallSid || '';
+    /* No twilio_call_sid is sent any more. It was ALWAYS '' here: this runs from
+     * the ended screen, after conn.on('disconnect') set activeCall = null, and
+     * window._currentCallSid is only ever assigned ''. The server took the real
+     * SID from Twilio's signed webhook at dial time; we send the Ref so it
+     * updates that row. */
     var contactIdForRefresh = (currentContact && currentContact.id) || null;
 
     function refreshPanels() {
@@ -36838,7 +36853,7 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       status: 'completed',
       notes: notes,
       outcome: selectedOutcome,
-      twilio_call_sid: sid
+      client_ref: currentCallRef
     }).then(refreshPanels, function(e) {
       console.warn('[log_call]', e);
       refreshPanels();

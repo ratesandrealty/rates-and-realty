@@ -236,7 +236,7 @@
     function mountStaffChat() {
       if (document.querySelector('script[src*="/admin/js/staff-chat.js"]')) return;
       const sc = document.createElement('script');
-      sc.src = '/admin/js/staff-chat.js?v=2026070603';
+      sc.src = '/admin/js/staff-chat.js?v=443262548b';
       document.head.appendChild(sc);
     }
     // Universal help-video ⓘ buttons (window.HelpTopic). Same app-wide, idempotent
@@ -244,7 +244,7 @@
     function mountHelpButton() {
       if (document.querySelector('script[src*="/admin/js/help-button.js"]')) return;
       const hb = document.createElement('script');
-      hb.src = '/admin/js/help-button.js?v=2026070602';
+      hb.src = '/admin/js/help-button.js?v=82c0f23e4e';
       document.head.appendChild(hb);
     }
     // Universal task capture (📌 + Ctrl+Shift+K). Same reasoning as the two
@@ -254,7 +254,7 @@
     function mountTaskCapture() {
       if (document.querySelector('script[src*="/admin/js/task-capture.js"]')) return;
       const tc = document.createElement('script');
-      tc.src = '/admin/js/task-capture.js?v=2026073101';
+      tc.src = '/admin/js/task-capture.js?v=8f5f287211';
       document.head.appendChild(tc);
     }
     /* One FAB in the bottom-right corner, replacing the two independent floating
@@ -266,7 +266,7 @@
     function mountActionFab() {
       if (document.querySelector('script[src*="/admin/js/action-fab.js"]')) return;
       const af = document.createElement('script');
-      af.src = '/admin/js/action-fab.js?v=2026080701';
+      af.src = '/admin/js/action-fab.js?v=9771b7a62f';
       document.head.appendChild(af);
     }
     if (document.readyState === 'loading') {

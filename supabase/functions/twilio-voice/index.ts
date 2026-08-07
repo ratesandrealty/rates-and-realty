@@ -412,6 +412,42 @@ Deno.serve(async (req) => {
       if (to) {
         const dialTo = to.startsWith('+') || to.startsWith('client:') ? to : formatPhone(to);
         const recordingCb = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice`;
+
+        /* LOG AT DIAL TIME, WITH THE SERVER'S OWN CallSid.
+         *
+         * Browser-dialer rows logged twilio_call_sid NULL, every time, so the
+         * recording callback — which matches on twilio_call_sid — updated zero
+         * rows, raised no error, and orphaned every recording in Twilio.
+         *
+         * The browser cannot supply the SID: by the time saveAndClose() runs,
+         * conn.on('disconnect') has already nulled activeCall, and
+         * window._currentCallSid is only ever assigned ''. But THIS request is
+         * Twilio's signed webhook for the outbound leg and carries the real
+         * parent CallSid, which is also the SID the recordingStatusCallback
+         * will report. So the row is created here and the browser never sees a
+         * SID at all — it only echoes back the opaque Ref it generated, so
+         * log_call can find this row instead of inserting a second one.
+         *
+         * Mirrors what the inbound branch already does: log at call START, so a
+         * call that ends before anyone presses Save still exists as a row. */
+        const clientRef = (params.get('Ref') || '').trim() || null;
+        if (callSid) {
+          try {
+            await sb.from('calls_log').insert({
+              contact_id: params.get('ContactId') || null,
+              from_phone: TWILIO_PHONE,
+              to_phone: dialTo,
+              direction: 'outbound',
+              status: 'ringing',
+              twilio_call_sid: callSid,
+              client_ref: clientRef,
+              created_at: new Date().toISOString(),
+            });
+          } catch (e) {
+            // Never let a logging failure drop a live call.
+            console.error('[twilio-voice] outbound calls_log insert failed:', String(e));
+          }
+        }
         /* Disclosure to BOTH legs. The <Say> reaches the staff member on the
          * browser client — which also makes it audible to them that it fired —
          * and the url= whisper reaches the person being dialled on answer,
@@ -422,14 +458,27 @@ Deno.serve(async (req) => {
         if (!rec.ok) console.error(`[twilio-voice] OUTBOUND NOT RECORDED — ${rec.reason}`);
         const recAttr = rec.ok ? ` record="record-from-answer" recordingStatusCallback="${recordingCb}"` : '';
         const whisper = rec.ok ? ` url="${xmlEsc(noticeUrl)}"` : '';
+        /* answerOnBridge="true" — RINGBACK. Without it the browser hears dead
+         * silence from the moment the disclosure ends until the other party
+         * picks up, so there is no way to tell the call is working; Rene
+         * reported exactly that. With it, Twilio holds the parent leg
+         * un-answered and passes the real carrier ringback through instead.
+         * The inbound branch has always set it, for the same reason.
+         *
+         * It does NOT touch the disclosure. The <Say> runs to completion before
+         * <Dial> starts, and the whisper runs on the child leg after it answers
+         * and before the bridge — answerOnBridge only changes what the CALLER
+         * hears during the dial. If anything it tightens the compliance
+         * ordering: the parent is not marked answered until the bridge, so
+         * record-from-answer starts after the child has heard the notice. */
         const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   ${rec.ok ? noticeSay(noticeText) : ''}
-  <Dial callerId="${TWILIO_PHONE}" timeout="30"${recAttr}>
+  <Dial callerId="${TWILIO_PHONE}" timeout="30" answerOnBridge="true"${recAttr}>
     <Number${whisper}>${dialTo}</Number>
   </Dial>
 </Response>`;
-        console.log('[twilio-voice] dialing', dialTo, 'callerId=', TWILIO_PHONE);
+        console.log('[twilio-voice] dialing', dialTo, 'callerId=', TWILIO_PHONE, 'sid=', callSid, 'ref=', clientRef);
         return twimlRes(xml);
       }
 
@@ -553,17 +602,50 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'log_call') {
-      const { error } = await sb.from('calls_log').insert({
-        contact_id: contact_id || null,
-        to_phone: to || null,
-        direction: 'outbound',
-        duration: duration || 0,
-        status: status || 'completed',
-        notes: notes || null,
-        outcome: outcome || null,
-        twilio_call_sid: twilio_call_sid || null,
-      });
-      if (error) return err(error.message, 500);
+      /* UPDATE the row the outbound TwiML webhook already created, matched on
+       * the browser's correlation token. That row is the one carrying the real
+       * twilio_call_sid, so overwriting it with a second INSERT would recreate
+       * the orphaning this change exists to fix.
+       *
+       * Falls back to INSERT when nothing matches — no ref sent (an older cached
+       * page), or the dial webhook never ran. Losing the SID is bad; losing the
+       * call notes Rene just typed is worse.
+       *
+       * to_phone and twilio_call_sid are deliberately NOT in the update: the
+       * webhook already stored the E.164 number it actually dialled and the SID
+       * it was actually given. The browser's copies are the unformatted contact
+       * field and an empty string. */
+      const clientRef = (body.client_ref || '').toString().trim();
+      let updated = false;
+      if (clientRef) {
+        const { data: rows, error: upErr } = await sb.from('calls_log')
+          .update({
+            duration: duration || 0,
+            status: status || 'completed',
+            notes: notes || null,
+            outcome: outcome || null,
+            contact_id: contact_id || null,
+          })
+          .eq('client_ref', clientRef)
+          .select('id');
+        if (upErr) console.error('[twilio-voice] log_call update failed:', upErr.message);
+        updated = !!(rows && rows.length);
+        if (!updated) console.warn('[twilio-voice] log_call ref matched no row, inserting:', clientRef);
+      }
+      if (!updated) {
+        const { error } = await sb.from('calls_log').insert({
+          contact_id: contact_id || null,
+          to_phone: to || null,
+          direction: 'outbound',
+          duration: duration || 0,
+          status: status || 'completed',
+          notes: notes || null,
+          outcome: outcome || null,
+          twilio_call_sid: twilio_call_sid || null,
+          client_ref: clientRef || null,
+        });
+        if (error) return err(error.message, 500);
+      }
 
       if (contact_id) {
         await sb.from('activity_events').insert({
