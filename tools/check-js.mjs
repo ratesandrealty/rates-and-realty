@@ -44,6 +44,13 @@ const GUARDED = {
    * and the two things a truncated tail would drop. */
   'admin/js/staff-chat.js':   { min: 77000,  require: ['})();', 'function attViewHtml', 'function openLightbox'] },
   'admin/js/loom-recorder.js':{ min: 5000,   require: [] },
+  /* The single bottom-right FAB. It is app-wide (auth-guard mounts it on every
+   * authenticated page) and it HIDES the two original floating buttons, so a
+   * truncated copy takes the pin and chat entrances with it — the widgets would
+   * still be loaded and still be display:none, with nothing left to open them.
+   * Floor measured at 13043, set at ~85%. Anchors are the forwarding call and
+   * the registry a truncated head would lose. */
+  'admin/js/action-fab.js':   { min: 11000,  require: ['})();', 'var ACTIONS', 'function mirrorBadge'] },
   /* The single attachment viewer behind BOTH the email attachment path and (once
    * mounted) staff chat. Floor measured at 10747 bytes, set at ~85%. */
   'admin/js/attachment-viewer.js': { min: 9000, require: ['})();', 'window.AttachmentViewer', 'function loadPdfJs'] },

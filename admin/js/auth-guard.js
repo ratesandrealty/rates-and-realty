@@ -257,12 +257,25 @@
       tc.src = '/admin/js/task-capture.js?v=2026073101';
       document.head.appendChild(tc);
     }
+    /* One FAB in the bottom-right corner, replacing the two independent floating
+     * buttons that staff-chat and task-capture each mount. It does not
+     * reimplement either — it hides their buttons and forwards clicks to them,
+     * and it only shows an action whose original button is actually in the DOM,
+     * so each widget's own role gate still decides. Mounted LAST so both sources
+     * are more likely to exist on first render; it re-checks either way. */
+    function mountActionFab() {
+      if (document.querySelector('script[src*="/admin/js/action-fab.js"]')) return;
+      const af = document.createElement('script');
+      af.src = '/admin/js/action-fab.js?v=2026080701';
+      document.head.appendChild(af);
+    }
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function () { mountStaffChat(); mountHelpButton(); mountTaskCapture(); });
+      document.addEventListener('DOMContentLoaded', function () { mountStaffChat(); mountHelpButton(); mountTaskCapture(); mountActionFab(); });
     } else {
       mountStaffChat();
       mountHelpButton();
       mountTaskCapture();
+      mountActionFab();
     }
   })();
 })();
