@@ -4,23 +4,43 @@
      • Call  → click-to-call  (rings Rene's cell, bridges to the lead via 866; logged)
      • SMS   → sms-service     (sends from the 866 business line; logged)
      • Email → email-service   (sends FROM rene@ratesandrealty.com; tracked)
-   All POST JSON with the anon key as apikey + Authorization: Bearer.
+   All POST JSON as the SIGNED-IN USER via fn-call.js — never the anon key.
    Pages that already have rich composers keep them — those composers already call
    sms-service / email-service. This module powers the simpler buttons + a fallback
    compose modal for pages without one.
    ───────────────────────────────────────────────────────────────────────────── */
 (function(){
-  var FN = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/';
-  function _key(){ return (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || ''; }
+  /* No base URL here any more — fnFetch owns it, so there is one place that
+     knows where edge functions live and one place that knows how to authenticate
+     to them. */
   function _toast(msg, isErr){
     if (typeof window.showToast === 'function') return window.showToast(msg, isErr);
     if (typeof window.toast === 'function') return window.toast(msg, isErr);
     try { (isErr ? console.error : console.log)(msg); } catch(_){}
   }
   function _esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  /* Sends the SIGNED-IN USER, via the one helper in admin/js/fn-call.js.
+   *
+   * This used to build its own headers from the anon key:
+   *     'apikey': k, 'Authorization': 'Bearer ' + k     // k = SUPABASE_ANON_KEY
+   * The anon key is a project-signed JWT printed in every page's source. It
+   * satisfies the gateway and identifies nobody, so it cannot survive any guard.
+   *
+   * All THREE calls below share this function — click-to-call, sms-service and
+   * email-service — so all three move together. That is not incidental scope:
+   * email-service has required staff auth since 79ca8d1 on 2026-08-04, and
+   * requireStaff explicitly rejects the anon key, so crmSendEmail has been
+   * returning 401 ever since. This repairs that as a side effect of fixing SMS.
+   *
+   * NO ANON FALLBACK, and a hard failure if fn-call.js is absent — a fallback
+   * authenticates nobody and converts a clear "not signed in" into a mystery 401
+   * later. Every page loading this file is behind auth-guard.js, so a missing
+   * session is a real fault. */
   async function _post(name, body){
-    var k = _key();
-    var res = await fetch(FN + name, { method:'POST', headers:{ 'Content-Type':'application/json', 'apikey':k, 'Authorization':'Bearer ' + k }, body: JSON.stringify(body) });
+    if (typeof window.fnFetch !== 'function') {
+      throw new Error('fn-call.js is not loaded — cannot call ' + name + ' as the signed-in user.');
+    }
+    var res = await window.fnFetch(name, { method:'POST', body: JSON.stringify(body) });
     var data; try { data = await res.json(); } catch(_){ data = {}; }
     if (!res.ok && data.success !== true) throw new Error(data.error || ('HTTP ' + res.status));
     return data;
