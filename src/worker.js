@@ -49,7 +49,6 @@ const ADMIN_HOST = 'admin.ratesandrealty.com';
  *   fee, cma        — already routed as /fee/<slug> and /cma/<slug>; the pages
  *                     read that slug from location.pathname, so a bare /fee
  *                     would render a snapshot page with nothing to render.
- *   admin-chat      — moving to admin/chat-conversations.html, behind the gate.
  *   privacy-policy,
  *   terms-of-service — NOT duplicates of the root privacy.html / terms.html.
  *                     They carry the credit-repair funnel's CROA disclaimer,
@@ -98,8 +97,8 @@ export default {
 
     // === ADMIN HOST ROOT → CRM LOGIN ===============================
     // The Worker serves the shared public homepage (index.html) at "/" on every
-    // host, and bare "/admin" / "/dashboard" (no page) also SPA-fall-back to it.
-    // On the ADMIN host that's wrong — Rene expects the CRM. Send those entry
+    // host, and bare "/admin" / "/dashboard" (no page) would now 404.
+    // On the ADMIN host either is wrong — Rene expects the CRM. Send those entry
     // paths to the admin login, which auto-forwards an already-signed-in user on
     // to their dashboard (people / va-dashboard) and shows the login otherwise.
     // Only these bare entry paths on the admin host are affected; every deeper

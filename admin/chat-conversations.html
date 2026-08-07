@@ -4,17 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Chat Conversations — Rates & Realty CRM</title>
-  <script>
-  // ADMIN ONLY — redirect non-admins immediately
-  (function(){
-    var t = localStorage.getItem('rr-admin-token') || sessionStorage.getItem('rr-admin-token');
-    var s = localStorage.getItem('admin_session');
-    if (t !== 'rr-admin-28230b361fc0915fd1599c7cd52444d4658990098a120adf' && s !== 'true') {
-      window.location.replace('/public/unified-portal.html');
-      document.documentElement.innerHTML = '';
-    }
-  })();
-  </script>
+  <script src="/admin/js/auth-guard.js?v=a93446dde2"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/components/styles.css" />
@@ -263,9 +253,22 @@
 
   <script src="/api/env.js"></script>
   <script>
-    const SB_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
-    const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
-    const headers = { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json' };
+    /* Reads the signed-in staff session, never the anon key. The anon key is
+       printed in every page's source, so a page that queries with it is a page
+       anyone can query with — which is what this one was, behind a "gate" whose
+       shared secret was also printed here. auth-guard.js sets
+       window._supabaseClient but emits no ready event, so poll for it the same
+       way admin/video-chats.html does. */
+    async function sbClient(maxMs) {
+      if (typeof window.getSupabaseClient === 'function') {
+        try { return await window.getSupabaseClient(); } catch (e) { /* fall through */ }
+      }
+      const start = Date.now();
+      while (!window._supabaseClient && Date.now() - start < (maxMs || 5000)) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return window._supabaseClient || null;
+    }
 
     let allConversations = [];
     let currentFilter = 'all';
@@ -275,9 +278,12 @@
       table.innerHTML = '<div class="loading-spinner">Loading conversations…</div>';
 
       try {
-        const res = await fetch(`${SB_URL}/rest/v1/chat_conversations?select=*&order=last_message_at.desc&limit=200`, { headers });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        allConversations = await res.json();
+        const sb = await sbClient();
+        if (!sb) throw new Error('Not signed in');
+        const { data, error } = await sb.from('chat_conversations')
+          .select('*').order('last_message_at', { ascending: false }).limit(200);
+        if (error) throw new Error(error.message);
+        allConversations = data || [];
         updateStats(allConversations);
         renderTable(allConversations);
       } catch (err) {

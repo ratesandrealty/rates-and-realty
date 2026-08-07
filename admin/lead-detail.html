@@ -6974,13 +6974,17 @@ async function adminViewPortal() {
 }
 
 async function loadChatConversation(sessionId, eventId) {
-  const SB_P = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
-  const SK_P = window.APP_CONFIG?.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
+  /* Reads with the signed-in staff session, not the anon key. The anon key was
+     hardcoded here as a fallback, so this ran as anon whenever APP_CONFIG had
+     not loaded — and chat_conversations still grants anon SELECT precisely
+     because this call and admin/chat-conversations.html both needed it. Both
+     are moved; the policy narrows once Rene has confirmed they still work. */
   try {
-    const res = await fetch(`${SB_P}/rest/v1/chat_conversations?session_id=eq.${sessionId}&select=messages,guest_name,guest_email,started_at`, {
-      headers: { 'apikey': SK_P, 'Authorization': 'Bearer ' + SK_P }
-    });
-    const rows = await res.json();
+    const { data: rows, error } = await _authClient()
+      .from('chat_conversations')
+      .select('messages,guest_name,guest_email,started_at')
+      .eq('session_id', sessionId);
+    if (error) { alert('Could not load conversation: ' + error.message); return; }
     const convo = rows?.[0];
     if (!convo) { alert('Conversation not found'); return; }
     const messages = convo.messages || [];

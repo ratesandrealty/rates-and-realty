@@ -23,7 +23,6 @@ const WORKER = 'src/worker.js';
 const EXCLUDED = {
   fee: 'routed as /fee/<slug>; the page reads the slug from location.pathname',
   cma: 'routed as /cma/<slug>; same',
-  'admin-chat': 'CRM page; moving to admin/chat-conversations.html behind the gate',
   search: 'a meta-refresh stub, not a page; the worker 301s /search to /search-homes',
   'privacy-policy': 'credit-funnel legal fork, pending merge with root privacy.html',
   'terms-of-service': 'credit-funnel legal fork, pending merge with root terms.html',
