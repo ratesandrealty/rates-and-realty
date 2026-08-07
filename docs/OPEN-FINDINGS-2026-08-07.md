@@ -84,9 +84,9 @@ credential the guard accepts. Note n8n cannot read the vault, so
 
 ---
 
-## 3. Functions with no in-function authorization: **65**
+## 3. Functions with no in-function authorization: **66**
 
-**Corrected three times. Do not quote an older number.**
+**Corrected four times. Do not quote an older number.**
 
 ```
 audit-function-guards 'no auth' rows                       70
@@ -94,8 +94,19 @@ minus _shared (a library, not a function)                  -1
 minus tour-public-view (share_token capability gate)       -1
 minus refi-watch, critical-date-reminders,
       post-close-followups (x-cron-key compare)            -3
-= 65
+plus  twilio-voice (guarded only on the webhook half;
+      its five JSON admin actions have no check)           +1
+= 66
 ```
+
+**66 is an UPPER BOUND on guarded, i.e. a LOWER BOUND on the problem.** Every
+previous correction moved the number down because the detector missed a control
+that existed. `twilio-voice` is the first that moved it **up**, and it is a
+different and worse kind of miss: the control exists, the detector found it, and
+the detector had no way to ask *which code paths it governs*. A function that
+serves two caller shapes from one entry point can be half-open while reading as
+fully guarded. Nothing in `tools/audit-function-guards.mjs` tests reachability,
+so any of the remaining bucket A rows could be in the same state.
 
 Every correction was a **detector gap**, not a code change:
 
@@ -286,7 +297,19 @@ serves the browser's JSON admin actions (`get_token`, `make_call`,
 `voicemail_drop`, `call_status`, `log_call`), which carry no Twilio signature
 and would break if validated. So signature validation is not the gap there —
 **the gap is that those JSON actions have no authorization of their own at
-all**, which is a different finding and belongs with the 65 in §3.
+all**, which is a different finding and is counted in §3 (it is the `+1`).
+
+The sharpest edge is `get_token`. It mints a **Twilio Voice capability JWT**
+with `voice.outgoing.application_sid` set and `identity: 'rene_duarte'`
+hardcoded, valid **3600 seconds**, signed with `TWILIO_API_SECRET`. It takes no
+parameters and performs no check, so anyone who can POST to the URL gets one.
+Its holder is not limited to bridging a queued call: `Twilio.Device.connect()`
+with that token hits the TwiML app, which routes back to this same function's
+form-encoded branch and returns `<Dial callerId="+18668919394"><Number>{To}
+</Number></Dial>` for **whatever `To` the caller supplies**. That is arbitrary
+outbound dialling from the business line, on the account's billing, for an hour
+per token, with the call logged as if staff placed it. There is no rate limit
+on minting and none on placing.
 
 Rename `_sig` to `sig` in both files at some point. The convention says
 "unused" about the only line that makes these endpoints safe.
