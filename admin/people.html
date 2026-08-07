@@ -10,6 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="/admin/js/supabase-client.js?v=5e7926468b"></script>
 <script src="/admin/js/auth-guard.js?v=a93446dde2"></script>
+<script src="/admin/js/fn-call.js?v=62e47af307"></script>
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
   <script src="/admin/js/crm-comms.js?v=d4687bb733"></script>
 <style>
@@ -2040,9 +2041,15 @@ async function deleteContacts(ids) {
   showToast('Deleting ' + ids.length + ' contact' + (ids.length > 1 ? 's' : '') + '...');
   console.log('[deleteContacts] Deleting IDs:', ids);
   try {
-    var res = await fetch(SB_URL + '/functions/v1/delete-contacts', {
+    /* Sends the SIGNED-IN USER, not the anon key. Same helper and shape as
+       admin/lead-detail.html:17093 (fnFetch('pull-comps', …)).
+       This is the FRONTEND HALF only — delete-contacts still has no guard, so a
+       mistake here shows up as a page that still works rather than an outage.
+       fnFetch throws if there is no session; it never falls back to the anon
+       key, which authenticates nobody and would turn a clear "not signed in"
+       into an unexplainable 401 once the guard lands. */
+    var res = await fnFetch('delete-contacts', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + ANON_KEY },
       body: JSON.stringify({ contact_ids: ids })
     });
     var data = await res.json();
@@ -2063,7 +2070,9 @@ async function deleteContacts(ids) {
     applyFilters();
     updateBulkBar();
   } catch(err) {
-    showToast('Delete failed: ' + err.message);
+    /* isError:true — red styling and 6s instead of 2.5s. Without the flag a
+       "not signed in" failure looked identical to a success toast. */
+    showToast('Delete failed: ' + err.message, true);
     console.error('deleteContacts error:', err);
   }
 }
