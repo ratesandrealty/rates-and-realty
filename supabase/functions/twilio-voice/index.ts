@@ -1,4 +1,5 @@
 import { verifyTwilioRequest, twilioForbidden } from "../_shared/twilio-signature.ts";
+import { requireStaff } from "../_shared/require-staff.ts";
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -503,10 +504,41 @@ Deno.serve(async (req) => {
       return twimlRes(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>No destination number provided.</Say></Response>`);
     }
 
-    // ── TYPE 1: JSON request from browser CRM ──
+    /* ── TYPE 1: JSON request from browser CRM ────────────────────────────────
+     *
+     * GUARDED FROM HERE DOWN. Everything above this line is Twilio's, validated
+     * by the signature check at the top; everything below is the browser's, and
+     * until now had no authorization of ANY kind. verify_jwt = false, so the
+     * gateway asked for nothing either: an unauthenticated POST reached this
+     * dispatch and got the function's own 400.
+     *
+     * That mattered most for get_token, which minted a one-hour Twilio Voice
+     * capability JWT to anyone who asked. Its holder can dial arbitrary numbers
+     * from the business line, billed to the account and recorded — see
+     * docs/OPEN-FINDINGS-2026-08-07.md §8.
+     *
+     * ONE CHECK COVERING ALL FIVE ACTIONS, placed before req.json() rather than
+     * per-action, so an action added later is guarded by construction instead of
+     * by whoever remembers. That is require-staff's own note 2.
+     *
+     * The webhook branch above is deliberately NOT covered: Twilio sends no JWT,
+     * and its control is the request signature. verify_jwt stays as pinned
+     * (false) for the same reason — flipping it would 401 every Twilio webhook
+     * at the gateway before this function ever ran. */
+    const staff = await requireStaff(req, { what: 'The dialer' });
+    if (!staff.ok) {
+      console.error('[twilio-voice] REJECTED json action:', staff.status, staff.msg);
+      return err(staff.msg || 'unauthorized', staff.status || 403);
+    }
+
+    // ── TYPE 1 body ──
     const body = await req.json().catch(() => ({} as any));
     const { action, to, contact_id, voicemail_url, duration, status, notes, outcome, twilio_call_sid } = body;
-    console.log('[twilio-voice] action=', action);
+    /* The verified caller. Identity for Twilio, attribution for calls_log.
+     * `service` and `internal` callers have no user, so actorUid stays null and
+     * those rows remain correctly unattributed. */
+    const actorUid = staff.userId || null;
+    console.log('[twilio-voice] action=', action, 'role=', staff.role, 'uid=', actorUid);
 
     if (action === 'get_token') {
       const missing = [
@@ -519,7 +551,21 @@ Deno.serve(async (req) => {
 
       const now = Math.floor(Date.now() / 1000);
       const exp = now + 3600;
-      const identity = 'rene_duarte';
+      /* REAL PER-USER IDENTITY, replacing a hardcoded 'rene_duarte' that made
+       * every browser leg claim to be Rene no matter who was dialling — which is
+       * why a VA call button was blocked on this change.
+       *
+       * The uid, not the email: stable across an address change, opaque so no
+       * PII is read back by anything that renders an identity, and safe for
+       * Twilio's identity charset once the dashes are stripped (alphanumeric,
+       * underscore, hyphen and period only, ≤121 chars).
+       *
+       * There is no fallback to a shared identity. staff.userId is null only for
+       * the service/internal paths, which do not reach get_token from a browser;
+       * if it is somehow null here, minting a token that impersonates someone is
+       * worse than refusing. */
+      if (!actorUid) return err('No user identity on this session — cannot mint a voice token.', 403);
+      const identity = 'u_' + String(actorUid).replace(/-/g, '');
 
       const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT', cty: 'twilio-fpa;v=1' }))
         .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -573,6 +619,7 @@ Deno.serve(async (req) => {
           direction: 'outbound',
           status: 'initiated',
           twilio_call_sid: data.sid,
+          actor_user_id: actorUid,          // who dialled; null for non-user callers
         });
         return jsonRes({ success: true, callSid: data.sid });
       }
@@ -602,6 +649,7 @@ Deno.serve(async (req) => {
           voicemail_drop: true,
           voicemail_url,
           twilio_call_sid: data.sid,
+          actor_user_id: actorUid,
         });
         return jsonRes({ success: true, callSid: data.sid });
       }
@@ -642,6 +690,9 @@ Deno.serve(async (req) => {
             notes: notes || null,
             outcome: outcome || null,
             contact_id: contact_id || null,
+            actor_user_id: actorUid,        // the dial-time row is written by the
+                                            // webhook, which has no user — this is
+                                            // where the human gets attached
           })
           .eq('client_ref', clientRef)
           .select('id');
@@ -660,6 +711,7 @@ Deno.serve(async (req) => {
           outcome: outcome || null,
           twilio_call_sid: twilio_call_sid || null,
           client_ref: clientRef || null,
+          actor_user_id: actorUid,
         });
         if (error) return err(error.message, 500);
       }
