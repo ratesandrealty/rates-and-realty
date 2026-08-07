@@ -272,6 +272,15 @@ console.log('\nchecking that unknown paths 404…');
     const body = r.status === 200 ? await r.text() : '';
     const isHome = !!(body && indexHash && createHash('sha256').update(body).digest('hex').slice(0, 10) === indexHash);
     if (r.status === 404) { console.log(`  ok   ${p} → 404`); continue; }
+    /* On a PUBLIC host the admin gate bounces /admin/* to the admin host before
+     * routing ever reaches the 404 handler — a redirect here is the gate doing
+     * its job, not a soft 404. Only the admin host can answer this probe with a
+     * real 404, and it does. */
+    const loc = r.headers.get('location') || '';
+    if (r.status >= 300 && r.status < 400 && /admin\.ratesandrealty\.com/.test(loc)) {
+      console.log(`  ok   ${p} → ${r.status} to the admin host (admin gate, not a soft 404)`);
+      continue;
+    }
     softFound++;
     console.log(`  FAIL ${p} → HTTP ${r.status}${isHome ? ' serving the HOMEPAGE — the soft-404 is back' : ''}`);
     if (isHome) console.log('        check not_found_handling in wrangler.toml; it must be "none".');
