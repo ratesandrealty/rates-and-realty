@@ -28,7 +28,7 @@
     .pac-icon{display:none!important;}
     .pac-logo::after{display:none!important;}
   </style>
-  <script src="/admin/js/auth-guard.js?v=1a5c11df5f"></script>
+  <script src="/admin/js/auth-guard.js?v=dba3278ab9"></script>
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
   <!-- Loaded after auth-guard so window._supabaseClient exists when fnFetch reads it. -->
   <script src="/admin/js/fn-call.js?v=85d03d2a98"></script>
@@ -36931,12 +36931,28 @@ async function recordNewVoicemail() {
     }
 
     var badgeHtml = badges.map(function(b) { return '<span class="act-badge ' + (b.cls || '') + '">' + escHtml(b.text) + '</span>'; }).join('');
+    /* ▶ Play, on the ACTIVITY timeline — the surface Rene actually reads.
+       The link was already there: tg_calls_log_advance_contact() stamps
+       metadata.calls_log_id on every call row it writes, so no column and no
+       join were needed. metadata.recording_url tells us whether to offer the
+       button at all, and is now kept current by the AFTER UPDATE half of that
+       trigger rather than frozen null at dial time.
+       get_recording is admin-only, so this 403s for the VA by design. */
+    var recHtml = '';
+    try {
+      var _m = e.metadata;
+      if (typeof _m === 'string') _m = JSON.parse(_m);
+      if (_m && _m.calls_log_id && _m.recording_url) {
+        recHtml = `<button type="button" onclick="event.stopPropagation();rrPlayRecording('${_m.calls_log_id}',this)" title="Play recording" style="margin-left:8px;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:#22c55e;border-radius:5px;font-size:10px;font-weight:700;padding:1px 7px;cursor:pointer;font-family:inherit;">&#9654; Play</button>`;
+      }
+    } catch (_) { /* metadata that will not parse is not a reason to drop the row */ }
+
     var metaHtml = badgeHtml ? '<div class="act-item-meta">' + badgeHtml + '</div>' : '';
 
     return '<div class="act-item" data-event-idx="' + (e._idx != null ? e._idx : '') + '" style="cursor:pointer;">' +
       '<div class="act-item-dot ' + (e.type || '') + '"></div>' +
       '<div class="act-item-head">' +
-        '<div class="act-item-title">' + title + '</div>' +
+        '<div class="act-item-title">' + title + recHtml + '</div>' +
         '<div class="act-item-time">' + fmtTime(e.created_at) + ' &middot; ' + timeAgo(e.created_at) + '</div>' +
       '</div>' +
       (body ? '<div class="act-item-body">' + body + '</div>' : '') +

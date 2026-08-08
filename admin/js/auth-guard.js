@@ -286,6 +286,31 @@
       fc.src = '/admin/js/fn-call.js?v=85d03d2a98';
       document.head.appendChild(fc);
     }
+    /* attachment-viewer.js — mounted app-wide, EAGERLY, not lazily.
+     *
+     * staff-chat.js is on all 34 pages and guards its use of the viewer with
+     *     if (!window.AttachmentViewer) { scToast('Viewer still loading, try
+     *     again in a moment'); return; }
+     * The file was declared on 5 pages. On the other 29 that message is false —
+     * it is not still loading and it never will, so a staff-chat attachment was
+     * permanently unopenable behind a note implying patience would fix it. A
+     * misleading transience message is worse than an error, because it stops
+     * anyone reporting the bug.
+     *
+     * EAGER rather than lazy like the Twilio SDK, and the difference is
+     * deliberate. The SDK is ~90 KB and only ever needed after a deliberate
+     * "call" click, so the wait is attributable and the user is already
+     * committed. This is ~10 KB and is needed the instant someone clicks an
+     * attachment they can already see — making them wait for a fetch at that
+     * moment is exactly the "still loading" experience the message was lying
+     * about. 10 KB on a page that already loads staff-chat at 91 KB is not the
+     * thing to optimise. */
+    function mountAttachmentViewer() {
+      if (window.AttachmentViewer || document.querySelector('script[src*="/admin/js/attachment-viewer.js"]')) return;
+      const av = document.createElement('script');
+      av.src = '/admin/js/attachment-viewer.js?v=e8f2b14c9f';
+      document.head.appendChild(av);
+    }
     /* One clock, app-wide: window.RRTime renders every business timestamp in
      * America/Los_Angeles with a PT label, and reads zone-less Postgres
      * `timestamp` values as UTC instead of as the viewer's local time. Mounted
@@ -313,9 +338,10 @@
       document.head.appendChild(af);
     }
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function () { mountFnCall(); mountRRTime(); mountStaffChat(); mountHelpButton(); mountTaskCapture(); mountDialer(); mountActionFab(); });
+      document.addEventListener('DOMContentLoaded', function () { mountFnCall(); mountAttachmentViewer(); mountRRTime(); mountStaffChat(); mountHelpButton(); mountTaskCapture(); mountDialer(); mountActionFab(); });
     } else {
       mountFnCall();
+      mountAttachmentViewer();
       mountRRTime();
       mountStaffChat();
       mountHelpButton();
