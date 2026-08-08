@@ -6868,6 +6868,117 @@ async function rrPlayRecording(callLogId, btn) {
   }
 }
 
+/* ── TRANSCRIPT, next to ▶ Play ────────────────────────────────────────────
+ *
+ * The button's LABEL is the status, so the difference between "nobody has asked
+ * for this yet", "it is running", "it came back with no speech" and "it failed"
+ * is visible without clicking. That distinction is the whole reason
+ * calls_log.transcript_status exists — rendering every one of them as an
+ * identical grey button would throw it away at the last step.
+ *
+ * `status` is null when the caller does not know it (the activity timeline
+ * reads activity_events, which deliberately does not carry it). Null there
+ * means unknown, not "never requested", so the label stays neutral and the
+ * answer comes from the admin-only endpoint on click. */
+function rrTranscriptButton(callLogId, status) {
+  var label = '📄 Transcript', color = '#C9A84C', bg = 'rgba(201,168,76,.1)', bd = 'rgba(201,168,76,.3)';
+  if (status === 'requested') { label = '⏳ Transcribing…'; color = '#8a8475'; bg = 'rgba(138,132,117,.1)'; bd = 'rgba(138,132,117,.3)'; }
+  else if (status === 'failed') { label = '⚠ Transcript failed'; color = '#E05252'; bg = 'rgba(224,82,82,.1)'; bd = 'rgba(224,82,82,.3)'; }
+  else if (status === 'empty') { label = '📄 No speech'; color = '#8a8475'; bg = 'rgba(138,132,117,.1)'; bd = 'rgba(138,132,117,.3)'; }
+  return '<button type="button" onclick="event.stopPropagation();rrShowTranscript(\'' + callLogId + '\',this)" title="Transcript and AI summary (admin only)" style="margin-left:6px;background:' + bg + ';border:1px solid ' + bd + ';color:' + color + ';border-radius:5px;font-size:10px;font-weight:700;padding:1px 7px;cursor:pointer;font-family:inherit;">' + label + '</button>';
+}
+
+/* Fetch and show. Same trust model as rrPlayRecording: the page never reads the
+ * transcript columns from PostgREST — it cannot, they are not granted to
+ * `authenticated` — so this goes through call-intelligence `get`, which is
+ * admin-only. The VA gets a 403 and is told so, rather than the control being
+ * hidden and the feature looking broken. */
+async function rrShowTranscript(callLogId, btn) {
+  var ov = document.getElementById('rrTxOverlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'rrTxOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:100050;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.72);padding:20px;';
+    ov.innerHTML = '<div style="background:#15140f;border:1px solid rgba(201,168,76,.3);border-radius:14px;max-width:720px;width:100%;max-height:84vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.6);">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);">' +
+          '<div style="font-size:14px;font-weight:700;color:#E8D5A3;">Call transcript</div>' +
+          '<button type="button" id="rrTxClose" style="background:none;border:none;color:#8a8475;font-size:22px;line-height:1;cursor:pointer;">&times;</button>' +
+        '</div><div id="rrTxBody" style="padding:16px 18px;overflow:auto;color:#ddd;font-size:13px;line-height:1.65;"></div></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function (e) { if (e.target === ov) ov.remove(); });
+    ov.querySelector('#rrTxClose').addEventListener('click', function () { ov.remove(); });
+  }
+  var body = ov.querySelector('#rrTxBody');
+  body.innerHTML = '<span style="color:#8a8475;">Loading…</span>';
+  var orig = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '…'; }
+  try {
+    var res = await window.fnFetch('call-intelligence', {
+      method: 'POST', body: JSON.stringify({ action: 'get', call_log_id: callLogId })
+    });
+    var j = {}; try { j = await res.json(); } catch (_) {}
+    if (!res.ok) throw new Error(j.error || ('HTTP ' + res.status));
+
+    var html = '';
+    /* Every branch says something different. A null status is "nobody has asked",
+       and it offers the action rather than showing an empty box that reads like
+       a bug. */
+    if (!j.status) {
+      html = '<div style="color:#8a8475;">No transcript has been requested for this call.</div>' +
+        (j.has_recording
+          ? '<div style="margin-top:12px;"><button type="button" onclick="rrStartTranscript(\'' + callLogId + '\',this)" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.35);color:#E8D5A3;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Transcribe this call</button></div>'
+          : '<div style="margin-top:10px;color:#8a8475;">This call has no recording, so there is nothing to transcribe.</div>');
+    } else if (j.status === 'requested') {
+      html = '<div style="color:#8a8475;">Transcription is still running. Requested ' + esc(_rrTxWhen(j.requested_at)) + '.</div>';
+    } else if (j.status === 'empty') {
+      html = '<div style="color:#8a8475;">The recording completed but no speech was detected. This is not an error — a voicemail beep or a few seconds of silence transcribes to nothing.</div>';
+    } else {
+      if (j.status === 'failed') {
+        html += '<div style="background:rgba(224,82,82,.1);border:1px solid rgba(224,82,82,.3);border-radius:8px;padding:10px 12px;margin-bottom:14px;">' +
+          '<div style="color:#E05252;font-weight:700;font-size:12px;margin-bottom:4px;">Transcription failed</div>' +
+          '<div style="color:#d8b9b9;font-size:12px;">' + esc(j.error || 'No reason recorded.') + '</div></div>';
+      }
+      if (j.ai_summary) {
+        html += '<div style="font-size:11px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Summary</div>' +
+          '<div style="margin-bottom:16px;">' + esc(j.ai_summary) + '</div>';
+      }
+      if (j.transcript) {
+        html += '<div style="font-size:11px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Transcript' +
+          (j.lang ? ' <span style="color:#8a8475;font-weight:500;">(' + esc(j.lang) + ')</span>' : '') + '</div>' +
+          '<div style="white-space:pre-wrap;color:#cfcabb;">' + esc(j.transcript) + '</div>';
+      } else if (j.status === 'failed') {
+        html += '<div style="color:#8a8475;">No transcript was produced.</div>';
+      }
+      if (j.updated_at) html += '<div style="margin-top:14px;font-size:11px;color:#6f6a5e;">Updated ' + esc(_rrTxWhen(j.updated_at)) + '</div>';
+    }
+    body.innerHTML = html;
+  } catch (err) {
+    body.innerHTML = '<div style="color:#E05252;">' + esc(err.message || 'Could not load the transcript.') + '</div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  }
+}
+
+function _rrTxWhen(v) {
+  if (!v) return '';
+  return window.RRTime ? window.RRTime.dateTime(v) : String(v);
+}
+
+async function rrStartTranscript(callLogId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+  try {
+    var res = await window.fnFetch('call-intelligence', {
+      method: 'POST', body: JSON.stringify({ action: 'start', call_log_id: callLogId })
+    });
+    var j = {}; try { j = await res.json(); } catch (_) {}
+    if (!res.ok) throw new Error(j.error || ('HTTP ' + res.status));
+    rrShowTranscript(callLogId, null);
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Transcribe this call'; }
+    alert('Could not start transcription: ' + (err.message || 'error'));
+  }
+}
+
 function relativeTime(dateStr) {
   if (!dateStr) return '';
   if (window.RRTime) return window.RRTime.relative(dateStr);
@@ -7095,7 +7206,16 @@ async function loadCommunications() {
       sb.from('sms_log').select('*').eq('contact_id', cid).order('created_at', { ascending: false }).limit(100),
       sb.from('email_log').select('*').eq('contact_id', cid).order('created_at', { ascending: false }).limit(50),
       sb.from('call_log').select('*').eq('contact_id', cid).order('created_at', { ascending: false }).limit(50),
-      sb.from('calls_log').select('*').eq('contact_id', cid).order('created_at', { ascending: false }).limit(50)
+      /* EXPLICIT COLUMNS, NOT *. transcript, ai_summary and transcript_sid are
+         deliberately absent: SELECT on those three is not granted to the
+         `authenticated` role, and PostgREST asking for `*` would make Postgres
+         refuse the whole query rather than skip the columns — this list breaking
+         is the whole timeline going blank, not a missing field.
+         Transcripts are read through call-intelligence `get`, which is
+         admin-only, the same way recordings go through get_recording.
+         transcript_status IS selected: it is not the content, and the timeline
+         needs it to know which control to draw without a second round trip. */
+      sb.from('calls_log').select('id, contact_id, to_phone, from_phone, direction, duration, status, recording_url, voicemail_drop, voicemail_url, notes, outcome, twilio_call_sid, created_at, client_ref, actor_user_id, transcript_status, transcript_error, transcript_lang, transcript_requested_at, transcript_updated_at').eq('contact_id', cid).order('created_at', { ascending: false }).limit(50)
     ]);
     const smsList = (smsRes.data || []).map(r => ({ ...r, _type: 'sms' }));
     const emailList = (emailRes.data || []).map(r => ({ ...r, _type: 'email' }));
@@ -7130,6 +7250,7 @@ async function loadCommunications() {
            activity_events, which has no reference back to the recording. */
         if (c.recording_url && c._type === 'browser_call') {
           extras += `<button type="button" onclick="event.stopPropagation();rrPlayRecording('${c.id}',this)" title="Play recording" style="margin-left:6px;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:#22c55e;border-radius:5px;font-size:10px;font-weight:700;padding:1px 7px;cursor:pointer;font-family:inherit;">&#9654; Play</button>`;
+          extras += rrTranscriptButton(c.id, c.transcript_status);
         }
       } else {
         body = esc(c.body || '');
@@ -36944,6 +37065,13 @@ async function recordNewVoicemail() {
       if (typeof _m === 'string') _m = JSON.parse(_m);
       if (_m && _m.calls_log_id && _m.recording_url) {
         recHtml = `<button type="button" onclick="event.stopPropagation();rrPlayRecording('${_m.calls_log_id}',this)" title="Play recording" style="margin-left:8px;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:#22c55e;border-radius:5px;font-size:10px;font-weight:700;padding:1px 7px;cursor:pointer;font-family:inherit;">&#9654; Play</button>`;
+        /* Status is passed as null here on purpose. activity_events.metadata
+           carries calls_log_id and recording_url but NOT transcript_status, and
+           it is not going to: the summary is NPI-derived and metadata on this
+           table is readable by anyone authenticated. The button asks the
+           admin-only endpoint when clicked instead of the row advertising what
+           it holds. */
+        recHtml += rrTranscriptButton(_m.calls_log_id, null);
       }
     } catch (_) { /* metadata that will not parse is not a reason to drop the row */ }
 
