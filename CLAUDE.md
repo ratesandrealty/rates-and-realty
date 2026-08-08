@@ -148,6 +148,78 @@ return was found", one 401, one 5 s timeout). Nothing watches this table. A
 periodic sweep of it is the cheapest cron-failure alarm available, and does not
 exist yet.
 
+## Call transcription — `call-intelligence`
+
+Twilio Conversational Intelligence (classic). Transcript + Conversation Summary
+land on the `calls_log` row; the summary also becomes a `contact_notes` row
+tagged with the `calls_log` id.
+
+Two Intelligence Services, because a Service's `language_code` is **immutable**:
+
+| key in `app_config` | Service | language |
+|---|---|---|
+| `ci_service_sid_en` | `GA967fcc8190798affeda1f9b4d5547ca1` | en-US |
+| `ci_service_sid_es` | `GA0ad8505bca56708f11da5cb8eda4ca06` | es-US |
+
+Transcription runs on en-US; if the `NonEnglishCall` operator fires the same
+recording is re-transcribed on es-US and that result wins. **Non-English calls
+are billed twice**, deliberately.
+
+`auto_transcribe` is OFF and should stay off — it transcribes every new
+recording with no `CustomerKey`, and `CustomerKey` is the only thing tying a
+transcript back to a `calls_log` row.
+
+### A null transcript is never ambiguous
+
+`transcript_status` is the point of the whole design: `null` = never requested,
+`requested`, `ready`, `empty` (completed, no speech — the pipeline WORKED), and
+`failed` (`transcript_error` says why). Four CHECK constraints enforce it —
+`ready` cannot have no text, `failed` cannot have no reason, text cannot exist
+with no status. A failure is a **write**, never just a return value: a function
+that errors to its caller and leaves the row alone produces exactly the
+ambiguity this removes.
+
+`failed` with a transcript still present means a **re-run** failed and the
+earlier transcript is retained; `transcript_error` says so explicitly.
+
+### Transcripts are admin-only, and the column grants are what enforce it
+
+`calls_log` RLS is `authenticated USING (true)` — every signed-in user reads
+every row. So the gate is **column grants**, not RLS: `transcript`, `ai_summary`
+and `transcript_sid` are NOT granted to `authenticated`. Reading goes through
+`call-intelligence` `get`, which is admin-only, the way recordings go through
+`get_recording`. `start` and `sync` are admin too — if you cannot read a
+transcript you should not be able to commission one.
+
+**Consequence: never `select('*')` from `calls_log` in a browser.** PostgREST
+passes `*` through and Postgres refuses the WHOLE query when one column is
+ungranted, so it blanks the timeline rather than hiding three fields.
+`admin/lead-detail.html` uses an explicit column list for this reason.
+
+### The webhook is signed, JSON-bodied, and is NOT the delivery guarantee
+
+Twilio signs the Intelligence Service webhook — established by observation, not
+docs, which only state it for Batch Transcription. **Its body is JSON, unlike
+every other Twilio webhook here**, and `?bodySHA256=` on the URL is the marker:
+Twilio appends it when it cannot fold form params into the signature, so the
+signature covers the URL alone.
+
+The first version parsed that JSON body as form-encoded, found no SID, and
+returned **200 to Twilio while doing nothing**. Nothing alerted. It was found
+only by forcing a transcript and watching the ROW rather than the response.
+
+pg_cron job 43 `call-transcript-sweep` (*/10) is the actual guarantee. It does
+two things, and the first matters more: it picks up recorded calls with
+**`transcript_status IS NULL`** — the case where the kick-off in `twilio-voice`
+never landed, which appears in no pending query and would otherwise be invisible
+forever. It authenticates with `internal_call_headers()`.
+
+### Recordings are mono
+
+`channels=1`, from `<Dial record=…>`. No speaker separation and reduced
+accuracy. Fixing it means `record="record-from-answer-dual"`, which only affects
+future calls — existing audio cannot be re-cut.
+
 ## Security boundaries worth not breaking
 
 - `gmail-inbox` downloads outbound attachments with the **service role**, which
