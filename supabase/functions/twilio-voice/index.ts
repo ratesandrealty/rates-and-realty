@@ -67,7 +67,8 @@ async function greetingConfig(): Promise<{ url: string; text: string }> {
 
 /* ── RECORDING DISCLOSURE ─────────────────────────────────────────────────────
  *
- * Every <Dial> in this file carries record="record-from-answer" and until now
+ * Every <Dial> in this file is recorded (the two live paths dual-channel since
+ * 2026-08-08, make_call still mono — same start trigger either way) and until now
  * played no announcement. California is an all-party consent state and the VA
  * is in the Philippines, so this was recording people who had not been told.
  * E Mortgage Capital has approved recording WITH an announcement; the wording
