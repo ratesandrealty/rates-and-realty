@@ -464,3 +464,16 @@ verify_jwt = false
 # failures visible. Changing this is the NEXT task, with a real guard behind it —
 # see docs/OPEN-FINDINGS-2026-08-07.md §1.
 verify_jwt = false
+
+[functions.call-intelligence]
+# false, and it MUST be false: Twilio's Conversational Intelligence webhook has
+# no JWT to send. Same reason twilio-inbound and twilio-voice are false.
+#
+# This is a STABILITY pin, not access control — see docs/PINNED-NOT-GUARDED.md.
+# The actual access control is in the function and is split by caller:
+#   ?event=transcript  ->  X-Twilio-Signature, and the payload is still not
+#                          trusted; every byte written is re-fetched from
+#                          Twilio over an authenticated GET.
+#   JSON actions       ->  requireStaff BEFORE req.json(); `get` and `provision`
+#                          narrow further to roles:['admin'].
+verify_jwt = false
