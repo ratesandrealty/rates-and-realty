@@ -507,7 +507,20 @@ Deno.serve(async (req) => {
         const a = await tw('POST', `https://intelligence.twilio.com/v2/Services/${sid}/Operators/${op}`);
         attached.push(`${op}:${a.status}`);
       }
-      out[cfgKey] = { sid, lang, attached };
+
+      /* Point the Service's webhook at our receiver. Applied on every provision
+       * run, not just at creation, so re-running fixes a URL that drifted.
+       *
+       * This is the fast path only. If Twilio does not sign these — which I
+       * could not establish from the docs — the receiver 403s every one of them
+       * and the 10-minute sweep still delivers every transcript. Configuring it
+       * anyway is also how we find out: a 403 with reason=missing_signature in
+       * the logs answers the question that the documentation would not. */
+      const hook = await tw('POST', `https://intelligence.twilio.com/v2/Services/${sid}`, {
+        WebhookUrl: `${SUPABASE_URL}/functions/v1/call-intelligence?event=transcript`,
+        WebhookHttpMethod: 'POST',
+      });
+      out[cfgKey] = { sid, lang, attached, webhook: hook.status, webhook_url: (hook.body as any)?.webhook_url ?? null };
     }
     return json({ success: true, services: out });
   }
