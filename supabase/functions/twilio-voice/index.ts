@@ -404,10 +404,53 @@ Deno.serve(async (req) => {
       // Recording status callback → log url, return empty 200 (Twilio ignores body)
       if (recordingUrl) {
         if (callSid) {
-          sb.from('calls_log')
+          /* AWAITED, and .select()ing the id back, because the transcription
+           * kick-off below needs to know WHICH row this recording landed on.
+           * The previous fire-and-forget .then() could not tell anyone. */
+          const { data: updated, error: updErr } = await sb.from('calls_log')
             .update({ recording_url: recordingUrl })
             .eq('twilio_call_sid', callSid)
-            .then(({ error }) => { if (error) console.error('[twilio-voice] recording update err:', error.message); });
+            .select('id');
+          if (updErr) console.error('[twilio-voice] recording update err:', updErr.message);
+
+          /* ── TRANSCRIPTION STARTS HERE ────────────────────────────────────
+           * This is the first moment the recording is knowable, which is why
+           * the kick-off lives here rather than on a timer.
+           *
+           * Service key in BOTH headers: esign→email-service proved that an
+           * Authorization-only check 401s an internal caller that sends only
+           * `apikey`, so senders send both and require-staff accepts either.
+           *
+           * FAILURE HERE IS NOT SILENT AND NOT FATAL. Twilio gets its 200
+           * regardless — refusing to acknowledge a recording callback because
+           * our own downstream hop failed would make Twilio retry the whole
+           * thing and change nothing. The safety net is call-intelligence's
+           * `sweep`, which picks up any recorded call that never got a
+           * transcript_status at all, so a broken hop here delays transcription
+           * to the next sweep instead of losing it. That is deliberate: every
+           * outage in this project has been a callback that stopped arriving
+           * with nothing reconciling behind it. */
+          for (const r of (updated || []) as Array<{ id: string }>) {
+            try {
+              const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/call-intelligence`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'apikey': Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+                  'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''}`,
+                },
+                body: JSON.stringify({ action: 'start', call_log_id: r.id }),
+              });
+              /* Look at what came back, not just that the call returned. */
+              if (!res.ok) {
+                console.error(`[twilio-voice] transcription kick-off for ${r.id} returned ${res.status}: ${(await res.text()).slice(0, 200)}`);
+              } else {
+                console.log(`[twilio-voice] transcription requested for calls_log ${r.id}`);
+              }
+            } catch (e) {
+              console.error(`[twilio-voice] transcription kick-off threw for ${r.id}:`, String(e));
+            }
+          }
         }
         return new Response('', { status: 200, headers: corsHeaders });
       }

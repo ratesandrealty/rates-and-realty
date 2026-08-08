@@ -507,10 +507,29 @@ Deno.serve(async (req) => {
   if (action === 'sweep') {
     const staleMin = Number(body.stale_minutes ?? 10);
     const cutoff = new Date(Date.now() - staleMin * 60_000).toISOString();
+    const results: Record<string, string> = {};
+
+    /* PART 1 — recorded calls that were never even asked about.
+     *
+     * transcript_status IS NULL with a recording present means the kick-off in
+     * twilio-voice did not land: the fetch threw, the function was mid-deploy,
+     * or the row was written by something that does not know about
+     * transcription yet. Without this, that call is invisible forever — it does
+     * not appear in any 'requested' query because it never got that far.
+     *
+     * This is what makes the twilio-voice hop non-critical rather than a single
+     * point of failure. */
+    const { data: unstarted } = await sb.from('calls_log')
+      .select('id').is('transcript_status', null).not('recording_url', 'is', null).limit(25);
+    for (const r of (unstarted || []) as any[]) {
+      const s = await startForRow(r.id);
+      results[r.id] = s.ok ? 'started' : `start_failed: ${s.error}`;
+    }
+
+    /* PART 2 — asked for, never came back. */
     const { data: rows } = await sb.from('calls_log')
       .select('id').eq('transcript_status', 'requested').lt('transcript_requested_at', cutoff).limit(50);
 
-    const results: Record<string, string> = {};
     for (const r of (rows || []) as any[]) {
       results[r.id] = await syncRow(r.id);
       /* Still 'requested' well past any plausible processing time is a stuck
