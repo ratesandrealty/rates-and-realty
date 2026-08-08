@@ -249,17 +249,39 @@ async function harvest(rowId: string, transcriptSid: string, lang: string): Prom
   }
   if (status !== 'completed') return 'requested';   // still queued / in-progress
 
-  /* direction decides which channel is the borrower on a dual recording, and is
-   * harmless on a mono one — formatTranscript only uses the roles when the
-   * sentences actually carry two channels. */
   const { data: dirRow } = await sb.from('calls_log')
-    .select('direction').eq('id', rowId).maybeSingle();
+    .select('direction, recording_url, recording_channels').eq('id', rowId).maybeSingle();
+  const row0: any = dirRow || {};
+
+  /* ── ASK TWILIO HOW MANY CHANNELS, DO NOT ASK THE SENTENCES ────────────────
+   * Conversational Intelligence returns two media_channel values even for a
+   * one-channel recording (both carrying the same mixed audio), so the sentence
+   * data cannot decide whether speaker labels are real. The Recording resource
+   * can. Cached on the row after the first read. */
+  let channels: number | null = row0.recording_channels ?? null;
+  if (channels === null) {
+    const recSid = recordingSidFrom(row0.recording_url || '');
+    if (recSid) {
+      const rr = await tw('GET', `https://api.twilio.com/2010-04-01/Accounts/${ACCOUNT_SID}/Recordings/${recSid}.json`);
+      const n = Number(rr.body?.channels);
+      if (rr.ok && (n === 1 || n === 2)) {
+        channels = n;
+        await sb.from('calls_log').update({ recording_channels: n }).eq('id', rowId);
+      } else {
+        /* Unknown stays unknown. formatTranscript treats null as mono and emits
+         * no labels, which is the safe direction: an unlabelled transcript is
+         * less useful, a mislabelled one is evidence of a conversation that did
+         * not happen. */
+        console.warn(`[call-intelligence] could not read channels for ${recSid} (${rr.status}) — labelling suppressed`);
+      }
+    }
+  }
 
   let text = '', count = 0;
   try {
     const sentences = await fetchSentences(transcriptSid);
     count = sentences.length;
-    text = formatTranscript(sentences, rolesForDirection((dirRow as any)?.direction));
+    text = formatTranscript(sentences, rolesForDirection(row0.direction), channels);
   } catch (e) {
     await markFailed(rowId, String(e));
     return 'failed';
