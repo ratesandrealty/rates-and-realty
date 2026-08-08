@@ -120,7 +120,22 @@ async function cfgSet(key: string, value: string) {
  * transcript_error is NOT NULL-checked by a constraint when status='failed', so
  * a reasonless failure cannot be written even by mistake. */
 async function markFailed(rowId: string, reason: string) {
-  const msg = reason.slice(0, 800) || 'unknown failure';
+  let msg = reason.slice(0, 800) || 'unknown failure';
+
+  /* A FAILED RETRY MUST NOT LOOK LIKE A FAILED FIRST ATTEMPT.
+   *
+   * Found by breaking this on purpose: force-retrying a call that already had a
+   * good transcript left status='failed' sitting next to the old text. Keeping
+   * the text is right — a retry failing is no reason to destroy a transcript we
+   * already have — but silently is not, because 'failed' then means two
+   * different things depending on a column the reader may not have looked at.
+   * So the row says which one it is. */
+  const { data: prior } = await sb.from('calls_log')
+    .select('transcript').eq('id', rowId).maybeSingle();
+  if ((prior as any)?.transcript) {
+    msg = `${msg} [The earlier transcript is retained and still shown; this was a re-run.]`.slice(0, 1000);
+  }
+
   const { error } = await sb.from('calls_log').update({
     transcript_status: 'failed',
     transcript_error: msg,
