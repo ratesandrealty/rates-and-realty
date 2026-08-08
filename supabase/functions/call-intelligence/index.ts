@@ -21,25 +21,33 @@
  *
  * ── THE WEBHOOK PAYLOAD IS NEVER TRUSTED, EVEN WHEN SIGNED ─────────────────
  *
- * I could not confirm from Twilio's docs that the Conversational Intelligence
- * *Service* webhook is signed at all. The explicit "Twilio signs each request
- * with X-Twilio-Signature" statement lives in the Batch Transcription docs,
- * which is a different product; the CI classic page's "signature of the webhook
- * request body" link is about payload schema, not request signing.
+ * IT IS SIGNED. Established by observation, not documentation — Twilio's docs
+ * only state this for Batch Transcription, a different product. A live delivery
+ * logged as
+ *     POST | 200 | …/call-intelligence?event=transcript&bodySHA256=9dd83ef8…
+ * on an endpoint that 403s an unsigned request settles it.
  *
- * So the webhook is treated as a doorbell and nothing more. It is required to
- * be signed (unsigned gets 403 — no unauthenticated webhook, by instruction),
- * and even then the only thing read out of the body is a transcript SID. Every
- * byte that reaches the database is re-fetched from intelligence.twilio.com
- * over an authenticated GET, and only after the transcript's CustomerKey is
- * confirmed to be a calls_log row we ourselves put into 'requested'.
+ * The body is JSON, not form-encoded, unlike every other Twilio webhook here.
+ * `bodySHA256` on the URL is the marker: Twilio appends it when it cannot fold
+ * form parameters into the signature, and hashes the raw body into the URL
+ * instead. So the signature covers the URL alone — which is exactly what
+ * _shared/twilio-signature.ts computes when there are no form params.
  *
- * The consequence worth stating: if Twilio turns out not to sign these, the
- * webhook silently 403s and NOTHING IS LOST — `sweep` reconciles from the
- * authoritative side on a timer. The webhook is the fast path, never the only
- * path. That is deliberate: this codebase's recurring failure is a callback
- * that stopped arriving with nothing watching (send-scheduled-sms, gdrive-sync,
- * the 9 unnoticed failures in net._http_response).
+ * The webhook is still treated as a doorbell and nothing more. Unsigned gets
+ * 403 (no unauthenticated webhook, by instruction), and even signed, the only
+ * thing read out of the body is a transcript SID. Every byte that reaches the
+ * database is re-fetched from intelligence.twilio.com over an authenticated
+ * GET, and only after that transcript's CustomerKey resolves to a calls_log row
+ * we ourselves put into 'requested'.
+ *
+ * The webhook is the fast path (≈15s), never the only path. `sweep` reconciles
+ * from the authoritative side every 10 minutes regardless. That is deliberate,
+ * and it earned its keep immediately: the first version of this handler parsed
+ * the JSON body as form-encoded, found no SID, and returned 200 to Twilio while
+ * doing nothing at all. The sweep delivered those transcripts anyway. This
+ * codebase's recurring failure is a callback that stopped arriving with nothing
+ * watching (send-scheduled-sms, gdrive-sync, the 9 unnoticed failures in
+ * net._http_response) — the reconciler is the part that must not be optional.
  *
  * ── READ ACCESS ────────────────────────────────────────────────────────────
  *
@@ -541,13 +549,10 @@ Deno.serve(async (req) => {
       }
 
       /* Point the Service's webhook at our receiver. Applied on every provision
-       * run, not just at creation, so re-running fixes a URL that drifted.
+       * run, not just at creation, so re-running repairs a URL that drifted.
        *
-       * This is the fast path only. If Twilio does not sign these — which I
-       * could not establish from the docs — the receiver 403s every one of them
-       * and the 10-minute sweep still delivers every transcript. Configuring it
-       * anyway is also how we find out: a 403 with reason=missing_signature in
-       * the logs answers the question that the documentation would not. */
+       * Verified delivering in ≈15s, signed. Still the fast path only — the
+       * 10-minute sweep delivers every transcript regardless. */
       const hook = await tw('POST', `https://intelligence.twilio.com/v2/Services/${sid}`, {
         WebhookUrl: `${SUPABASE_URL}/functions/v1/call-intelligence?event=transcript`,
         WebhookHttpMethod: 'POST',
