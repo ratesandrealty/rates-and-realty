@@ -263,6 +263,29 @@
      * and it only shows an action whose original button is actually in the DOM,
      * so each widget's own role gate still decides. Mounted LAST so both sources
      * are more likely to exist on first render; it re-checks either way. */
+    /* fn-call.js — the ONE way to call an edge function as the signed-in user.
+     *
+     * This is mounted app-wide because auth-guard mounts things that NEED it.
+     * dialer.js is on all 34 pages; fn-call.js was declared on 3. So the FAB
+     * dial pad rendered everywhere and could authenticate nowhere else: the
+     * calling-hours precheck died with "window.fnFetch is not a function" and,
+     * correctly, refused the call.
+     *
+     * The rule this encodes: anything auth-guard mounts app-wide can only depend
+     * on things auth-guard also guarantees. A widget on 34 pages whose helper is
+     * on 3 is broken on 31 of them, and it fails at click time rather than load
+     * time, so nothing notices until someone tries to use it.
+     *
+     * Idempotent twice over — the script-src check below, and fn-call.js's own
+     * guard — so the three pages that declare it themselves do not double-load.
+     * Mounted FIRST of the group for load-order sanity; nothing here needs
+     * fnFetch until a user interacts, by which point both have executed. */
+    function mountFnCall() {
+      if (window.fnFetch || document.querySelector('script[src*="/admin/js/fn-call.js"]')) return;
+      const fc = document.createElement('script');
+      fc.src = '/admin/js/fn-call.js?v=85d03d2a98';
+      document.head.appendChild(fc);
+    }
     /* One clock, app-wide: window.RRTime renders every business timestamp in
      * America/Los_Angeles with a PT label, and reads zone-less Postgres
      * `timestamp` values as UTC instead of as the viewer's local time. Mounted
@@ -290,8 +313,9 @@
       document.head.appendChild(af);
     }
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function () { mountRRTime(); mountStaffChat(); mountHelpButton(); mountTaskCapture(); mountDialer(); mountActionFab(); });
+      document.addEventListener('DOMContentLoaded', function () { mountFnCall(); mountRRTime(); mountStaffChat(); mountHelpButton(); mountTaskCapture(); mountDialer(); mountActionFab(); });
     } else {
+      mountFnCall();
       mountRRTime();
       mountStaffChat();
       mountHelpButton();

@@ -27,6 +27,10 @@
  *   // res is a normal Response — existing call sites keep their .ok/.text()/.json() handling
  */
 (function () {
+  /* Idempotent: auth-guard mounts this app-wide AND three pages declare it
+     themselves. Re-running would only reassign the same functions, but bailing
+     is cheaper and states the intent. */
+  if (window.fnFetch && window.fnCall) return;
   'use strict';
   if (window.fnFetch) return;
 
