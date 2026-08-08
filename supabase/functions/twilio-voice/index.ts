@@ -126,6 +126,86 @@ async function noticeConfig(): Promise<string> {
   return text.replace(/\{name\}/g, name).trim();
 }
 
+/* ── CALLING HOURS (TCPA) ────────────────────────────────────────────────────
+ *
+ * 8am–9pm in the CALLED party's local time, not ours. This is a legal limit on
+ * outbound calls, and it became urgent the moment a dial pad existed: the VA
+ * works UTC+8, which is roughly 5pm–2am Pacific, so their ordinary working
+ * evening is the middle of the night for most US borrowers. Unrestricted, the
+ * normal use of the tool is the violation.
+ *
+ * area_code_timezones has held 192 rows across 6 zones since it was created and
+ * has never been wired to anything. This is the first consumer.
+ *
+ * ENFORCED SERVER-SIDE, in the TwiML branch that actually places the call, not
+ * only in the browser. A client-side check is a courtesy message; this is the
+ * control. The precheck action exists so the UI can refuse BEFORE anything
+ * rings, but it is not what makes the rule true.
+ *
+ * UNKNOWN AREA CODE -> ALLOW, AND RECORD IT. Blocking on ignorance would make
+ * the dialer randomly unusable for any code missing from a 192-row table, and
+ * an agent who cannot call falls back to their personal phone, which is worse
+ * than a call at a slightly wrong hour. Every unknown is written to audit_log
+ * so the gap is a worklist rather than a silent default. */
+const CALL_WINDOW_START = 8;    // inclusive, local
+const CALL_WINDOW_END = 21;     // exclusive, local — 9pm
+
+type HoursVerdict = {
+  allowed: boolean;
+  areaCode: string | null;
+  tz: string | null;
+  localTime: string | null;
+  known: boolean;
+  reason: string;
+};
+
+async function callingHours(toPhone: string): Promise<HoursVerdict> {
+  const digits = (toPhone || '').replace(/\D/g, '');
+  const nat = digits.length === 11 && digits[0] === '1' ? digits.slice(1) : digits;
+  const areaCode = nat.length >= 10 ? nat.slice(0, 3) : null;
+
+  if (!areaCode) {
+    return { allowed: true, areaCode: null, tz: null, localTime: null, known: false,
+             reason: 'no area code could be read from the number' };
+  }
+
+  let tz: string | null = null;
+  try {
+    const { data } = await sb.from('area_code_timezones').select('tz').eq('area_code', areaCode).maybeSingle();
+    tz = (data as any)?.tz || null;
+  } catch (e) {
+    /* A lookup failure must not become a block — see above. It is recorded as
+     * unknown, which is honest: we do not know the zone. */
+    console.error('[twilio-voice] area_code_timezones lookup failed:', String(e));
+  }
+
+  if (!tz) {
+    console.warn(`[twilio-voice] CALLING HOURS: unknown area code ${areaCode} — allowing`);
+    try {
+      await sb.from('audit_log').insert({
+        table_name: 'calling_hours', row_id: areaCode, operation: 'UNKNOWN_AREA_CODE',
+        new_data: { area_code: areaCode, to: toPhone, allowed: true },
+      });
+    } catch (_) { /* the call still proceeds; this is a worklist, not a gate */ }
+    return { allowed: true, areaCode, tz: null, localTime: null, known: false,
+             reason: `area code ${areaCode} is not in area_code_timezones — allowed, and logged` };
+  }
+
+  const now = new Date();
+  const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', hour12: false }).format(now));
+  const localTime = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true,
+  }).format(now);
+  const allowed = hour >= CALL_WINDOW_START && hour < CALL_WINDOW_END;
+
+  return {
+    allowed, areaCode, tz, localTime, known: true,
+    reason: allowed
+      ? `${localTime} for area code ${areaCode} (${tz})`
+      : `It is ${localTime} for the person you are calling (area code ${areaCode}, ${tz}). Calls are limited to 8:00 AM–9:00 PM in their local time.`,
+  };
+}
+
 /* ── FAIL CLOSED ON THE RECORDING, NOT ON THE CALL ───────────────────────────
  *
  * Losing a recording is free. Capturing audio nobody was told about is not. So
@@ -414,6 +494,31 @@ Deno.serve(async (req) => {
         const dialTo = to.startsWith('+') || to.startsWith('client:') ? to : formatPhone(to);
         const recordingCb = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice`;
 
+        /* CALLING HOURS — enforced HERE because this is where the call is
+         * actually placed. The browser gets a precheck for a decent message,
+         * but this is the control: it covers the lead-detail dialer, the FAB
+         * dial pad and anything added later, and it cannot be skipped by a
+         * caller that simply does not ask. client: destinations are internal
+         * legs, not borrowers, and are exempt. */
+        if (!dialTo.startsWith('client:')) {
+          const hours = await callingHours(dialTo);
+          if (!hours.allowed) {
+            console.error(`[twilio-voice] CALLING HOURS BLOCKED ${dialTo}: ${hours.reason}`);
+            try {
+              await sb.from('calls_log').insert({
+                to_phone: dialTo, from_phone: TWILIO_PHONE, direction: 'outbound',
+                status: 'blocked_calling_hours', twilio_call_sid: callSid,
+                notes: hours.reason, created_at: new Date().toISOString(),
+              });
+            } catch (_) {}
+            return twimlRes(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">${xmlEsc(hours.reason)}</Say>
+  <Hangup/>
+</Response>`);
+          }
+        }
+
         /* LOG AT DIAL TIME, WITH THE SERVER'S OWN CallSid.
          *
          * Browser-dialer rows logged twilio_call_sid NULL, every time, so the
@@ -593,8 +698,20 @@ Deno.serve(async (req) => {
       return jsonRes({ token: `${header}.${payload}.${sigB64}`, identity });
     }
 
+    /* Advisory only — the TwiML branch above is what actually enforces. This
+     * exists so the dial pad can refuse before anything rings, with the
+     * recipient's local time in the message, rather than the caller hearing a
+     * hangup and guessing. */
+    if (action === 'dial_precheck') {
+      if (!to) return err('Missing "to" phone number');
+      const hours = await callingHours(formatPhone(to));
+      return jsonRes(hours);
+    }
+
     if (action === 'make_call') {
       if (!to) return err('Missing "to" phone number');
+      const mcHours = await callingHours(formatPhone(to));
+      if (!mcHours.allowed) return jsonRes({ success: false, blocked: 'calling_hours', ...mcHours }, 409);
       const auth = btoa(`${ACCOUNT_SID}:${AUTH_TOKEN}`);
       /* Disclosure on both legs, same shape and same fail-closed rule as the
        * other two recorded Dials. */
