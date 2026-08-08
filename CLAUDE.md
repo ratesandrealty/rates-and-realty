@@ -214,11 +214,44 @@ two things, and the first matters more: it picks up recorded calls with
 never landed, which appears in no pending query and would otherwise be invisible
 forever. It authenticates with `internal_call_headers()`.
 
-### Recordings are mono
+### Dual-channel recording, and the trap in it
 
-`channels=1`, from `<Dial record=…>`. No speaker separation and reduced
-accuracy. Fixing it means `record="record-from-answer-dual"`, which only affects
-future calls — existing audio cannot be re-cut.
+The two LIVE dial paths use `record="record-from-answer-dual"` since 2026-08-08.
+`make_call` is deliberately still mono — it has **no caller anywhere in the
+frontend** and its two legs are the same number (`Calls.json To=<to>`, then its
+TwiML `<Dial>`s `<to>` again), so its channel roles are undefined. Treat that
+self-dial as a separate unfixed defect.
+
+**Compliance ordering is unaffected.** Twilio documents `record-from-answer` and
+`record-from-answer-dual` with the identical trigger — both start "as soon as
+the call is answered". Verified against the recordings themselves: no transcript
+contains the disclosure text, and the whisper would be the first thing captured
+if capture began before it finished.
+
+**Channel 1 is NOT always staff here.** Twilio puts the parent leg on channel 1
+and Conversational Intelligence assumes channel 1 is the Agent. True for the
+browser dialer; **backwards for inbound**, where the parent leg is the borrower
+who rang in. `createTranscript` always sends an explicit `participants` mapping
+derived from `calls_log.direction`.
+
+**Never derive speaker labels from `media_channel` in the sentences.**
+Conversational Intelligence returns TWO media_channels even for a `channels:1`
+recording — both carrying the same mixed audio, transcribed twice. Believing it
+produces `Rates and Realty: Hello?` / `Borrower: Hello?` from one person. It is
+also why mono transcripts always looked as if every phrase were said twice.
+
+`calls_log.recording_channels` (read from the Twilio Recording resource, cached
+on the row) is the authority. **Unknown is treated as mono** — an unlabelled
+transcript is merely less useful; a mislabelled one is a record of a
+conversation that did not happen, on borrower NPI.
+
+Formatting lives in `_shared/transcript-format.ts` with 12 tests next to it
+covering mono, dual and the phantom-channel case, so neither era's path waits on
+a real phone call for coverage.
+
+**No Twilio cost change.** `recordings`, `recordingstorage` and
+`voice-intelligence-transcription` are all billed in **minutes**, not bytes. The
+file is ~2× on download; the billable quantity is identical.
 
 ## Security boundaries worth not breaking
 
