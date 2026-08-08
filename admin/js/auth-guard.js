@@ -274,19 +274,29 @@
       rt.src = '/admin/js/rr-time.js?v=561d9fe9fb';
       document.head.appendChild(rt);
     }
+    /* The dialer — modal + Twilio.Device — app-wide, so the FAB's Call row has
+     * something to open. It mounts a hidden #rr-dial-fab trigger that the FAB
+     * gates on, and lazy-loads the Twilio SDK only when someone actually dials. */
+    function mountDialer() {
+      if (window._rrDialerLoaded || document.querySelector('script[src*="/admin/js/dialer.js"]')) return;
+      const dl = document.createElement('script');
+      dl.src = '/admin/js/dialer.js?v=b721aa71f8';
+      document.head.appendChild(dl);
+    }
     function mountActionFab() {
       if (document.querySelector('script[src*="/admin/js/action-fab.js"]')) return;
       const af = document.createElement('script');
-      af.src = '/admin/js/action-fab.js?v=9771b7a62f';
+      af.src = '/admin/js/action-fab.js?v=f88ec976e8';
       document.head.appendChild(af);
     }
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function () { mountRRTime(); mountStaffChat(); mountHelpButton(); mountTaskCapture(); mountActionFab(); });
+      document.addEventListener('DOMContentLoaded', function () { mountRRTime(); mountStaffChat(); mountHelpButton(); mountTaskCapture(); mountDialer(); mountActionFab(); });
     } else {
       mountRRTime();
       mountStaffChat();
       mountHelpButton();
       mountTaskCapture();
+      mountDialer();
       mountActionFab();
     }
   })();

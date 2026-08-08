@@ -44,6 +44,11 @@ const GUARDED = {
    * and the two things a truncated tail would drop. */
   'admin/js/staff-chat.js':   { min: 77000,  require: ['})();', 'function attViewHtml', 'function openLightbox'] },
   'admin/js/loom-recorder.js':{ min: 5000,   require: [] },
+  /* The dialer, extracted from lead-detail so the FAB can open it anywhere. A
+   * truncated copy takes the lead-detail Call button AND the FAB's Call row with
+   * it, and the failure is silent — openCallModal simply would not exist.
+   * Floor measured at 39699, set at ~85%. */
+  'admin/js/dialer.js':       { min: 33700,  require: ['})();', 'window.RRDialer', 'function ensureSdk', 'window.openCallModal'] },
   /* The one clock. Every converted surface calls window.RRTime and renders
    * nothing at all if it is missing, so a truncated copy blanks timestamps
    * app-wide rather than showing a wrong one — which is the safer failure, but
