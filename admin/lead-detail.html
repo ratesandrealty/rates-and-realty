@@ -36609,22 +36609,38 @@ async function recordNewVoicemail() {
   }
 
   function timeAgo(date) {
-    var s = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+    /* Same parse problem as fmtTime: a zone-less created_at read as local makes
+       the elapsed time wrong by the viewer's own UTC offset, so "just now"
+       could be hours out. */
+    var _d = window.RRTime ? window.RRTime.toDate(date) : new Date(date);
+    if (!_d) return '';
+    var s = Math.floor((Date.now() - _d.getTime()) / 1000);
     if (s < 60) return 'just now';
     if (s < 3600) return Math.floor(s/60) + 'm ago';
     if (s < 86400) return Math.floor(s/3600) + 'h ago';
     if (s < 604800) return Math.floor(s/86400) + 'd ago';
-    return new Date(date).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' });
+    return window.RRTime ? window.RRTime.date(date) : '';
   }
-  function fmtTime(date) { return new Date(date).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }); }
+  /* THROUGH RRTime, not new Date(). This is the activity timeline, and it reads
+     activity_events.created_at — a `timestamp WITHOUT time zone` column, which
+     PostgREST returns as "2026-08-07T23:25:00" with no offset. new Date() reads
+     that as LOCAL, so the instant is already wrong before any formatting runs,
+     and adding timeZone: America/Los_Angeles to the formatter only decided
+     where to point a clock that was already showing the wrong moment. It is how
+     a 23:25 UTC event rendered "11:25 PM" on a page whose formatter had just
+     been "fixed". RRTime.toDate() reads a zone-less string as UTC, which is how
+     these columns are stored. */
+  function fmtTime(date) { return window.RRTime ? window.RRTime.time(date) : ''; }
   function dayLabel(date) {
-    var d = new Date(date);
-    var today = new Date(); today.setHours(0,0,0,0);
-    var yest = new Date(today); yest.setDate(yest.getDate()-1);
-    var ds = new Date(d); ds.setHours(0,0,0,0);
-    if (ds.getTime() === today.getTime()) return 'Today';
-    if (ds.getTime() === yest.getTime()) return 'Yesterday';
-    return d.toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'long', month: 'short', day: 'numeric' });
+    var d = window.RRTime ? window.RRTime.toDate(date) : null;
+    if (!d) return '';
+    /* Compare CALENDAR DAYS IN PACIFIC, not in the viewer's zone — otherwise the
+       VA at UTC+8 sees "Today" on events from the middle of Rene's yesterday. */
+    var key = function (x) { return window.RRTime.dateShortIso(x); };
+    var now = new Date();
+    if (key(d) === key(now)) return 'Today';
+    if (key(d) === key(new Date(now.getTime() - 86400000))) return 'Yesterday';
+    return window.RRTime.weekday(d);
   }
   function escHtml(s) { return (s || '').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
   function fmtDuration(secs) {

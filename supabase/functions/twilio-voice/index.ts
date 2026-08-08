@@ -206,6 +206,54 @@ async function callingHours(toPhone: string): Promise<HoursVerdict> {
   };
 }
 
+/* ── WHOSE NUMBER IS THIS ────────────────────────────────────────────────────
+ *
+ * A call placed from the FAB dial pad logged contact_id null even when the
+ * number belonged to someone in the CRM, so it never appeared on that
+ * borrower's record — the one place anyone would look for it.
+ *
+ * Matched on the LAST TEN DIGITS, because the same person is stored as
+ * 7144728508, (714) 472-8508 and +17144728508 across this table.
+ *
+ * MORE THAN ONE MATCH -> DELIBERATELY DOES NOT GUESS. contact_id stays null and
+ * the candidates are written into the row's notes, visibly. There is no tiebreak
+ * that is safe: "most recently contacted" and "most recently created" both feel
+ * reasonable and both silently attach a borrower's call to the wrong person's
+ * file, where it becomes evidence about someone it was not about. An unattached
+ * call is a small gap a human closes in seconds; a misattached one is wrong in a
+ * way nobody goes looking for. 7 numbers in this table are currently shared by
+ * 14 contacts, so this is not hypothetical.
+ *
+ * Zero matches -> null, which is honest: it really is an ad-hoc number. */
+async function resolveContactByPhone(
+  toPhone: string,
+): Promise<{ contactId: string | null; note: string | null }> {
+  const last10 = (toPhone || '').replace(/\D/g, '').slice(-10);
+  if (last10.length !== 10) return { contactId: null, note: null };
+  try {
+    const { data } = await sb.from('contacts')
+      .select('id, first_name, last_name, phone')
+      .or(`phone.ilike.%${last10}%,secondary_phone.ilike.%${last10}%`)
+      .limit(10);
+    const rows = (data as any[]) || [];
+    /* ilike %digits% is a loose net — it also matches a longer number that
+     * merely contains these ten. Narrow to an exact last-10 comparison. */
+    const exact = rows.filter((r) => String(r.phone || '').replace(/\D/g, '').slice(-10) === last10);
+    if (exact.length === 1) return { contactId: exact[0].id, note: null };
+    if (exact.length > 1) {
+      const names = exact
+        .map((r) => `${[r.first_name, r.last_name].filter(Boolean).join(' ').trim() || 'unnamed'} (${r.id})`)
+        .join('; ');
+      console.warn(`[twilio-voice] ${exact.length} contacts share ${last10} — not attaching: ${names}`);
+      return { contactId: null, note: `Not attached: ${exact.length} contacts share this number — ${names}` };
+    }
+    return { contactId: null, note: null };
+  } catch (e) {
+    console.error('[twilio-voice] contact resolve failed:', String(e));
+    return { contactId: null, note: null };
+  }
+}
+
 /* ── FAIL CLOSED ON THE RECORDING, NOT ON THE CALL ───────────────────────────
  *
  * Losing a recording is free. Capturing audio nobody was told about is not. So
@@ -537,16 +585,21 @@ Deno.serve(async (req) => {
          * Mirrors what the inbound branch already does: log at call START, so a
          * call that ends before anyone presses Save still exists as a row. */
         const clientRef = (params.get('Ref') || '').trim() || null;
+        /* An ad-hoc pad call to a number we already know should attach to that
+         * contact — otherwise the call is invisible on the borrower's own
+         * record, which is where anyone would look for it. */
+        const matched = await resolveContactByPhone(dialTo);
         if (callSid) {
           try {
             await sb.from('calls_log').insert({
-              contact_id: params.get('ContactId') || null,
+              contact_id: params.get('ContactId') || matched.contactId || null,
               from_phone: TWILIO_PHONE,
               to_phone: dialTo,
               direction: 'outbound',
               status: 'ringing',
               twilio_call_sid: callSid,
               client_ref: clientRef,
+              notes: matched.note,          // only set when the number is ambiguous
               created_at: new Date().toISOString(),
             });
           } catch (e) {
@@ -781,6 +834,68 @@ Deno.serve(async (req) => {
       });
       const data = await res.json();
       return jsonRes({ status: data.status, duration: data.duration });
+    }
+
+    /* ── PLAY A RECORDING ─────────────────────────────────────────────────────
+     *
+     * recording_url is an api.twilio.com URL that needs account credentials, so
+     * clicking it in a browser does nothing. This streams the bytes with the
+     * credential held server-side.
+     *
+     * TAKES A calls_log.id, NEVER A URL. Accepting a caller-supplied URL and
+     * fetching it would be a clean SSRF with the Twilio account credential
+     * attached to the request — anything on the internet, or inside the
+     * function's own network, fetched on demand with Basic auth. The row is the
+     * only input, the URL comes out of the database, and it is asserted to be a
+     * Twilio host before anything is fetched.
+     *
+     * ADMIN ONLY. Recordings are borrower NPI and the VA login is shared and
+     * rotating, so this is narrower than the rest of the function — the dialer
+     * is admin/va/agent/loa, this is admin. Widening it is one word; it should
+     * be a decision rather than an inheritance. */
+    if (action === 'get_recording') {
+      const admin = await requireStaff(req, { roles: ['admin'], what: 'Call recordings' });
+      if (!admin.ok) {
+        console.error('[twilio-voice] get_recording REJECTED:', admin.status, admin.msg);
+        return err(admin.msg || 'unauthorized', admin.status || 403);
+      }
+      const rowId = (body.call_log_id || body.id || '').toString().trim();
+      if (!rowId) return err('call_log_id required');
+
+      const { data: row, error: rowErr } = await sb.from('calls_log')
+        .select('id, recording_url, contact_id, to_phone').eq('id', rowId).maybeSingle();
+      if (rowErr) return err(rowErr.message, 500);
+      if (!row) return err('No such call', 404);
+
+      const url = String((row as any).recording_url || '');
+      if (!url) return err('This call has no recording.', 404);
+      if (!url.startsWith('https://api.twilio.com/')) {
+        console.error('[twilio-voice] get_recording refused a non-Twilio URL on row', rowId, url.slice(0, 80));
+        return err('Refusing to fetch a recording URL that is not on api.twilio.com.', 400);
+      }
+
+      if (!ACCOUNT_SID || !AUTH_TOKEN) return err('Twilio not configured', 500);
+      /* Twilio serves the media when the .mp3 extension is present; the stored
+       * URL is the resource, without one. */
+      const mediaUrl = url.endsWith('.mp3') ? url : url + '.mp3';
+      const tw = await fetch(mediaUrl, {
+        headers: { 'Authorization': 'Basic ' + btoa(`${ACCOUNT_SID}:${AUTH_TOKEN}`) },
+      });
+      if (!tw.ok) {
+        const t = await tw.text().catch(() => '');
+        console.error('[twilio-voice] recording fetch failed', tw.status, t.slice(0, 200));
+        return err(`Twilio returned ${tw.status} for this recording.`, tw.status === 404 ? 404 : 502);
+      }
+
+      console.log(`[twilio-voice] recording served row=${rowId} to=${admin.userId}`);
+      return new Response(tw.body, {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'audio/mpeg',
+          /* Borrower audio must not be written to a shared or disk cache. */
+          'Cache-Control': 'private, no-store',
+        },
+      });
     }
 
     if (action === 'log_call') {

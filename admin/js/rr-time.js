@@ -104,6 +104,19 @@
     dateShort: function (v) {
       return fmt(v, { month: 'short', day: 'numeric' }, false);
     },
+    /** "Thursday, Aug 7" — a day heading, no clock so no label. */
+    weekday: function (v) {
+      return fmt(v, { weekday: 'long', month: 'short', day: 'numeric' }, false);
+    },
+    /** "2026-08-07" IN PACIFIC — for comparing calendar days. Using the viewer's
+     *  own date would label an event "Today" or not depending on where they sit,
+     *  which is the same bug one level up. */
+    dateShortIso: function (v) {
+      var d = toDate(v);
+      if (!d) return '';
+      var p = new Intl.DateTimeFormat('en-CA', { timeZone: ZONE, year: 'numeric', month: '2-digit', day: '2-digit' });
+      return p.format(d);
+    },
     /** Relative for recent things, absolute (and zoned) once it stops being obvious. */
     relative: function (v) {
       var d = toDate(v);
