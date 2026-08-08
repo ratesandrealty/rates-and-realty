@@ -1,6 +1,6 @@
 -- dashboard_snapshot()
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-08. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -73,6 +73,15 @@ begin
                  'contact_id', c.id, 'name', nullif(trim(coalesce(c.first_name,'')||' '||coalesce(c.last_name,'')),''),
                  'purpose', c.loan_purpose, 'loan_type', c.loan_type) order by c.updated_at desc nulls last), '[]'::jsonb)
                from (select * from contacts where pipeline_status = 'Pre-Approved' limit 50) c)
+    ),
+    'follow_up', jsonb_build_object(
+      'total', (select count(*) from contacts where pipeline_status = 'Follow Up'),
+      'list', (select coalesce(jsonb_agg(jsonb_build_object(
+                 'contact_id', c.id, 'name', nullif(trim(coalesce(c.first_name,'')||' '||coalesce(c.last_name,'')),''),
+                 'loan_type', c.loan_type, 'last_contact_date', c.last_contact_date)
+               order by c.last_contact_date asc nulls first), '[]'::jsonb)
+               from (select * from contacts where pipeline_status = 'Follow Up'
+                     order by last_contact_date asc nulls first limit 50) c)
     ),
     'generated_at', now()
   ) into v;
