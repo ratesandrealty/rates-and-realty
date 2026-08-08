@@ -502,16 +502,25 @@ Deno.serve(async (req) => {
 
   const callLogId = String(body.call_log_id || body.id || '').trim();
 
-  if (action === 'start') {
+  /* start / sync are ADMIN, for the same reason `get` is.
+   *
+   * Caught by testing rather than by design: a VA session could call `start`
+   * and got a 200 back that also told it a transcript already existed. Neither
+   * is a disaster on its own — they still cannot read a word of it — but if you
+   * are not allowed to read a transcript you should not be able to commission
+   * one either. It spends money per minute and it manufactures NPI text out of
+   * audio the same person is already barred from playing.
+   *
+   * This does NOT affect the automatic path. twilio-voice calls `start` with the
+   * service key, and require-staff returns on the service-key branch before any
+   * role filter applies. Cron's `sweep` is unaffected for the same reason. */
+  if (action === 'start' || action === 'sync') {
+    const admin = await requireStaff(req, { roles: ['admin'], what: 'Call transcription' });
+    if (!admin.ok) return err(admin.msg || 'unauthorized', admin.status || 403);
     if (!callLogId) return err('call_log_id required');
+    if (action === 'sync') return json({ success: true, status: await syncRow(callLogId) });
     const r = await startForRow(callLogId, { force: !!body.force });
     return r.ok ? json({ success: true, ...r }) : err(r.error || 'failed', r.status || 500);
-  }
-
-  if (action === 'sync') {
-    if (!callLogId) return err('call_log_id required');
-    const outcome = await syncRow(callLogId);
-    return json({ success: true, status: outcome });
   }
 
   /* sweep — the delivery guarantee. Anything still 'requested' after a while is
