@@ -63,6 +63,7 @@
  */
 import { requireStaff } from '../_shared/require-staff.ts';
 import { verifyTwilioRequest, twilioForbidden } from '../_shared/twilio-signature.ts';
+import { formatTranscript, rolesForDirection, type Sentence } from '../_shared/transcript-format.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const ACCOUNT_SID = Deno.env.get('TWILIO_ACCOUNT_SID') || '';
@@ -164,23 +165,41 @@ function recordingSidFrom(url: string): string {
  * knowing a transcript SID and nothing about this database, and CustomerKey is
  * what lets the result be matched back to a row we actually asked about rather
  * than to whatever the caller claims. */
-async function createTranscript(serviceSid: string, recordingSid: string, callLogId: string) {
+async function createTranscript(
+  serviceSid: string, recordingSid: string, callLogId: string, direction?: string | null,
+) {
+  const roles = rolesForDirection(direction);
   return await tw('POST', 'https://intelligence.twilio.com/v2/Transcripts', {
     ServiceSid: serviceSid,
-    Channel: JSON.stringify({ media_properties: { source_sid: recordingSid } }),
+    /* participants is sent ALWAYS, including for the mono recordings that
+     * predate dual-channel, where it is simply ignored — one channel has no
+     * mapping to get wrong. Sending it unconditionally means the interesting
+     * path is not a special case that only new calls take.
+     *
+     * It exists because Conversational Intelligence assumes channel 1 is the
+     * Agent, and on an INBOUND call channel 1 is the borrower (Twilio puts the
+     * parent leg on channel 1, and the parent leg of an inbound call is the
+     * person who rang in). Without this, inbound transcripts would be labelled
+     * confidently backwards — worse than mono's no labels, because a wrong
+     * label reads as information. */
+    Channel: JSON.stringify({
+      media_properties: { source_sid: recordingSid },
+      participants: [
+        { channel_participant: 1, role: roles[1] },
+        { channel_participant: 2, role: roles[2] },
+      ],
+    }),
     CustomerKey: callLogId,
   });
 }
 
-/** Sentences → one block of text. Mono recordings carry no speaker separation,
- *  so there is nothing honest to label the lines with; see the note in the
- *  step-1 report about record-from-answer-dual. */
-async function fetchTranscriptText(sid: string): Promise<{ text: string; count: number }> {
+/** Raw sentences. Formatting lives in _shared/transcript-format.ts, which
+ *  decides mono-vs-dual from the data rather than from a flag — see the note
+ *  there about branches whose first real run is in production. */
+async function fetchSentences(sid: string): Promise<Sentence[]> {
   const r = await tw('GET', `https://intelligence.twilio.com/v2/Transcripts/${sid}/Sentences?PageSize=1000`);
   if (!r.ok) throw new Error(`sentences fetch ${r.status}: ${JSON.stringify(r.body).slice(0, 200)}`);
-  const rows: any[] = r.body?.sentences || [];
-  const text = rows.map((s) => String(s.transcript || '').trim()).filter(Boolean).join(' ');
-  return { text, count: rows.length };
+  return (r.body?.sentences || []) as Sentence[];
 }
 
 async function fetchOperatorResults(sid: string): Promise<any[]> {
@@ -230,10 +249,17 @@ async function harvest(rowId: string, transcriptSid: string, lang: string): Prom
   }
   if (status !== 'completed') return 'requested';   // still queued / in-progress
 
+  /* direction decides which channel is the borrower on a dual recording, and is
+   * harmless on a mono one — formatTranscript only uses the roles when the
+   * sentences actually carry two channels. */
+  const { data: dirRow } = await sb.from('calls_log')
+    .select('direction').eq('id', rowId).maybeSingle();
+
   let text = '', count = 0;
   try {
-    const s = await fetchTranscriptText(transcriptSid);
-    text = s.text; count = s.count;
+    const sentences = await fetchSentences(transcriptSid);
+    count = sentences.length;
+    text = formatTranscript(sentences, rolesForDirection((dirRow as any)?.direction));
   } catch (e) {
     await markFailed(rowId, String(e));
     return 'failed';
@@ -326,7 +352,7 @@ async function writeSummaryNote(rowId: string, summary: string) {
 /* ── start transcription for one calls_log row ─────────────────────────────── */
 async function startForRow(rowId: string, opts: { force?: boolean } = {}) {
   const { data: row, error: rowErr } = await sb.from('calls_log')
-    .select('id, recording_url, transcript_status, transcript_sid').eq('id', rowId).maybeSingle();
+    .select('id, recording_url, transcript_status, transcript_sid, direction').eq('id', rowId).maybeSingle();
   if (rowErr) return { ok: false, error: rowErr.message, status: 500 };
   if (!row) return { ok: false, error: 'No such call', status: 404 };
 
@@ -360,7 +386,7 @@ async function startForRow(rowId: string, opts: { force?: boolean } = {}) {
     transcript_updated_at: new Date().toISOString(),
   }).eq('id', rowId);
 
-  const created = await createTranscript(serviceEn, recSid, rowId);
+  const created = await createTranscript(serviceEn, recSid, rowId, r.direction);
   if (!created.ok) {
     const m = created.body?.message || JSON.stringify(created.body).slice(0, 300);
     await markFailed(rowId, `Twilio refused the transcript request (${created.status}): ${m}`);
@@ -390,12 +416,12 @@ async function maybeReroute(rowId: string, transcriptSid: string): Promise<boole
   const results = await fetchOperatorResults(transcriptSid);
   if (!saysNonEnglish(results)) return false;
 
-  const { data: row } = await sb.from('calls_log').select('recording_url, transcript_lang').eq('id', rowId).maybeSingle();
+  const { data: row } = await sb.from('calls_log').select('recording_url, transcript_lang, direction').eq('id', rowId).maybeSingle();
   if (((row as any)?.transcript_lang || '') === 'es-US') return false;   // already the Spanish pass
   const recSid = recordingSidFrom((row as any)?.recording_url || '');
   if (!recSid) return false;
 
-  const created = await createTranscript(serviceEs, recSid, rowId);
+  const created = await createTranscript(serviceEs, recSid, rowId, (row as any)?.direction);
   if (!created.ok) {
     console.error('[call-intelligence] es-US re-route refused', rowId, created.status, JSON.stringify(created.body).slice(0, 200));
     return false;   // the English transcript stands; not a failure of the row

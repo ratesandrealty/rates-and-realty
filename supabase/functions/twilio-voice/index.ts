@@ -530,7 +530,17 @@ Deno.serve(async (req) => {
         const noticeUrl = `${statusCb}?action=record_notice`;
         const rec = await canRecord(noticeUrl, noticeText);
         if (!rec.ok) console.error(`[twilio-voice] INBOUND NOT RECORDED — ${rec.reason}`);
-        const recAttr = rec.ok ? ` record="record-from-answer" recordingStatusCallback="${statusCb}"` : '';
+        /* DUAL. Same start trigger as record-from-answer — Twilio documents both
+         * as starting "as soon as the call is answered" — so the disclosure
+         * ordering is untouched. Only the channel count changes: parent leg on
+         * channel 1, child on channel 2.
+         *
+         * NOTE FOR WHOEVER READS THE TRANSCRIPT: on THIS path the parent leg is
+         * the BORROWER who rang in, so channel 1 is the borrower, which is the
+         * opposite of the outbound path and the opposite of what Conversational
+         * Intelligence assumes by default. call-intelligence sends an explicit
+         * participants mapping keyed off calls_log.direction to correct it. */
+        const recAttr = rec.ok ? ` record="record-from-answer-dual" recordingStatusCallback="${statusCb}"` : '';
         const whisper = rec.ok ? ` url="${xmlEsc(noticeUrl)}"` : '';
         const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -658,7 +668,12 @@ Deno.serve(async (req) => {
         const noticeUrl = `${recordingCb}?action=record_notice`;
         const rec = await canRecord(noticeUrl, noticeText);
         if (!rec.ok) console.error(`[twilio-voice] OUTBOUND NOT RECORDED — ${rec.reason}`);
-        const recAttr = rec.ok ? ` record="record-from-answer" recordingStatusCallback="${recordingCb}"` : '';
+        /* DUAL. Identical start trigger to record-from-answer, so the notice
+         * ordering below is unchanged. Here the parent leg is the staff
+         * member's browser client, so channel 1 is staff — which does match
+         * Conversational Intelligence's default. The mapping is still sent
+         * explicitly rather than relied upon. */
+        const recAttr = rec.ok ? ` record="record-from-answer-dual" recordingStatusCallback="${recordingCb}"` : '';
         const whisper = rec.ok ? ` url="${xmlEsc(noticeUrl)}"` : '';
         /* RINGBACK — ringTone, not answerOnBridge alone.
          *

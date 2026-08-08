@@ -1,0 +1,101 @@
+/* Turn Conversational Intelligence sentences into the text stored on
+ * calls_log.transcript.
+ *
+ * ── WHY THIS IS A SEPARATE FILE WITH A TEST NEXT TO IT ──────────────────────
+ *
+ * Recordings made before 2026-08-08 are MONO (one channel, both legs mixed).
+ * Recordings made after are DUAL (parent on channel 1, child on channel 2).
+ * Both will exist in calls_log forever — the old ones cannot be re-cut.
+ *
+ * The obvious implementation is `if (isDual) { … } else { … }`, and the obvious
+ * implementation is the trap: the dual half would only ever execute on calls
+ * placed after the switch, so it could not be exercised until real borrower
+ * calls were already flowing through it. A branch whose first real run is in
+ * production is not tested, it is hoped for.
+ *
+ * So there is no isDual flag and nothing is passed in about which era a
+ * recording came from. The shape is derived from the DATA — how many distinct
+ * media_channel values the sentences actually carry — and the mono path is the
+ * degenerate case of the same code, exercised by every historical call. The
+ * accompanying transcript-format.test.ts runs both shapes on every `deno test`,
+ * so neither half waits on a phone call to be covered.
+ */
+
+export type Sentence = {
+  transcript?: string | null;
+  media_channel?: number | string | null;
+};
+
+/** channel number → what to call whoever is on it. */
+export type ChannelRoles = Record<number, string>;
+
+/* ── WHO IS ON CHANNEL 1 DEPENDS ON WHO PLACED THE CALL ─────────────────────
+ *
+ * Twilio: "The parent call will always be in the first channel and the child
+ * call will always be in the second channel."
+ * Conversational Intelligence: channel 1 is assumed to be the Agent.
+ *
+ * Those two together are only correct when the parent leg is staff, and in this
+ * codebase that depends on direction:
+ *
+ *   outbound (browser dialer)  parent = the staff member's browser leg → ch1 = staff
+ *   inbound  (PSTN → forward)  parent = the BORROWER who rang in       → ch1 = borrower
+ *
+ * So on inbound calls Conversational Intelligence's default would label the
+ * borrower as the agent and Rene as the customer — confidently, and backwards.
+ * That is worse than mono's no-labels-at-all, because a wrong label reads as
+ * information. This is the mapping that stops it. */
+export function rolesForDirection(direction?: string | null): ChannelRoles {
+  return String(direction || '').toLowerCase() === 'inbound'
+    ? { 1: 'Borrower', 2: 'Rates and Realty' }
+    : { 1: 'Rates and Realty', 2: 'Borrower' };
+}
+
+function channelOf(s: Sentence): number | null {
+  const raw = s.media_channel;
+  if (raw === null || raw === undefined || raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Mono in, one block of text out — byte-for-byte what this produced before
+ * dual-channel existed. Dual in, speaker-labelled turns out.
+ *
+ * The decision is `distinct channels >= 2`, not "was this recorded after the
+ * switch". That matters for a case that is neither era: a DUAL recording where
+ * only one party ever spoke carries one distinct channel, and labelling a
+ * monologue "Rates and Realty:" over and over would be noise. It falls through
+ * to the plain path, correctly.
+ */
+export function formatTranscript(sentences: Sentence[], roles: ChannelRoles = {}): string {
+  const rows = (sentences || [])
+    .map((s) => ({ text: String(s?.transcript ?? '').trim(), ch: channelOf(s) }))
+    .filter((r) => r.text.length > 0);
+
+  if (!rows.length) return '';
+
+  const distinct = new Set(rows.map((r) => r.ch).filter((c) => c !== null));
+  if (distinct.size < 2) return rows.map((r) => r.text).join(' ');
+
+  /* Group CONSECUTIVE sentences from the same channel into one turn. Labelling
+   * every sentence individually turns a normal back-and-forth into a wall of
+   * repeated names and is harder to read than the unlabelled mono version. */
+  const out: string[] = [];
+  let curCh: number | null | undefined = undefined;
+  let buf: string[] = [];
+  const flush = () => {
+    if (!buf.length) return;
+    const label = curCh === null || curCh === undefined
+      ? ''
+      : (roles[curCh] || `Channel ${curCh}`) + ': ';
+    out.push(label + buf.join(' '));
+    buf = [];
+  };
+  for (const r of rows) {
+    if (r.ch !== curCh) { flush(); curCh = r.ch; }
+    buf.push(r.text);
+  }
+  flush();
+  return out.join('\n');
+}
