@@ -1,3 +1,14 @@
+
+/* Parse a timestamp the way the database means it. 23 tables store timestamps
+   as `timestamp WITHOUT time zone` — contacts, notes, activity_events, tasks,
+   mortgage_applications, uploaded_documents and more — and PostgREST returns
+   those with no offset, which new Date() reads as the VIEWER'S LOCAL TIME. The
+   instant is then wrong by their UTC offset before any formatting runs.
+   RRTime.parse reads a zone-less string as UTC and is identical to new Date()
+   on anything that already carries a zone, so a call site does not have to know
+   which column it read. Guarded because RRTime is injected by auth-guard and a
+   page may format before it lands. */
+function _rrD(v) { return (window.RRTime && window.RRTime.parse) ? window.RRTime.parse(v) : new Date(v); }
 // admin-dashboard.js v20260411g
 // Config fallback — ensures Supabase works even if env.js loads late
 (function() {
@@ -1338,7 +1349,30 @@ const SNAP_ACCENTS = {
   pre:    ["#34D399", "rgba(52,211,153,0.14)"],    // emerald — Pre-Approved
   fees:   ["#38BDF8", "rgba(56,189,248,0.14)"],    // sky    — Fee Sheets
   buyers: ["#A78BFA", "rgba(167,139,250,0.14)"],   // violet — Active Buyers
+  follow: ["#4FB3B3", "rgba(79,179,179,0.14)"],    // teal   — Follow Up (matches
+                                                   // the people-page panel, so the
+                                                   // same cohort reads the same
+                                                   // colour on both screens)
 };
+/* Age chip for Follow Up. Same thresholds and wording as fuRelAge() on
+   admin/people.html, so one cohort does not describe itself two ways across two
+   screens. Parsed through RRTime because contacts.last_contact_date is a
+   zone-less column — new Date() would read it as local and be wrong by the
+   viewer's own offset before any comparison. */
+function _snapFollowAgeChip(iso) {
+  if (!iso) return `<span class="ps-chip status" style="--pc:#E05252;--pb:rgba(224,82,82,0.15)">never contacted</span>`;
+  const d = (window.RRTime && window.RRTime.toDate(iso)) || new Date(iso);
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  let txt, c;
+  if (days <= 0) { txt = "today"; c = "#52C87A"; }
+  else if (days === 1) { txt = "yesterday"; c = "#52C87A"; }
+  else if (days < 7) { txt = days + " days ago"; c = "#9fb0b0"; }
+  else if (days < 14) { txt = days + " days ago"; c = "#fb923c"; }
+  else if (days < 30) { txt = days + " days ago"; c = "#E05252"; }
+  else { const m = Math.floor(days / 30); txt = m + (m === 1 ? " month ago" : " months ago"); c = "#E05252"; }
+  return `<span class="ps-chip status" style="--pc:${c};--pb:rgba(255,255,255,0.06)">${txt}</span>`;
+}
+
 // Semantic status → [text colour, fill] by keyword.
 function _snapStatusColors(txt) {
   const t = String(txt || "").toLowerCase();
@@ -1420,7 +1454,8 @@ async function loadPipelineSnapshot() {
     return;
   }
   const escrow = snap.escrow || {}, buyers = snap.active_buyers || {},
-        fees = snap.fee_sheets || {}, pre = snap.preapproved || {};
+        fees = snap.fee_sheets || {}, pre = snap.preapproved || {},
+        follow = snap.follow_up || {};
 
   // 1) Active Pipeline (in-escrow deals) — status pill + loan chip; sub-line = purchase/refi split
   const escrowSub = `${Number(escrow.purchase) || 0} Purchase · ${Number(escrow.refinance) || 0} Refi · ${Number(escrow.other) || 0} Unspecified`;
@@ -1440,7 +1475,15 @@ async function loadPipelineSnapshot() {
     _snapRow(it, `<span class="ps-chip status" style="--pc:#A78BFA;--pb:rgba(167,139,250,0.15)">${_snapCount(it.showings, "Showing")}</span>`
       + _snapNeutralChip(it.next_date ? `Next ${_snapDate(it.next_date)}` : "")), SNAP_ACCENTS.buyers);
 
-  grid.innerHTML = escrowCard + preCard + feesCard + buyersCard;
+  /* 5) Follow Up — pipeline_status = 'Follow Up'. NOT staleness, and not
+     next_followup_at, which is set on 0 of 1046 contacts. Ordered stalest
+     first (nulls, i.e. never contacted, ahead of everything), matching the
+     people-page panel, so the chip is how long it has been rather than a
+     stage everyone already knows. */
+  const followCard = _snapCard(follow.total, "Follow Up", "longest since contact first", follow.list, (it) =>
+    _snapRow(it, _snapLoanChip(it.loan_type) + _snapFollowAgeChip(it.last_contact_date)), SNAP_ACCENTS.follow);
+
+  grid.innerHTML = escrowCard + preCard + feesCard + buyersCard + followCard;
 }
 
 // ── INSIGHTS (was Analytics) ───────────────────────────────────────────
@@ -1614,7 +1657,7 @@ function filterApplications() {
     const statusColors = {draft:"rgba(255,255,255,0.06);color:rgba(255,255,255,0.4)",active:"rgba(201,168,76,0.12);color:#c9a84c",submitted:"rgba(96,160,255,0.12);color:#60a0ff",approved:"rgba(80,200,120,0.12);color:#50c878",closed:"rgba(80,200,120,0.15);color:#3da06a",denied:"rgba(248,113,113,0.12);color:#f87171"};
     const sBadge = statusColors[status] || statusColors.draft;
 
-    const updated = app.updated_at ? new Date(app.updated_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "—";
+    const updated = app.updated_at ? _rrD(app.updated_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "—";
 
     const hasContact = app.contact_id && app.contact_id !== "null";
     const navUrl = `${_leadBase}?id=${app.contact_id}`;

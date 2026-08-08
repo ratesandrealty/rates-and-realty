@@ -28,7 +28,7 @@
     .pac-icon{display:none!important;}
     .pac-logo::after{display:none!important;}
   </style>
-  <script src="/admin/js/auth-guard.js?v=20e1e7af42"></script>
+  <script src="/admin/js/auth-guard.js?v=4eff432f56"></script>
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
   <!-- Loaded after auth-guard so window._supabaseClient exists when fnFetch reads it. -->
   <script src="/admin/js/fn-call.js?v=62e47af307"></script>
@@ -44,7 +44,19 @@
   <script src="/admin/js/dialer.js?v=b721aa71f8"></script>
   <script src="/admin/js/crm-comms.js?v=077bc202a3"></script>
   <script src="/admin/js/notif-bell.js?v=a47a3dc1f3"></script>
-  <script>if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList.add('light-preload');</script>
+  <script>
+
+/* Parse a timestamp the way the database means it. 23 tables store timestamps
+   as `timestamp WITHOUT time zone` — contacts, notes, activity_events, tasks,
+   mortgage_applications, uploaded_documents and more — and PostgREST returns
+   those with no offset, which new Date() reads as the VIEWER'S LOCAL TIME. The
+   instant is then wrong by their UTC offset before any formatting runs.
+   RRTime.parse reads a zone-less string as UTC and is identical to new Date()
+   on anything that already carries a zone, so a call site does not have to know
+   which column it read. Guarded because RRTime is injected by auth-guard and a
+   page may format before it lands. */
+function _rrD(v) { return (window.RRTime && window.RRTime.parse) ? window.RRTime.parse(v) : new Date(v); }
+if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList.add('light-preload');</script>
   <style>
     html.light-preload body, html.light-preload { background: #f5f5f5 !important; }
   </style>
@@ -6595,7 +6607,7 @@ function renderNotes() {
   // Merge new contact_notes (primary) with legacy `notes` rows, newest first.
   const merged = (contactNotesData || []).map(n => ({ kind: 'contact_note', created_at: n.created_at, data: n }))
     .concat((notesData || []).map(n => ({ kind: 'legacy', created_at: n.created_at, data: n })))
-    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    .sort((a, b) => _rrD(b.created_at) - _rrD(a.created_at));
   if (!merged.length) {
     el.innerHTML = '<div style="text-align:center;padding:20px 0;color:var(--muted);font-size:0.8rem;">No notes yet. Add the first one!</div>';
     return;
@@ -6993,7 +7005,7 @@ async function previewEmail(eventId) {
   }
   if (!e?.email_html) return;
   document.getElementById('emailPreviewSubject').textContent = e.email_subject || e.title || 'Email Preview';
-  document.getElementById('emailPreviewMeta').textContent = 'To: ' + (e.email_to || 'Unknown') + ' · ' + new Date(e.created_at).toLocaleString();
+  document.getElementById('emailPreviewMeta').textContent = 'To: ' + (e.email_to || 'Unknown') + ' · ' + _rrD(e.created_at).toLocaleString();
   var blob = new Blob([e.email_html], { type: 'text/html' });
   document.getElementById('emailPreviewFrame').src = URL.createObjectURL(blob);
   document.getElementById('emailPreviewModal').style.display = 'block';
@@ -7090,7 +7102,7 @@ async function loadCommunications() {
     const callList = (callRes.data || []).map(r => ({ ...r, _type: 'call' }));
     const browserCallList = (browserCallRes.data || []).map(r => ({ ...r, _type: 'browser_call' }));
     const comms = [...smsList, ...emailList, ...callList, ...browserCallList]
-      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .sort((a, b) => _rrD(b.created_at) - _rrD(a.created_at))
       .slice(0, 150);
     if (!comms.length) {
       el.innerHTML = `<div class="ld-empty"><div class="ld-empty-icon">📞</div><h4>No communications yet</h4><p>Calls, emails, texts will appear here.</p></div>`;
@@ -13261,7 +13273,7 @@ async function lpLoadLoe(cid){
   try{
     var res=await _authClient().rpc('loe_list_for_lead', { p_contact_id: cid, p_application_id: _loeAppId() });
     if(res.error) throw res.error;
-    _loeRows=(res.data||[]).slice().sort(function(a,b){ return (new Date(b.created_at)).getTime() - (new Date(a.created_at)).getTime(); });
+    _loeRows=(res.data||[]).slice().sort(function(a,b){ return (_rrD(b.created_at)).getTime() - (_rrD(a.created_at)).getTime(); });
     body.innerHTML=_loeListHtml(_loeRows);
   }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load letters. '+lpEsc((e&&e.message)||'')+'</div>'; }
 }
@@ -18567,7 +18579,7 @@ async function loadCondNotes(conditionId) {
       return '<div style="padding:4px 0;border-bottom:1px solid var(--border);">'
         + '<div style="font-size:.78rem;color:var(--text);">' + (n.note_text||'') + '</div>'
         + '<div style="font-size:.65rem;color:var(--muted);">' + (n.created_by||'') + ' &middot; '
-        + new Date(n.created_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit' }) + '</div></div>';
+        + _rrD(n.created_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit' }) + '</div></div>';
     }).join('');
   } catch(e) { el.innerHTML = '<div style="color:var(--muted);font-size:.75rem;">Error loading notes</div>'; }
 }
@@ -19758,7 +19770,7 @@ async function loadSavedSearches() {
       if (f.cities) summary.push(f.cities.split(',').slice(0,2).join(', ') + (f.cities.split(',').length>2?' +'+(f.cities.split(',').length-2):''));
       if (f.minPrice || f.maxPrice) summary.push('$' + (f.minPrice||'0') + '-$' + (f.maxPrice||'Any'));
       if (f.minBeds) summary.push(f.minBeds + '+ bd');
-      var when = new Date(s.created_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric' });
+      var when = _rrD(s.created_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric' });
       var urlToOpen = s.short_url || s.search_url;
       var urlToCopy = s.short_url || s.search_url;
       var shortDisplay = s.short_url ? s.short_url.replace(/^https?:\/\//,'') : '';
@@ -19843,7 +19855,7 @@ function renderSidebarSmsHistory(messages) {
   var esc = function(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
   container.innerHTML = '<div style="display:flex;flex-direction:column;gap:8px">' + messages.map(function(m) {
     var isOut = m.direction !== 'inbound';
-    var time = new Date(m.created_at).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',hour:'numeric',minute:'2-digit' });
+    var time = _rrD(m.created_at).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric',hour:'numeric',minute:'2-digit' });
     var statusDot = m.status === 'sent' ? '\u2713' : m.status === 'delivered' ? '\u2713\u2713' : m.status === 'failed' ? '\u2717' : '\u2026';
     var statusColor = m.status === 'failed' ? '#ef4444' : m.status === 'delivered' ? '#22c55e' : m.status === 'sent' ? '#9ca3af' : '#666';
     var align = isOut ? 'flex-end' : 'flex-start';
@@ -21070,7 +21082,7 @@ async function loadSavedDeals() {
     }
     container.innerHTML = deals.map(function(d) {
       var loanFmt = d.loan_amount ? '$' + Number(d.loan_amount).toLocaleString() : '—';
-      var date = new Date(d.created_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric' });
+      var date = _rrD(d.created_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', year: 'numeric' });
       var statusColor = { 'active': '#27AE60', 'closed': '#C9A84C', 'dead': '#E74C3C' }[d.status] || '#666';
       return '<div style="background:#111;border:1px solid #1e1e1e;border-radius:10px;padding:16px;margin-bottom:10px;cursor:pointer;" onclick="loadDealIntoMatcher(\'' + d.id + '\')">' +
         '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">' +
@@ -26760,7 +26772,7 @@ function calcLeadScore(lead, contact) {
   breakdown.source = { score: sourceScore, max: 10, label: 'Source Quality' };
   total += sourceScore;
   // Responsiveness
-  const days = lead.created_at ? Math.floor((Date.now()-new Date(lead.created_at).getTime())/86400000) : 0;
+  const days = lead.created_at ? Math.floor((Date.now()-_rrD(lead.created_at).getTime())/86400000) : 0;
   let resp = 0;
   if (lead.status && lead.status !== 'new') resp = 5;
   else if (days <= 0) resp = 5;
@@ -34215,7 +34227,7 @@ async function loadEmailHistory(contactId) {
       var isSent = dir === 'outbound' || dir === 'sent';
       var badge = isSent ? '<span class="ec-hist-dir ec-hist-sent">SENT</span>' : '<span class="ec-hist-dir ec-hist-recv">RECV</span>';
       var preview = (r.body_text || '').substring(0, 60);
-      var date = r.created_at ? new Date(r.created_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric' }) : '';
+      var date = r.created_at ? _rrD(r.created_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric' }) : '';
       var from = r.from_email || '';
       return '<div class="ec-hist-item" onclick="previewPriorEmail(\'' + r.id + '\')">' + badge +
         '<div class="ec-hist-subject">' + (r.subject || '(no subject)') + '</div>' +
@@ -35781,7 +35793,7 @@ function smsRenderHistory(events) {
     return;
   }
   // Chronological ascending for chat display
-  var sorted = events.slice().sort(function(a,b){ return new Date(a.created_at) - new Date(b.created_at); });
+  var sorted = events.slice().sort(function(a,b){ return _rrD(a.created_at) - _rrD(b.created_at); });
   hist.innerHTML = sorted.map(function(e) {
     var isOut = e.direction !== 'inbound';
     var msg = e.sms_body || e.body || e.description || '';
@@ -36820,7 +36832,7 @@ async function recordNewVoicemail() {
     var cutoff = activeRange === 'all' ? 0 : Date.now() - (parseInt(activeRange, 10) * 86400000);
     var term = (searchTerm || '').toLowerCase().trim();
     return allEvents.filter(function(e) {
-      if (cutoff && new Date(e.created_at).getTime() < cutoff) return false;
+      if (cutoff && _rrD(e.created_at).getTime() < cutoff) return false;
       if (activeFilter !== 'all' && e.type !== activeFilter) return false;
       if (term) {
         var hay = [e.title, e.description, e.email_subject, e.sms_body, e.page_url, JSON.stringify(e.metadata || {})].join(' ').toLowerCase();
@@ -37079,7 +37091,7 @@ async function recordNewVoicemail() {
 
   function updateStats() {
     var cutoff = Date.now() - (30 * 86400000);
-    var recent = allEvents.filter(function(e) { return new Date(e.created_at).getTime() >= cutoff; });
+    var recent = allEvents.filter(function(e) { return _rrD(e.created_at).getTime() >= cutoff; });
     setText('statTouches', recent.length);
 
     var calls = allEvents.filter(function(e) { return e.type === 'call'; });
@@ -37119,7 +37131,7 @@ async function recordNewVoicemail() {
       var events = Array.isArray(out[0]) ? out[0] : [];
       var notes = Array.isArray(out[1]) ? out[1] : [];
       var contactNotes = Array.isArray(out[2]) ? out[2] : [];
-      allEvents = events.concat(notes).concat(contactNotes).sort(function(a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+      allEvents = events.concat(notes).concat(contactNotes).sort(function(a, b) { return _rrD(b.created_at) - _rrD(a.created_at); });
       allEvents.forEach(function(e, i) { e._idx = i; });
       updateCounts();
       updateStats();

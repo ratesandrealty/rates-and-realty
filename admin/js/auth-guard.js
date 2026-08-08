@@ -271,7 +271,7 @@
     function mountRRTime() {
       if (window.RRTime || document.querySelector('script[src*="/admin/js/rr-time.js"]')) return;
       const rt = document.createElement('script');
-      rt.src = '/admin/js/rr-time.js?v=8601b6caaa';
+      rt.src = '/admin/js/rr-time.js?v=7306de6cb2';
       document.head.appendChild(rt);
     }
     /* The dialer — modal + Twilio.Device — app-wide, so the FAB's Call row has

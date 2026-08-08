@@ -9,7 +9,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="/admin/js/supabase-client.js?v=5e7926468b"></script>
-<script src="/admin/js/auth-guard.js?v=20e1e7af42"></script>
+<script src="/admin/js/auth-guard.js?v=4eff432f56"></script>
 <script src="/admin/js/fn-call.js?v=62e47af307"></script>
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
   <script src="/admin/js/crm-comms.js?v=077bc202a3"></script>
@@ -772,6 +772,18 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 <div id="toast"></div>
 
 <script>
+
+/* Parse a timestamp the way the database means it. 23 tables store timestamps
+   as `timestamp WITHOUT time zone` — contacts, notes, activity_events, tasks,
+   mortgage_applications, uploaded_documents and more — and PostgREST returns
+   those with no offset, which new Date() reads as the VIEWER'S LOCAL TIME. The
+   instant is then wrong by their UTC offset before any formatting runs.
+   RRTime.parse reads a zone-less string as UTC and is identical to new Date()
+   on anything that already carries a zone, so a call site does not have to know
+   which column it read. Guarded because RRTime is injected by auth-guard and a
+   page may format before it lands. */
+function _rrD(v) { return (window.RRTime && window.RRTime.parse) ? window.RRTime.parse(v) : new Date(v); }
+
 var SB_URL = 'https://ljywhvbmsibwnssxpesh.supabase.co';
 if (!window.APP_CONFIG || !window.APP_CONFIG.SUPABASE_ANON_KEY) {
   console.error('[people.html] window.APP_CONFIG.SUPABASE_ANON_KEY missing — /api/env.js did not load correctly. Try a hard refresh (Ctrl+Shift+R).');
@@ -1060,7 +1072,7 @@ function updateTabCounts() {
     if (_t === 'Hot') counts.hot++;
     else if (_t === 'Warm') counts.warm++;
     else counts.cold++;
-    if (p.created_at && (now - new Date(p.created_at).getTime()) < fourteenDays) counts['new']++;
+    if (p.created_at && (now - _rrD(p.created_at).getTime()) < fourteenDays) counts['new']++;
     if (p.referred_by || p.referral_partner_id) counts.referrals++;
     if (!p.last_contact_date || (now - new Date(p.last_contact_date).getTime()) > fiveDays) counts.no_contact++;
   });
@@ -1121,7 +1133,7 @@ function applyFilters() {
     if (_currentTab === 'warm' && (score < window.LEAD_TIERS.WARM || score >= window.LEAD_TIERS.HOT)) return false;
     if (_currentTab === 'cold' && score >= window.LEAD_TIERS.WARM) return false;
     if (_currentTab === 'new') {
-      if (!p.created_at || (now - new Date(p.created_at).getTime()) >= fourteenDays) return false;
+      if (!p.created_at || (now - _rrD(p.created_at).getTime()) >= fourteenDays) return false;
     }
     if (_currentTab === 'referrals') {
       if (!p.referred_by && !p.referral_partner_id) return false;

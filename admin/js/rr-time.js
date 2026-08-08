@@ -79,10 +79,27 @@
     }
   }
 
+  /* DROP-IN FOR new Date(v).
+   *
+   * toDate() returns null for unparseable input, which is right for formatting
+   * (render nothing) and WRONG as a blanket replacement for new Date(): callers
+   * that go straight to .getTime() would get a null dereference where they used
+   * to get NaN. parse() always returns a Date, Invalid when it has to be, so it
+   * behaves exactly like new Date() EXCEPT that a zone-less string is read as
+   * UTC instead of as the viewer's local time. That difference is the whole bug.
+   *
+   * Safe on tz-aware strings too — identical result — so a call site does not
+   * need to know which column it is reading. */
+  function parse(v) {
+    var d = toDate(v);
+    return d || new Date(NaN);
+  }
+
   var RRTime = {
     ZONE: ZONE,
     LABEL: LABEL,
     toDate: toDate,
+    parse: parse,
 
     /** "Aug 7, 3:12 PM PT" — the default for anything with a clock time. */
     dateTime: function (v) {

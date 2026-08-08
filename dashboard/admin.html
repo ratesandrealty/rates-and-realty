@@ -12,7 +12,7 @@
   <!-- Dashboard auth layer: routes Supabase REST/Storage calls through the logged-in JWT -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="/assets/js/sb-auth.js?v=b5f9eaf135"></script>
-  <script src="/admin/js/auth-guard.js?v=20e1e7af42"></script>
+  <script src="/admin/js/auth-guard.js?v=4eff432f56"></script>
   <!-- The unshared-lead nudge and the share path it uses. Same two files
        lead-detail.html loads — one implementation, two mount points, rather
        than the bell's mistake of a copy per page. -->
@@ -32,6 +32,18 @@
   <!-- Google Analytics -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-03P16TMWM8"></script>
   <script>
+
+/* Parse a timestamp the way the database means it. 23 tables store timestamps
+   as `timestamp WITHOUT time zone` — contacts, notes, activity_events, tasks,
+   mortgage_applications, uploaded_documents and more — and PostgREST returns
+   those with no offset, which new Date() reads as the VIEWER'S LOCAL TIME. The
+   instant is then wrong by their UTC offset before any formatting runs.
+   RRTime.parse reads a zone-less string as UTC and is identical to new Date()
+   on anything that already carries a zone, so a call site does not have to know
+   which column it read. Guarded because RRTime is injected by auth-guard and a
+   page may format before it lands. */
+function _rrD(v) { return (window.RRTime && window.RRTime.parse) ? window.RRTime.parse(v) : new Date(v); }
+
     window.dataLayer = window.dataLayer || [];
     function gtag(){dataLayer.push(arguments);}
     gtag('js', new Date());
@@ -1227,6 +1239,14 @@
     body{ padding-bottom:0 !important; }
   }
   </style>
+  <!-- The inbox module, so the Gmail widget below can open a real thread in
+       place instead of navigating away. DOMPurify is listed first because it
+       must execute first — the composer refuses to open without it. Same pair,
+       same SRI pin, same defer as admin/lead-detail.html. -->
+  <script src="/admin/js/vendor/purify.min.js?v=3.4.12"
+          integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
+          crossorigin="anonymous" defer></script>
+  <script src="/admin/js/inbox.js?v=017e67ea47" defer></script>
 </head>
 <body>
   <script>(function(){ if(localStorage.getItem('rr-theme')==='light') document.body.classList.add('light'); })();</script>
@@ -1793,6 +1813,12 @@
           .ovw-count { font-size:1.6rem; font-weight:800; color:#fff; line-height:1; }
           .ovw-count-sub { font-size:11px; color:#888; margin-left:7px; font-weight:600; letter-spacing:.02em; }
           .ovw-list { margin-top:11px; }
+          /* The inbox list was fixed-height and cut off at 4 of ~50. Scrolls now.
+             max-height rather than height so a quiet inbox does not leave a hole. */
+          #ovw-inbox-list { max-height: 340px; overflow-y: auto; overscroll-behavior: contain; }
+          #ovw-inbox-list::-webkit-scrollbar { width: 8px; }
+          #ovw-inbox-list::-webkit-scrollbar-thumb { background: rgba(201,168,76,.28); border-radius: 4px; }
+          #ovw-inbox-list::-webkit-scrollbar-track { background: transparent; }
           .ovw-row { display:flex; align-items:center; gap:10px; padding:9px 8px; border-radius:8px; cursor:pointer; transition:background .15s; border-bottom:1px solid rgba(255,255,255,0.05); }
           .ovw-row:last-child { border-bottom:none; }
           .ovw-row:hover { background:rgba(255,255,255,0.04); }
@@ -2898,7 +2924,7 @@
   <script type="module" src="/components/layout.js?v=aa3e7422f3"></script>
   <!-- Staff-to-staff chat: floating Chat bubble (beside the AI FAB) + realtime. -->
   <script src="/admin/js/staff-chat.js?v=c1c8cfd043"></script>
-  <script type="module" src="/components/admin-dashboard.js?v=92c1853c2c"></script>
+  <script type="module" src="/components/admin-dashboard.js?v=a77b8c9448"></script>
   <script src="/dashboard/utils/insights.js?v=08b45a0c2f"></script>
   <script src="/dashboard/utils/lead-picker.js?v=ed36024245"></script>
   <script src="/dashboard/utils/calendar.js?v=1862dd25c5"></script>
@@ -3671,7 +3697,7 @@ async function loadReferralTable() {
       const rpName = rp ? `${rp.first_name||''} ${rp.last_name||''}`.trim() : '—';
       const rpType = rp?.source_type || '—';
       const stage = c.pipeline_status || 'New Lead';
-      const diff = Math.floor((Date.now() - new Date(c.created_at)) / 86400000);
+      const diff = Math.floor((Date.now() - _rrD(c.created_at)) / 86400000);
       const ago = diff === 0 ? 'Today' : diff === 1 ? '1d ago' : diff < 30 ? diff+'d ago' : Math.floor(diff/30)+'mo ago';
       return `<tr onclick="window.location.href='/admin/lead-detail?contact_id=${c.id}'" style="cursor:pointer;">
         <td style="font-weight:600;">${name}</td>
@@ -3935,11 +3961,15 @@ document.addEventListener('DOMContentLoaded', loadShowingsWidget);
         '<span class="ovw-count-sub">recent' + (unread ? ' · ' + unread + ' unread' : '') + '</span>';
     }
 
-    var top = threads.slice(0, 4);
+    /* Was slice(0, 4) into a fixed-height box: 4 of ~50 shown and the rest
+       silently unreachable. The list scrolls now, so render them all. */
+    var top = threads;
     box.innerHTML = (top.length ? top.map(function (t) {
       var who = (t.from && (t.from.name || t.from.email)) || '(unknown sender)';
       var isProc = t.mailbox === MB_PROC;
-      return '<div class="ovw-row" data-href="/admin/inbox?mailbox=' + encodeURIComponent(t.mailbox) + '">' +
+      /* data-thread opens the thread IN PLACE via GmailInbox.openThread. The
+         old data-href navigated to /admin/inbox and lost the dashboard. */
+      return '<div class="ovw-row" data-thread="' + esc(t.id) + '" data-mailbox="' + esc(t.mailbox) + '">' +
         (t.unread ? '<span class="ovw-dot"></span>' : '') +
         '<div class="ovw-row-main">' +
           '<div class="ovw-row-t">' + esc(who) + '</div>' +
@@ -3953,7 +3983,41 @@ document.addEventListener('DOMContentLoaded', loadShowingsWidget);
     (failed.length === 1
       ? '<div class="ovw-err">' + esc(failed[0].mailbox.split('@')[0]) + '@ unavailable — ' + esc(failed[0].msg) + '</div>'
       : '');
-    wireRows(box);
+    wireThreadRows(box);
+  }
+
+  /* Opens the SAME thread viewer and composer the Inbox page uses —
+   * GmailInbox.openThread from /admin/js/inbox.js — rather than a second one.
+   * That modal already renders the thread and wires Reply / Reply all / Forward
+   * to the real composer, including the sanitizer and the signature. Writing a
+   * second composer here would mean a second sanitize path and a second send
+   * path, and the whole point of exporting sanitize() was that there must be
+   * exactly one allowlist. lead-detail already opens filed threads this way. */
+  function wireThreadRows(box) {
+    if (!box) return;
+    Array.prototype.forEach.call(box.querySelectorAll('[data-thread]'), function (r) {
+      r.setAttribute('tabindex', '0');
+      r.setAttribute('role', 'button');
+      var open = async function () {
+        var tid = r.getAttribute('data-thread'), mb = r.getAttribute('data-mailbox');
+        if (!tid || !mb) return;
+        if (!window.GmailInbox || !window.GmailInbox.openThread) {
+          /* Deferred script not in yet, or it failed to load. Say so and fall
+             back to the page that definitely works rather than doing nothing. */
+          go('/admin/inbox?mailbox=' + encodeURIComponent(mb));
+          return;
+        }
+        var sb = await client();
+        window.GmailInbox.openThread({
+          client: sb, mailbox: mb, threadId: tid,
+          onChanged: function () { loadInbox(); }     // read/archive reflects back
+        });
+      };
+      r.addEventListener('click', open);
+      r.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+      });
+    });
   }
 
   /* ── 🗂️ VA Activity ─────────────────────────────────────────────────────────── */
@@ -5392,7 +5456,7 @@ async function loadPipelineBoard(forceRefresh) {
           const type = c.loan_type || '';
           const temp = c.lead_temperature || c.temperature || '';
           const tempColor = temp==='Hot'?'#e55':temp==='Warm'?'#f59e0b':'#6b7280';
-          const days = c.created_at ? Math.floor((Date.now()-new Date(c.created_at).getTime())/86400000) : null;
+          const days = c.created_at ? Math.floor((Date.now()-_rrD(c.created_at).getTime())/86400000) : null;
           const ago = days===0?'Today':days===1?'Yesterday':days!=null?`${days}d ago`:'';
           return `<div class="pk-card" draggable="true" data-id="${c.id}"
             onclick="window.location='/admin/lead-detail?contact_id=${c.id}'"
