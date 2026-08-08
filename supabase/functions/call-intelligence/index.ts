@@ -455,8 +455,20 @@ Deno.serve(async (req) => {
     return new Response('', { status: 200, headers: { 'Content-Type': 'text/plain' } });
   }
 
-  /* ── EVERYTHING ELSE: staff only, checked BEFORE the body is read ────────── */
-  const staff = await requireStaff(req, { what: 'Call transcription' });
+  /* ── EVERYTHING ELSE: staff only, checked BEFORE the body is read ──────────
+   *
+   * allowInternal is on so pg_cron can reach `sweep`. Postgres cannot hold the
+   * service key — it is an edge-function environment variable — so the cron job
+   * proves itself with internal_db_caller_secret, which was minted by
+   * gen_random_bytes straight into the vault and has never been printed. See
+   * internal_call_headers().
+   *
+   * It does NOT widen anything else. get, start, sync and provision each run a
+   * SECOND requireStaff without allowInternal, so a caller holding only the
+   * internal secret has no token and gets 401 from those. `sweep` is the only
+   * action reachable this way, which is the intent: reconciling is a machine's
+   * job, reading a borrower's transcript is not. */
+  const staff = await requireStaff(req, { what: 'Call transcription', allowInternal: true });
   if (!staff.ok) return err(staff.msg || 'unauthorized', staff.status || 403);
 
   let body: any = {};
@@ -495,7 +507,20 @@ Deno.serve(async (req) => {
         const a = await tw('POST', `https://intelligence.twilio.com/v2/Services/${sid}/Operators/${op}`);
         attached.push(`${op}:${a.status}`);
       }
-      out[cfgKey] = { sid, lang, attached };
+
+      /* Point the Service's webhook at our receiver. Applied on every provision
+       * run, not just at creation, so re-running fixes a URL that drifted.
+       *
+       * This is the fast path only. If Twilio does not sign these — which I
+       * could not establish from the docs — the receiver 403s every one of them
+       * and the 10-minute sweep still delivers every transcript. Configuring it
+       * anyway is also how we find out: a 403 with reason=missing_signature in
+       * the logs answers the question that the documentation would not. */
+      const hook = await tw('POST', `https://intelligence.twilio.com/v2/Services/${sid}`, {
+        WebhookUrl: `${SUPABASE_URL}/functions/v1/call-intelligence?event=transcript`,
+        WebhookHttpMethod: 'POST',
+      });
+      out[cfgKey] = { sid, lang, attached, webhook: hook.status, webhook_url: (hook.body as any)?.webhook_url ?? null };
     }
     return json({ success: true, services: out });
   }
