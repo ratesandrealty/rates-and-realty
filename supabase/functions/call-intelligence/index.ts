@@ -434,10 +434,42 @@ Deno.serve(async (req) => {
       return twilioForbidden();
     }
 
-    const p = new URLSearchParams(bodyText);
-    const gt = (p.get('transcript_sid') || p.get('TranscriptSid') || '').trim();
+    /* THE BODY IS JSON, NOT FORM-ENCODED.
+     *
+     * Twilio's other webhooks in this codebase (twilio-voice, twilio-inbound)
+     * are all application/x-www-form-urlencoded, so this was written to match
+     * them and silently did nothing: URLSearchParams over a JSON string yields
+     * no transcript_sid, the handler took its "nothing usable" branch and
+     * returned 200, and Twilio saw a perfectly happy endpoint.
+     *
+     * The giveaway was `?bodySHA256=` on the request URL — Twilio appends that
+     * when the body is NOT form-encoded, because it cannot fold the parameters
+     * into the signature and hashes the raw body into the URL instead. Which
+     * also means the signature check was correct all along: with no form params,
+     * _shared/twilio-signature.ts signs the URL alone, bodySHA256 included.
+     *
+     * Both shapes are read here rather than only JSON. Twilio has changed
+     * webhook encodings between products before, and the cost of accepting both
+     * is four lines. */
+    let gt = '';
+    const ct = (req.headers.get('content-type') || '').toLowerCase();
+    if (ct.includes('application/json')) {
+      try {
+        const j = JSON.parse(bodyText);
+        gt = String(j.transcript_sid || j.TranscriptSid || j.sid || '').trim();
+      } catch (e) {
+        console.error('[call-intelligence] webhook body was not parseable JSON:', String(e));
+      }
+    } else {
+      const p = new URLSearchParams(bodyText);
+      gt = (p.get('transcript_sid') || p.get('TranscriptSid') || '').trim();
+    }
+
     if (!/^GT[0-9a-fA-F]{32}$/.test(gt)) {
-      console.error('[call-intelligence] webhook carried no usable transcript_sid');
+      /* Log the shape, not just the fact. "No usable transcript_sid" with no
+       * content-type and no body sample is what made this take a log-dive to
+       * find rather than one line. */
+      console.error(`[call-intelligence] webhook carried no usable transcript_sid ct="${ct}" body="${bodyText.slice(0, 200)}"`);
       return new Response('', { status: 200, headers: { 'Content-Type': 'text/plain' } });
     }
 
