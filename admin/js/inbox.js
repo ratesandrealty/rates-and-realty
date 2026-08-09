@@ -3551,6 +3551,14 @@
     mountComposer(ov.querySelector('[data-gm="cmp"]'), {
       client: cl, mailbox: opts.mailbox, mode: 'new', msgs: [],
       prefill: opts.prefill || {},
+      /* Passed through so a compose started FROM a lead carries that lead:
+         the composer uses contactId for AI context and for registering a video
+         message against the right person. Filing of the sent thread itself is
+         separate and server-side — gmail-inbox's send resolves the contact from
+         email_thread_tags first and matchContact second, and matchContact
+         checks email AND secondary_email, so a message addressed to either
+         files without the client asserting anything. */
+      contactId: opts.contactId || (opts.prefill && opts.prefill.contact_id) || null,
       onClose: close,
       onDone: function () { close(); if (opts.onSent) opts.onSent(); }
     });
@@ -3581,8 +3589,15 @@
    * signature HTML (width/colspan/bgcolor/cellpadding/valign) from being mangled.
    * Anything that will end up in outbound mail must go through THIS function.
    */
+  /* `call` is the SAME invoke every surface here uses. Exported so lead-detail
+   * can run a mailbox-scoped list_threads without hand-rolling a second
+   * functions.invoke — the hand-rolled one is where the 403 body gets lost. This
+   * unwraps resp.error.context.json() to surface the server's actual message
+   * ("mailbox not permitted for role va") instead of a bare "Edge Function
+   * returned a non-2xx status code". The role check itself stays server-side in
+   * resolveMailbox; nothing here decides access, it only reports the refusal. */
   window.GmailInbox = {
-    mount: mount, openThread: openThread, openCompose: openCompose,
+    mount: mount, openThread: openThread, openCompose: openCompose, call: invoke,
     sanitize: sanitize, sanitizerReady: sanitizerReady, PURIFY_CFG: PURIFY_CFG
   };
 })();

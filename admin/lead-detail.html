@@ -1784,7 +1784,7 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
           integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
           crossorigin="anonymous" defer></script>
     <script src="/admin/js/attachment-viewer.js?v=e8f2b14c9f"></script>
-  <script src="/admin/js/inbox.js?v=704579db1f" defer></script>
+  <script src="/admin/js/inbox.js?v=d5b7d22a22" defer></script>
 </head>
 <body class="admin-page">
 
@@ -2763,9 +2763,20 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
         <div class="lp-card" id="lpEmailThreadsCard">
           <div class="lp-h" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
             <span>📧 Email Threads</span>
-            <button type="button" onclick="lpLoadEmailThreads()" style="font-size:11px;font-weight:700;border:1px solid rgba(255,255,255,.14);border-radius:6px;padding:4px 10px;background:transparent;color:#999;cursor:pointer;font-family:inherit;">↻ Refresh</button>
+            <span style="display:flex;gap:6px;">
+              <!-- LAZY, by design. This button is the only thing that talks to Gmail;
+                   the filed-threads list below it is a Postgres read that already
+                   loads with the page. A mailbox-scoped list_threads costs one
+                   threads.list plus one threads.get PER MATCHING THREAD, so firing
+                   it on every lead-detail open would put Gmail latency and quota on
+                   a page that already loads a lot. -->
+              <button type="button" onclick="lpComposeToContact()" style="font-size:11px;font-weight:700;border:1px solid rgba(255,255,255,.14);border-radius:6px;padding:4px 10px;background:transparent;color:#999;cursor:pointer;font-family:inherit;">✏️ New email</button>
+              <button type="button" id="lpMbSearchBtn" onclick="lpSearchMailboxes()" style="font-size:11px;font-weight:700;border:1px solid rgba(201,168,76,.35);border-radius:6px;padding:4px 10px;background:rgba(201,168,76,.10);color:#C9A84C;cursor:pointer;font-family:inherit;">🔍 Search mailboxes</button>
+              <button type="button" onclick="lpLoadEmailThreads()" style="font-size:11px;font-weight:700;border:1px solid rgba(255,255,255,.14);border-radius:6px;padding:4px 10px;background:transparent;color:#999;cursor:pointer;font-family:inherit;">↻ Refresh</button>
+            </span>
           </div>
           <div id="lpEmailThreadsBody"><div style="color:#888;font-size:12px;padding:6px 2px;">Loading…</div></div>
+          <div id="lpMbSearchBody" style="margin-top:10px;"></div>
         </div>
         <div class="lp-card"><div class="lp-h">📇 Transaction Contacts</div><div id="lpContactsBody" style="overflow-x:auto;"></div></div>
         <div class="lp-card"><div class="lp-h">🏠 Appraisal Order</div><div id="lpApOrderBody"></div></div>
@@ -12929,6 +12940,119 @@ function lpRenderEmailThreads(){
       if(!mb){ alert('This thread has no mailbox recorded.'); return; }
       window.GmailInbox.openThread({ client:_authClient(), mailbox:mb, threadId:tid, onChanged:function(){ lpLoadEmailThreads(); } });
     });
+  });
+}
+
+/* ═══ PER-CONTACT MAILBOX SEARCH ═══════════════════════════════════════════
+ *
+ * The card above lists threads someone has explicitly FILED to this lead
+ * (email_thread_tags, via lead_email_threads). This searches the mailboxes for
+ * everything to or from this person, filed or not — which is the case that was
+ * missing: a borrower emails in, nobody tags it, and the lead shows nothing.
+ *
+ * WHICH MAILBOXES: derived from role, and the derivation is a UX affordance, not
+ * the control. gmail-inbox::resolveMailbox re-checks role→mailbox BEFORE any
+ * Gmail call and 403s a va asking for rene@. This only decides what to ASK for,
+ * so the worst a tampered role in sessionStorage achieves is a 403 rendered in
+ * the panel. Nothing is filtered client-side after the fact.
+ *
+ * SCOPED BY BOTH ADDRESSES. contacts carry email and secondary_email and people
+ * reply from whichever they please; matchContact already checks both server-side
+ * when filing, so searching only the primary would show less than the system
+ * itself matches on. */
+var _lpMbLoaded = false;
+
+function lpMailboxesForRole(){
+  var role='';
+  try { role = (sessionStorage.getItem('rnr_app_role')||'').toLowerCase(); } catch(_){ role=''; }
+  /* admin sees both; everyone else gets processing@ only. Never build a list
+     containing a mailbox this role cannot have — the 403 is the backstop, not
+     the interface. */
+  return role==='admin'
+    ? ['rene@ratesandrealty.com','processing@ratesandrealty.com']
+    : ['processing@ratesandrealty.com'];
+}
+
+function lpContactEmails(){
+  var c=(typeof contactData!=='undefined'&&contactData)?contactData:{};
+  return [c.email, c.secondary_email]
+    .map(function(e){ return String(e||'').trim().toLowerCase(); })
+    .filter(function(e,i,a){ return e && e.indexOf('@')>0 && a.indexOf(e)===i; });
+}
+
+async function lpSearchMailboxes(){
+  var host=document.getElementById('lpMbSearchBody'); if(!host) return;
+  var btn=document.getElementById('lpMbSearchBtn');
+  var emails=lpContactEmails();
+  if(!emails.length){ host.innerHTML='<div style="color:#888;font-size:12px;padding:6px 2px;">This contact has no email address on file, so there is nothing to search for.</div>'; return; }
+  if(!window.GmailInbox||!window.GmailInbox.call){ host.innerHTML='<div style="color:#E5484D;font-size:12px;padding:6px 2px;">Inbox module not loaded — reload the page.</div>'; return; }
+
+  var boxes=lpMailboxesForRole();
+  // Gmail search syntax: any of the addresses, in either direction.
+  var q='('+emails.map(function(e){ return 'from:'+e+' OR to:'+e; }).join(' OR ')+')';
+  host.innerHTML='<div style="color:#888;font-size:12px;padding:6px 2px;">Searching '+lpEsc(boxes.join(', '))+'…</div>';
+  if(btn){ btn.disabled=true; btn.textContent='Searching…'; }
+
+  var cl=_authClient(), rows=[], errs=[];
+  /* Per mailbox, in parallel, each failing independently: one mailbox 403ing or
+     erroring must not blank the other. That matters most for admin, where a
+     problem on rene@ should still leave processing@ visible. */
+  await Promise.all(boxes.map(async function(mb){
+    try{
+      var d=await window.GmailInbox.call(cl, mb, 'list_threads', { q:q });
+      (d&&d.threads?d.threads:[]).forEach(function(t){ t.__mb=mb; rows.push(t); });
+    }catch(e){ errs.push(mb+': '+((e&&e.message)||'failed')); }
+  }));
+  if(btn){ btn.disabled=false; btn.textContent='🔍 Search mailboxes'; }
+
+  rows.sort(function(a,b){ return (new Date(b.date||0))-(new Date(a.date||0)); });
+  var head='<div style="font-size:11px;color:#8a8475;padding:2px 2px 8px;">Mailbox search · '+lpEsc(emails.join(', '))+'</div>';
+  var errHtml=errs.length?('<div style="color:#E5484D;font-size:11.5px;padding:4px 2px;">'+errs.map(lpEsc).join('<br>')+'</div>'):'';
+  if(!rows.length){ host.innerHTML=head+errHtml+'<div style="color:#888;font-size:12px;padding:6px 2px;">No messages found in '+lpEsc(boxes.join(' or '))+'.</div>'; return; }
+
+  host.innerHTML=head+errHtml+'<div style="display:flex;flex-direction:column;gap:6px;">'+rows.map(function(t){
+    /* The mailbox chip is not decoration. With both mailboxes merged into one
+       list, "who received this" is otherwise unrecoverable from the row, and it
+       is the thing that decides which mailbox the reply goes out from. */
+    var isRene=t.__mb.indexOf('rene@')===0;
+    var chip='<span style="font-size:9.5px;font-weight:700;border-radius:4px;padding:1px 6px;margin-right:6px;'
+      +(isRene?'background:rgba(201,168,76,.14);color:#C9A84C;border:1px solid rgba(201,168,76,.3);'
+              :'background:rgba(80,200,120,.12);color:#50c878;border:1px solid rgba(80,200,120,.3);')
+      +'">'+lpEsc(t.__mb.split('@')[0])+'@</span>';
+    return '<div class="lp-mb-row" data-tid="'+lpEsc(t.id)+'" data-mb="'+lpEsc(t.__mb)+'" style="padding:9px 11px;border:1px solid rgba(255,255,255,.07);border-radius:9px;background:rgba(255,255,255,.02);cursor:pointer;">'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;"><span style="font-size:13px;color:#eee;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+chip+lpEsc(t.subject||'(no subject)')+'</span>'
+      +'<span style="font-size:11px;color:#888;flex-shrink:0;">'+lpEsc(_lpFmtDT(t.date))+'</span></div>'
+      +'<div style="font-size:11px;color:#888;margin-top:3px;">'+lpEsc(t.from||'')+'</div></div>';
+  }).join('')+'</div>';
+
+  Array.prototype.forEach.call(host.querySelectorAll('.lp-mb-row'), function(row){
+    row.addEventListener('click', function(){
+      window.GmailInbox.openThread({
+        client:_authClient(), mailbox:row.getAttribute('data-mb'), threadId:row.getAttribute('data-tid'),
+        /* allowTag stays on so an untagged thread found here can be filed to the
+           lead from the viewer — which is the whole point of surfacing it. */
+        onChanged:function(){ lpLoadEmailThreads(); lpSearchMailboxes(); }
+      });
+    });
+  });
+  _lpMbLoaded=true;
+}
+
+/* Compose to this contact, from the mailbox this role is allowed to send as.
+ * Filing is left to the server: gmail-inbox's send resolves the contact from
+ * email_thread_tags first and matchContact second, and matchContact checks
+ * email AND secondary_email — so a message addressed to either files itself
+ * without the client asserting a contact_id it has no authority over. */
+function lpComposeToContact(){
+  var emails=lpContactEmails();
+  if(!emails.length){ alert('This contact has no email address on file.'); return; }
+  if(!window.GmailInbox||!window.GmailInbox.openCompose){ alert('Inbox module not loaded — reload the page.'); return; }
+  window.GmailInbox.openCompose({
+    client:_authClient(),
+    mailbox:lpMailboxesForRole()[0],
+    contactId:lpCid(),
+    prefill:{ to:[emails[0]], contact_id:lpCid() },
+    onSent:function(){ lpLoadEmailThreads(); if(_lpMbLoaded) lpSearchMailboxes(); }
   });
 }
 
