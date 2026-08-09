@@ -597,6 +597,43 @@ serve(async (req) => {
       const cc = body.cc ? String(body.cc).trim() : ''
       const bcc = body.bcc ? String(body.bcc).trim() : ''
       if (!to || !subject || !html) return err('to, subject, body_html required')
+
+      /* ── REFUSE UNROUTABLE RECIPIENTS ────────────────────────────────────
+       *
+       * This validated nothing but non-emptiness, and that was a silent failure
+       * on borrower mail. contacts_secure masks a lead's address for the va role
+       * as `lead-<id8>@masked.local`; that string flows into the composer's TO
+       * field, and pressing Send used to produce — measured, not reasoned:
+       *
+       *   {"ok":true,"message_id":"19fe8917…","persisted":{"inserted":1},"filed_as":null}
+       *
+       * Gmail accepts the API call and queues it, we log an outbound row, the
+       * composer says sent, and the borrower receives nothing. The bounce is
+       * asynchronous and nothing here reads it. "Sent" in the CRM was a claim
+       * about an API call, not about delivery.
+       *
+       * .local is reserved for mDNS (RFC 6762) and .invalid/.test/.example/
+       * .localhost are reserved by RFC 2606/6761 — none is routable on the
+       * public internet, so a message addressed to one can only ever bounce.
+       *
+       * SERVER-SIDE because it has to be: the masking that produces these
+       * addresses is server-side and role-dependent, so the client that renders
+       * a masked address is the least able to know it is fake. The composer also
+       * refuses to prefill one, but that is a courtesy — this is the control. */
+      const UNROUTABLE = /\.(local|localhost|invalid|test|example)$/i
+      const allRecipients = [...splitAddrs(to), ...splitAddrs(cc), ...splitAddrs(bcc)]
+      const bad = allRecipients.filter((a) => UNROUTABLE.test(String(a).split('@')[1] || ''))
+      if (bad.length) {
+        console.error(`[gmail-inbox] REFUSED send to unroutable recipient(s): ${bad.join(', ')}`)
+        return err(
+          `Cannot send: ${bad.join(', ')} is not a real address. ` +
+          `Addresses like lead-xxxxxxxx@masked.local are placeholders shown when a lead's ` +
+          `email is hidden for your role — mail to them is never delivered. ` +
+          `Ask an admin for the real address, or send from an account that can see it.`,
+          422,
+        )
+      }
+
       const threadId = body.thread_id ? String(body.thread_id) : ''
       let inReplyTo: string | null = body.in_reply_to ? String(body.in_reply_to) : null
       let references: string | null = null
