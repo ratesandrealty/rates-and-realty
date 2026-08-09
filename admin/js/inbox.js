@@ -1003,6 +1003,8 @@
    *  forward   → nobody; the user picks
    * Only the ACTIVE mailbox is excluded — replying as rene@ with processing@ on the thread
    * is normal and intentional, so the other company address is kept.
+   * ...UNLESS that exclusion empties the field, which happens on a self-addressed
+   * thread (a CRM notification from rene@ to rene@). See the fallback below.
    */
   function computeRecipients(mode, msgs, mailbox) {
     var self = String(mailbox || '').toLowerCase();
@@ -1016,9 +1018,27 @@
     if (!target) target = last;
     if (mode === 'forward') return { to: [], cc: [], target: last };
 
-    var to;
-    if (target.direction === 'outbound') to = dedupe(target.to || [], [self]);
-    else to = dedupe([target.reply_to || (target.from && target.from.email) || ''], [self]);
+    /* The candidates BEFORE our own address is removed, kept so the
+       self-addressed case below can fall back to them. */
+    var candidates = (target.direction === 'outbound')
+      ? (target.to || [])
+      : [target.reply_to || (target.from && target.from.email) || ''];
+    var to = dedupe(candidates, [self]);
+
+    /* ── SELF-ADDRESSED THREAD ────────────────────────────────────────────
+       Excluding the active mailbox is right when there is somebody else on the
+       thread — replying to yourself as well as the borrower is noise. But a CRM
+       notification is sent FROM rene@ TO rene@, so rene@ is the only
+       participant, and removing it left To empty and the composer showing
+       "Add a recipient to send." on a thread that plainly has a recipient.
+
+       Falling back to the unfiltered candidates addresses the message to
+       yourself, which is what replying to a self-addressed notification means.
+       This only fires when the exclusion emptied the list, so a normal thread
+       is bit-for-bit unaffected — and a message with genuinely no candidate
+       address (empty from, empty to) still yields [], because there is nothing
+       to fall back TO and inventing one would be worse than the empty field. */
+    if (!to.length) to = dedupe(candidates, []);
 
     var cc = [];
     if (mode === 'replyAll') {
