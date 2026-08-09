@@ -603,6 +603,64 @@ async function checkEmbeddings(): Promise<{ ok: boolean; null_chunks: number; gu
  *
  * This is the check that would have caught it 18 minutes after it shipped
  * instead of when a borrower's ID went missing. */
+/* ── DID THE COMPLETION RECORD PDF ACTUALLY GET WRITTEN? ─────────────────────
+ *
+ * The other half of the storage reconcile. Reconcile catches an object nothing
+ * points at; this catches the reverse gap that reconcile structurally cannot
+ * see — a completed signature whose record PDF was never written at all. There
+ * is no object and no pointer, so nothing is inconsistent; there is simply
+ * nothing there, and nothing to notice it.
+ *
+ * esign now writes a `record_failed` signature_events row when generation
+ * fails, which is honest but only visible to somebody already looking at that
+ * envelope. This is what sweeps for it.
+ *
+ * WHY A DATE AND NOT AN ID LIST. Eight completed requests from June–August have
+ * no record PDF, and correctly never will: generation-on-completion did not
+ * exist when they completed, and they are deliberately not being backfilled.
+ * Excluding them by uuid would work today and rot into eight magic constants
+ * nobody dares touch. The date says the actual reason — "completed before the
+ * behaviour existed, so no PDF was ever expected" — and the excluded set is
+ * closed and shrinking in relevance, while every new request is on the alerting
+ * side of the line by construction. The newest of the eight completed
+ * 2026-08-06 05:42Z; generation shipped 2026-08-09 ~06:30Z. */
+const RECORD_PDF_SINCE = "2026-08-09T06:00:00Z";
+/* Generation takes ~2.6s. Fifteen minutes is not a timeout, it is room for a
+ * retry and a slow render before waking anyone. */
+const RECORD_PDF_GRACE_MINUTES = 15;
+
+type RecordCheck = { ok: boolean; ran: boolean; reason?: string; missing: string[]; failed: string[] };
+
+async function checkSignatureRecords(): Promise<RecordCheck> {
+  try {
+    const cutoff = new Date(Date.now() - RECORD_PDF_GRACE_MINUTES * 60_000).toISOString();
+    const { data: miss, error: e1 } = await sb.from("signature_requests")
+      .select("id, document_title, completed_at")
+      .eq("status", "completed").is("final_pdf_path", null)
+      .gt("completed_at", RECORD_PDF_SINCE).lt("completed_at", cutoff)
+      .order("completed_at").limit(50);
+    /* A check that cannot run must not read as a pass — same rule the Drive
+     * write probe learned on 2026-08-04. ran:false is reported separately from
+     * ok:false and never silently returns healthy. */
+    if (e1) return { ok: false, ran: false, reason: `signature_requests query failed: ${e1.message}`, missing: [], failed: [] };
+
+    /* A record_failed in the last hour alerts regardless of age: it can land on
+     * an envelope completed long ago (a re-run), and the grace window above
+     * would never surface it. */
+    const hourAgo = new Date(Date.now() - 3600_000).toISOString();
+    const { data: fails, error: e2 } = await sb.from("signature_events")
+      .select("request_id, occurred_at, detail")
+      .eq("event_type", "record_failed").gt("occurred_at", hourAgo).limit(50);
+    if (e2) return { ok: false, ran: false, reason: `signature_events query failed: ${e2.message}`, missing: [], failed: [] };
+
+    const missing = (miss || []).map((r: any) => `${r.id} — ${r.document_title || "(untitled)"} (completed ${r.completed_at})`);
+    const failed = (fails || []).map((r: any) => `${r.request_id} — ${r.detail?.error || "no reason recorded"}`.slice(0, 180));
+    return { ok: missing.length === 0 && failed.length === 0, ran: true, missing, failed };
+  } catch (e) {
+    return { ok: false, ran: false, reason: String(e).slice(0, 200), missing: [], failed: [] };
+  }
+}
+
 const MIRROR_STALE_MINUTES = 30;
 
 async function checkDocumentMirror(): Promise<{ ok: boolean; stranded: number; oldest_minutes: number | null; samples: string[] }> {
@@ -1053,8 +1111,9 @@ Deno.serve(async (req) => {
     /* Rows vs objects. Runs every hour AND is the mandatory post-restore gate —
      * a restore is exactly when direction A goes from zero to many. */
     const recon = await reconcileStorage(sb);
+    const sigRec = await checkSignatureRecords();
     const allOk = oauth.ok && driveCred.ok && staticKeys.ok && embeddings.ok
-      && syncStatus.ok && indexing.ok && backup.ok && recon.ok && mirror.ok;
+      && syncStatus.ok && indexing.ok && backup.ok && recon.ok && mirror.ok && sigRec.ok;
 
     const result: any = {
       checked_at: new Date().toISOString(),
@@ -1091,6 +1150,11 @@ Deno.serve(async (req) => {
       reconcile_ok: recon.ok,
       reconcile_dangling: recon.dangling,
       reconcile_orphans: recon.orphans,
+      signature_records_ok: sigRec.ok,
+      signature_records_ran: sigRec.ran,
+      signature_records_reason: sigRec.reason ?? null,
+      signature_records_missing: sigRec.missing,
+      signature_records_failed: sigRec.failed,
       sync_ok: syncStatus.ok,
       pending_count: syncStatus.pending,
       pending_oldest_hours: syncStatus.oldest_age_hours,
@@ -1239,6 +1303,45 @@ Deno.serve(async (req) => {
           "cannot authenticate without it.",
         ].join("\n"),
       };
+    } else if (!sigRec.ok) {
+      /* Two different claims, two different alerts — the distinction the Drive
+         probe had to learn. "could not run" must never read as either a pass
+         or a failure. */
+      alert = !sigRec.ran
+        ? {
+            key: "signature_record_check_unrunnable",
+            message: [
+              "⚠️ Signed-record check could NOT RUN",
+              "",
+              `Blocked at: ${sigRec.reason}`,
+              "",
+              "This says NOTHING about whether record PDFs are being written.",
+              "The check itself did not complete — treat record generation as",
+              "UNVERIFIED, not as broken and not as healthy.",
+            ].join("\n"),
+          }
+        : {
+            key: "signature_record_missing:" + [...sigRec.missing, ...sigRec.failed].length,
+            message: [
+              `${RED} Completed signature(s) with NO record PDF`,
+              "",
+              ...(sigRec.failed.length
+                ? ["Generation FAILED in the last hour:", ...sigRec.failed.map((f) => "  • " + f), ""]
+                : []),
+              ...(sigRec.missing.length
+                ? [`Completed over ${RECORD_PDF_GRACE_MINUTES} min ago with no final_pdf_path:`,
+                   ...sigRec.missing.map((m) => "  • " + m), ""]
+                : []),
+              "The signature itself is intact — signature_events, signature_signers",
+              "and document_hash are all durable, and the completion email carries",
+              "the signed document and certificate inline. What is missing is the",
+              "PDF record of it.",
+              "",
+              "Look for a record_failed event on the envelope; its detail carries",
+              "the storage error. Eight requests completed before 2026-08-09 are",
+              "excluded by design and will never appear here.",
+            ].join("\n"),
+          };
     } else if (!embeddings.ok) {
       alert = {
         key: "embeddings_null",
