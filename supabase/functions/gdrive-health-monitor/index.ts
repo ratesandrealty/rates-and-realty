@@ -799,20 +799,59 @@ async function checkBackupHealth(): Promise<BackupHealth> {
  * is down every borrower upload is invisible in the CRM, so a repeat alert
  * costs far less than a quiet gap. Everything else stays at 12, where the
  * failure is either slow-moving or already visible elsewhere. */
-function cooldownFor(alertKey: string): number {
-  // An unrunnable probe is not urgent — nothing is known to be failing, and a
-  // 3-hourly repeat of "could not check" is exactly the noise that trains people
-  // to ignore the key that matters. It keeps the standard 12h.
-  return alertKey === "drive_write_credential" ? 3 : ALERT_COOLDOWN_HOURS;
+/* Urgency is a property of WHAT is red, not of the key's spelling. Under digest
+ * keys the old `alertKey === "drive_write_credential"` string match could never
+ * fire again, so the caller passes the fact instead: a genuinely BROKEN Drive
+ * write credential (not merely unrunnable) keeps the 3-hour cadence, because
+ * while it is down every borrower upload is invisible in the CRM. An unrunnable
+ * probe stays at 12 — a 3-hourly "could not check" is exactly the noise that
+ * trains people to ignore the key that matters. */
+function cooldownFor(urgent: boolean): number {
+  return urgent ? 3 : ALERT_COOLDOWN_HOURS;
 }
 
-async function shouldAlert(alertKey: string): Promise<boolean> {
+async function shouldAlert(alertKey: string, urgent = false): Promise<boolean> {
   const stateKey = `gdrive_alert:${alertKey}`;
   const { data } = await sb.from("system_state")
-    .select("value, updated_at").eq("key", stateKey).single();
+    .select("value, updated_at").eq("key", stateKey).maybeSingle();
   if (!data?.updated_at) return true;
   const ageHours = (Date.now() - new Date(data.updated_at).getTime()) / 3600000;
-  return ageHours >= cooldownFor(alertKey);
+  return ageHours >= cooldownFor(urgent);
+}
+
+/* ── PER-RUN HISTORY ────────────────────────────────────────────────────────
+ *
+ * Never throws: a monitor that dies because it could not write its own logbook
+ * is worse than one with a gap in the logbook.
+ *
+ * Retention is trimmed here rather than by a separate cron, so the table cannot
+ * outlive the thing that maintains it — a cleanup job that gets disabled is how
+ * pg_cron job 2 stopped producing backups without anyone noticing. */
+const MONITOR_RUN_RETENTION_DAYS = 30;
+async function recordRun(
+  result: any, status: string, redKeys: string[], unrunnableKeys: string[],
+  alertKey: string | null, alertSent: boolean, skippedReason: string | null,
+) {
+  try {
+    await sb.from("monitor_runs").insert({
+      monitor: "gdrive_health",
+      status,
+      red_keys: redKeys,
+      unrunnable_keys: unrunnableKeys,
+      alert_key: alertKey,
+      alert_sent: alertSent,
+      skipped_reason: skippedReason,
+      detail: {
+        sms_delivered: result?.sms_delivered ?? null,
+        crm_notified: result?.crm_notified ?? null,
+        checked_at: result?.checked_at ?? null,
+      },
+    });
+    const cutoff = new Date(Date.now() - MONITOR_RUN_RETENTION_DAYS * 864e5).toISOString();
+    await sb.from("monitor_runs").delete().lt("ran_at", cutoff);
+  } catch (e) {
+    console.error("[gdrive-health] could not record run history:", String(e));
+  }
 }
 
 /* ── THE MONITOR'S OWN HEALTH ────────────────────────────────────────────────
@@ -1172,8 +1211,72 @@ Deno.serve(async (req) => {
         value: { checked_at: result.checked_at },
         updated_at: new Date().toISOString(),
       });
+      /* Green runs are recorded too. "Nothing was red at 04:00" is exactly the
+       * fact you need to bound when something started, and it is the fact the
+       * overwritten system_state row could never supply. */
+      await recordRun(result, "healthy", [], [], null, false, null);
       return ok({ ...result, status: "healthy" });
     }
+
+    /* ── THE RED SET ─────────────────────────────────────────────────────────
+     *
+     * Every failing check, in severity order. The chain below still picks which
+     * one gets the full explanatory body — that ordering is real and worth
+     * keeping — but nothing is invisible any more, because every entry here
+     * appears in the digest header.
+     *
+     * KEYS ARE IDENTITY, NEVER CONTENT. This is the one deliberate rule
+     * replacing three accidents: `storage_orphans:<buckets>`,
+     * `static_keys:<names>` and `signature_record_missing:<count>` each baked
+     * their own payload into the alert key, so an orphan count moving 1→2
+     * minted a new key and re-alerted while a steady 1 stayed silent for 12
+     * hours. Now the key is the check's name and nothing else, and the DIGEST
+     * key is the sorted set of red check names.
+     *
+     * The consequence is deliberate and worth stating: a change WITHIN an
+     * already-reported check (orphans 1→2, a second failing API key) no longer
+     * re-alerts during the cooldown window. What always re-alerts is a check
+     * that was not red before, because that changes the set. "Something new
+     * broke" is the event worth interrupting someone for; "the thing you were
+     * already told about got slightly worse" is not.
+     *
+     * `ran: false` is carried separately all the way into the summary line, so
+     * a check that could not run never reads as either a pass or a failure —
+     * the distinction that found the Drive probe in the first place. */
+    type CheckRow = { key: string; label: string; ok: boolean; ran: boolean };
+    const CHECKS: CheckRow[] = [
+      { key: "drive_write", label: "Drive write credential", ok: driveCred.ok,
+        ran: !(driveCred.stage && PROBE_UNRUNNABLE_STAGES.has(driveCred.stage)) },
+      { key: "mirror", label: "Documents reaching Drive", ok: mirror.ok, ran: true },
+      { key: "storage_dangling", label: "Dangling references", ok: !recon.dangling.some((d) => d.count !== 0), ran: true },
+      { key: "signature_records", label: "Signed record PDFs", ok: sigRec.ok, ran: sigRec.ran },
+      { key: "storage_orphans", label: "Orphaned storage objects", ok: !recon.orphans.some((o) => o.over > 0), ran: true },
+      { key: "static_keys", label: "API credentials", ok: staticKeys.ok, ran: true },
+      { key: "backup", label: "CRM backup", ok: backup.ok && !backup.failed_run, ran: true },
+      { key: "embeddings", label: "Guideline embeddings", ok: embeddings.ok, ran: true },
+      { key: "oauth", label: "Google OAuth", ok: oauth.ok, ran: true },
+      { key: "sync", label: "Drive sync queue", ok: syncStatus.ok, ran: true },
+      { key: "indexing", label: "Guideline indexing", ok: indexing.ok, ran: true },
+    ];
+    const redChecks = CHECKS.filter((c) => !c.ok);
+    const unrunnable = redChecks.filter((c) => !c.ran);
+    /* Sorted so the key depends on WHICH checks are red, never on the order
+     * they happen to be evaluated in. */
+    const digestKey = "digest:" + redChecks.map((c) => c.key).sort().join("+");
+    result.red_checks = redChecks.map((c) => c.key);
+    result.unrunnable_checks = unrunnable.map((c) => c.key);
+
+    /* Phone-first. Count on line one, then one line per red check in severity
+     * order. No wrapping, no detail — the body underneath carries that. */
+    const digestHeader = [
+      `${redChecks.some((c) => c.ran) ? RED : "⚠️"} ${redChecks.length} check${redChecks.length === 1 ? "" : "s"} red` +
+        (unrunnable.length ? ` (${unrunnable.length} could NOT run)` : ""),
+      "",
+      ...redChecks.map((c) => `  ${c.ran ? RED : "⚠️"} ${c.label} — ${c.ran ? "FAILED" : "COULD NOT RUN"}`),
+      "",
+      "─".repeat(28),
+      "",
+    ];
 
     // OAuth issues take priority — they cause sync issues, not the other way around
     let alert: { key: string; message: string };
@@ -1372,10 +1475,26 @@ Deno.serve(async (req) => {
       alert = buildIndexingAlert(indexing);
     }
 
+    /* The digest replaces the single-alert key. `alert` still supplies the
+     * detailed body for the MOST SEVERE red check — that is the one with an
+     * actionable fix — but the header above lists every one of them, and the
+     * cooldown is now keyed on the whole set.
+     *
+     * Why this removes masking rather than moving it: there is no longer a
+     * branch that "wins". Under the old chain a cooldown on the top red check
+     * returned early and silenced the entire run, so a lower check could be red
+     * for days and never be mentioned. storage_orphans spent 32 hours that way
+     * under drive_write_probe_unrunnable. Now a set containing a new member is
+     * a different key, so it is never suppressed by an older member's
+     * cooldown. */
+    const digestMessage = [...digestHeader, alert.message].join("\n");
+    alert = { key: digestKey, message: digestMessage };
+
     if (!force) {
-      const can = await shouldAlert(alert.key);
+      const can = await shouldAlert(alert.key, redChecks.some((c) => c.key === "drive_write" && c.ran));
       if (!can) {
         result.alert_skipped_reason = "cooldown";
+        await recordRun(result, "unhealthy_silent", redChecks.map((c) => c.key), unrunnable.map((c) => c.key), digestKey, false, "cooldown");
         return ok({ ...result, status: "unhealthy_silent", would_send: alert.message });
       }
     }
@@ -1421,6 +1540,8 @@ Deno.serve(async (req) => {
       result.alert_skipped_reason = `all_delivery_legs_failed: sms=${sent.error}; crm=${crm.error}`;
     }
 
+    await recordRun(result, "unhealthy", redChecks.map((c) => c.key), unrunnable.map((c) => c.key),
+                    digestKey, !!result.alert_sent, result.alert_skipped_reason ?? null);
     return ok({ ...result, status: "unhealthy", message: alert.message });
   } catch (e: any) {
     /* Report the monitor's own crash. Everything here is best-effort and
