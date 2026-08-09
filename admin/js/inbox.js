@@ -3183,8 +3183,22 @@
     if (!cl) { el.innerHTML = '<div class="gm-empty">Not signed in.</div>'; return; }
     var mailboxes = opts.mailboxes && opts.mailboxes.length ? opts.mailboxes : ['processing@ratesandrealty.com'];
     var showSwitcher = !!opts.showSwitcher && mailboxes.length > 1;
+    /* INITIAL QUERY. `mount({ q: 'from:x OR to:x' })` opens the component
+     * already scoped — used by the per-lead Inbox tab so the same component
+     * serves both the full mailbox and one contact's mail, rather than a fork.
+     *
+     * An EMPTY q is not "no filter" here, it is a different product: with no q,
+     * listParams() falls through to label-based browsing and returns the WHOLE
+     * mailbox. A caller that means "scoped" must therefore never pass '' and
+     * hope — see the guard in lead-detail's tab, which refuses to mount at all
+     * when the contact has no address. 708 of 1042 contacts have none.
+     *
+     * state.q is what the search box shows and what Search/refresh reuse, so
+     * seeding it here (rather than firing a one-off search) keeps the query
+     * visible and editable instead of being invisible state the user cannot
+     * see or clear. */
     var state = {
-      mailbox: mailboxes[0], q: '', threads: [], drafts: [], active: null,
+      mailbox: mailboxes[0], q: String(opts.q || ''), threads: [], drafts: [], active: null,
       folder: 'INBOX', category: 'CATEGORY_PERSONAL', primaryFellBack: false,
       // thread_id -> lead name (or null when checked and unfiled). Cached so the
       // list can re-render without re-querying every scroll/refresh.
@@ -3533,6 +3547,11 @@
     root.querySelector('[data-gm="go"]').addEventListener('click', doSearch);
     root.querySelector('[data-gm="refresh"]').addEventListener('click', loadThreads);
     searchEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') doSearch(); });
+
+    /* Show the seeded query in the box. Without this the list would be filtered
+       by something the user can neither see nor clear, which reads as a broken
+       inbox rather than a scoped one. */
+    if (state.q) searchEl.value = state.q;
 
     loadThreads();
   }

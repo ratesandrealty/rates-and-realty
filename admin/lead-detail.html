@@ -1784,7 +1784,7 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
           integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
           crossorigin="anonymous" defer></script>
     <script src="/admin/js/attachment-viewer.js?v=e8f2b14c9f"></script>
-  <script src="/admin/js/inbox.js?v=d5b7d22a22" defer></script>
+  <script src="/admin/js/inbox.js?v=6eead1817a" defer></script>
 </head>
 <body class="admin-page">
 
@@ -2205,6 +2205,7 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
       <button class="ld-tab-btn" onclick="switchTab('conditions', this)">Conditions</button>
       <button class="ld-tab-btn" onclick="switchTab('tasks', this)">Tasks</button>
       <button class="ld-tab-btn" onclick="switchTab('activity', this)">Activity</button>
+      <button class="ld-tab-btn" onclick="switchTab('inbox', this)" id="tab-btn-inbox">📥 Inbox</button>
       <button class="ld-tab-btn" onclick="switchTab('alerts', this)"><i class="fas fa-bell" style="margin-right:4px"></i>Alerts</button>
       <button class="ld-tab-btn" onclick="switchTab('showings', this)"><i class="fas fa-home" style="margin-right:4px"></i>Showings</button>
     </nav>
@@ -4486,6 +4487,13 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
     </div>
 
     <!-- TAB: LISTING ALERTS & SEARCH LINK BUILDER -->
+    <!-- The real inbox component, scoped to this contact. Height is fixed here
+         because .gm-inbox is height:100% and would collapse to nothing inside a
+         panel that has no height of its own. -->
+    <div class="ld-tab-panel" id="tab-inbox">
+      <div id="lpInboxHost" style="height:72vh;min-height:520px;"></div>
+    </div>
+
     <div class="ld-tab-panel" id="tab-alerts">
       <div style="padding:20px 24px">
 
@@ -13064,6 +13072,73 @@ async function lpSearchMailboxes(){
   _lpMbLoaded=true;
 }
 
+/* ═══ INBOX TAB — the real component, scoped to this contact ════════════════
+ *
+ * Same GmailInbox.mount as /admin/inbox and /admin/va-inbox, seeded with a
+ * query instead of forked. Admin gets both mailboxes and the switcher; every
+ * other role gets processing@ and no switcher, matching va-inbox exactly.
+ *
+ * LAZY: mounted on first tab click, never on page load. list_threads costs one
+ * threads.list plus one threads.get per matching thread, and lead-detail is
+ * already a heavy page.
+ *
+ * MOUNTED ONCE. Re-mounting on every tab click would throw away scroll position,
+ * the open thread and any typed search, and re-pay the Gmail round trip for
+ * nothing. */
+var _lpInboxMounted = false;
+
+function lpMountInboxTab(){
+  if (_lpInboxMounted) return;
+  var host = document.getElementById('lpInboxHost');
+  if (!host) return;
+
+  var emails = lpContactEmails();
+
+  /* ── THE GUARD THAT MATTERS ────────────────────────────────────────────────
+   * 708 of 1042 contacts have no email address. An empty q is NOT "no filter"
+   * — list_threads with no q falls through to label browsing and returns the
+   * WHOLE mailbox, so mounting here without an address would show a VA the
+   * entire processing@ inbox under a lead that has nothing to do with it.
+   * Refuse to mount at all. A message saying why is the correct output; an
+   * empty inbox would be a lie and a full one would be a disclosure. */
+  if (!emails.length) {
+    host.innerHTML = '<div style="padding:34px;text-align:center;color:#8a8475;font-size:13px;line-height:1.6;">'
+      + '<div style="font-size:15px;color:#c9c3b4;margin-bottom:6px;">No email on file for this contact</div>'
+      + 'There is no address to search the mailbox with, so nothing is shown here.<br>'
+      + 'Add an email on the Lead Details tab and reopen this tab.'
+      + '</div>';
+    _lpInboxMounted = true;   // the message is the final state; do not retry
+    return;
+  }
+
+  /* Masked placeholders are not addresses. A va sees lead-<id8>@masked.local
+     from contacts_secure; searching for it matches nothing and implies the lead
+     has no mail, which is worse than saying the address is hidden. */
+  var real = emails.filter(function(e){ return !/@masked\.local$/i.test(e); });
+  if (!real.length) {
+    host.innerHTML = '<div style="padding:34px;text-align:center;color:#8a8475;font-size:13px;line-height:1.6;">'
+      + '<div style="font-size:15px;color:#c9c3b4;margin-bottom:6px;">This lead’s email is hidden for your role</div>'
+      + 'The mailbox cannot be searched without the real address. An admin can see it on this page.'
+      + '</div>';
+    _lpInboxMounted = true;
+    return;
+  }
+
+  var boxes = lpMailboxesForRole();
+  var q = '(' + real.map(function(e){ return 'from:' + e + ' OR to:' + e; }).join(' OR ') + ')';
+
+  window.GmailInbox.mount({
+    el: host,
+    client: _authClient(),
+    mailboxes: boxes,
+    /* Switcher only when there is something to switch between — mount() also
+       requires mailboxes.length > 1, so a va never sees it. */
+    showSwitcher: boxes.length > 1,
+    q: q
+  });
+  _lpInboxMounted = true;
+}
+
 /* Compose to this contact, from the mailbox this role is allowed to send as.
  * Filing is left to the server: gmail-inbox's send resolves the contact from
  * email_thread_tags first and matchContact second, and matchContact checks
@@ -16952,6 +17027,7 @@ function switchTab(name, btn) {
   if (name === 'mismo') loadMISMOHistory();
   if (name === 'commercial') onCommercialTabOpen();
   if (name === 'alerts') { loadContactAlerts(); _slbInitPills(); loadSavedSearches(); setTimeout(function(){ _slbInstallDragHandlers(); slbRenderSlider(); }, 0); }
+  if (name === 'inbox') lpMountInboxTab();
   if (name === 'activity') {
     if (typeof window.loadActivityTab === 'function') window.loadActivityTab();
     if (typeof loadIntelBanners === 'function') loadIntelBanners();
