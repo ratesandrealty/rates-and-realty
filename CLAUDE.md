@@ -354,6 +354,7 @@ be careful. What works is having somewhere else to put it.
 | Borrower/contact fixtures | contact **`ZZ-TEST Fixture Borrower`** | Recreate if absent, `pipeline_status='New Lead'`, `lead_source='automated-test'`. Set `SMS_TEST_CONTACT_ID` to its id — `saveBorrowerDocument` swaps to it whenever test mode is on, so fixture uploads physically cannot land on a real record. Note: inserting a contact fires ClickUp + Drive-foldering triggers; expect both artifacts. |
 | SMS senders | **`+1 555 555 XXXX`** | NPA 555 is unassignable under the NANP, so it cannot reach a handset. Requires the `SMS_TEST_KEY` header as well — the number is an identifier, not a credential. `sendSms` refuses a test-mode send to anything outside this range, and refuses a real-mode turn carrying a `SMtest*` MessageSid. |
 | Drive writes | the **service account's own Drive root** | `GOOGLE_SERVICE_ACCOUNT_JSON`'s account. Create with no `parents`, trash immediately. Never inside a borrower folder — `gdrive-proxy?action=trash-file` will refuse to clean up after you there, by design. |
+| The Drive **write health probe** | folder **`RR HEALTH PROBE - DO NOT DELETE (Drive write check)`**, id pinned in `app_config.gdrive_probe_folder_id` (`1nebqY8hXDn-7Ar4nmS91PKLeD0pe9Dbb`) | Permanent. Lives in `Borrowers/New Lead/Rene's Clients` beside real borrower folders and **looks like litter — it is not**. `gdrive-health-monitor` writes and trashes one `_probe_*.txt` in it hourly. See below before ever recreating it. |
 | Chunker/PDF caches | bucket **`chunker-cache`** | Private, JSON-only. Never `lender-guidelines`: it is public, and its MIME allowlist silently 415s JSON. |
 | Snapshots before data changes | **`snapshots/*.json`**, committed | Plus a `<table>_<purpose>_<date>` copy in Postgres. See `5a084ce`, `drive-inventory-20260801.json`. |
 | Backup-pipeline dry runs | a scratch edge function, Drive **stubbed** | `weekly-backup` writes with rene@'s user token, so a test run cannot be cleaned up by `gdrive-proxy?action=trash-file` (the SA cannot see, let alone trash, rene@-owned files). Stub the uploads and point the verified marker at a `_SCRATCHTEST` key. |
@@ -364,6 +365,38 @@ secret-gated, read-only where possible, and **deleted immediately after use**
 (verify the endpoint 404s). They are not acceptable as a way around a guard that
 just refused you — if a guard blocks cleanup, the litter should not have been
 there.
+
+### The Drive write probe folder — how it must be recreated
+
+`RR HEALTH PROBE - DO NOT DELETE (Drive write check)` was created by **POSTing
+the production n8n webhook** the foldering trigger uses:
+
+```
+POST https://ratesandrealty.app.n8n.cloud/webhook/borrower-stage-foldering
+{"record":{"id":"<uuid>","first_name":"RR HEALTH PROBE - DO NOT DELETE",
+           "last_name":"","pipeline_status":"New Lead","gdrive_folder_id":null}}
+```
+
+**The credential that creates it is the whole point.** Workflow `3MgNXjZrcCm7c8gy`
+uses `nodeCredentialType: googleDriveOAuth2Api` — rene@'s user OAuth through
+**n8n's** OAuth client. Recreating it any other way silently guts the check:
+
+- **service account** (what `gdrive-proxy?action=create-folder` uses — it goes
+  through `driveFetch` → `getAccessToken`, which mints an SA JWT), or
+- **our own Supabase OAuth client**
+
+…would both produce a folder that a token holding only `drive.file` can still
+write into. The probe would go green in exactly the scope-downgrade scenario it
+exists to catch. `drive.file` grants an app access to files *it* created.
+
+Use a uuid that is not a real contact: the workflow PATCHes
+`contacts?id=eq.<that uuid>`, which matches nothing and leaves the probe
+uncoupled from any contact row. That coupling is what broke this check twice —
+once when the ZZ-TEST fixture was deleted (2026-08-04) and again once
+`trg_borrower_foldering_ins` stopped foldering fixtures at all. It was dark from
+2026-08-06 17:07Z to 2026-08-09.
+
+Then pin the new id in `app_config.gdrive_probe_folder_id`.
 
 ### Cleaning up auth rows: delete the id you created, never the user
 
