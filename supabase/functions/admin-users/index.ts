@@ -50,7 +50,7 @@ Deno.serve(async (req: Request) => {
 
     // ============ LIST ============
     if (action === 'list') {
-      const { data: roleRows } = await admin.from('auth_user_roles').select('user_id,role,contact_id').in('role', STAFF_ROLES);
+      const { data: roleRows } = await admin.from('auth_user_roles').select('user_id,role,contact_id,display_name,display_name_updated_at,credentials_rotated_at').in('role', STAFF_ROLES);
       const { data: tempRows } = await admin.from('user_temp_credentials').select('user_id,temp_password,set_at');
       const tempById: Record<string, any> = {};
       for (const t of (tempRows || [])) tempById[t.user_id] = t;
@@ -75,6 +75,15 @@ Deno.serve(async (req: Request) => {
           has_logged_in: !!lastSignIn,
           banned: !!au.banned_until && new Date(au.banned_until) > new Date(),
           temp_password: pending ? temp.temp_password : null,
+          display_name: r.display_name || null,
+          display_name_updated_at: r.display_name_updated_at || null,
+          credentials_rotated_at: r.credentials_rotated_at || null,
+          /* The name predates the current password on a login that may have
+             changed hands. Computed here so every surface agrees on what stale
+             means rather than each re-deriving it. */
+          display_name_stale: !!(r.display_name && r.credentials_rotated_at
+            && (!r.display_name_updated_at
+                || new Date(r.display_name_updated_at) < new Date(r.credentials_rotated_at))),
           is_self: r.user_id === caller.id,
         };
       }).sort((a: any, b: any) => (a.role === 'admin' ? -1 : 1) - (b.role === 'admin' ? -1 : 1));
@@ -117,7 +126,46 @@ Deno.serve(async (req: Request) => {
       const { error: uErr } = await admin.auth.admin.updateUserById(user_id, { password: temp_password });
       if (uErr) return json({ error: 'reset_failed', message: uErr.message }, 400);
       await admin.from('user_temp_credentials').upsert({ user_id, temp_password, set_by: caller.id, set_at: new Date().toISOString() }, { onConflict: 'user_id' });
+      /* STAMPED HERE, by the code path that actually rotates the password —
+         not inferred later from a proxy. Supabase exposes no real "password
+         last changed" timestamp: auth.audit_log_entries is empty on this
+         project, and auth.users.recovery_sent_at is set by generate_link, so it
+         moves when anyone mints a magic link and does NOT move when an admin
+         changes a password through the API. Using it would both false-positive
+         and miss the real event.
+         KNOWN GAP, stated rather than papered over: a password changed outside
+         this function — the Supabase dashboard, or the user themselves — does
+         not stamp this, so the staleness flag can under-report. It cannot
+         over-report, which is the safer direction for a flag whose job is to
+         stop a departed person's name going out. */
+      await admin.from('auth_user_roles')
+        .update({ credentials_rotated_at: new Date().toISOString() }).eq('user_id', user_id);
       return json({ success: true });
+    }
+
+    // ============ SET DISPLAY NAME ============
+    /* ADMIN-SET, NOT SELF-DECLARED. That is the whole reason this field is
+     * acceptable where a VA-editable one was not: processing@ is a shared,
+     * rotating login, so a name the holder types is a claim about who edited a
+     * setting, not about who is sending the mail.
+     *
+     * FEEDS EMAIL SIGNATURES ONLY. It must never reach the call recording
+     * announcement — that stays a code constant keyed on uid in twilio-voice,
+     * changed by deploy. An email is visible in the composer before it goes and
+     * correctable after; a recorded disclosure is neither. */
+    if (action === 'set_display_name') {
+      const user_id = String(body.user_id || '');
+      const display_name = String(body.display_name ?? '').trim().slice(0, 80);
+      if (!user_id) return json({ error: 'missing_user_id' }, 400);
+      const { error } = await admin.from('auth_user_roles').update({
+        /* Empty clears it. The signature then drops the name line entirely
+           rather than rendering a blank or a placeholder. */
+        display_name: display_name || null,
+        display_name_updated_at: display_name ? new Date().toISOString() : null,
+        updated_at: new Date().toISOString(),
+      }).eq('user_id', user_id);
+      if (error) return json({ error: 'update_failed', message: error.message }, 400);
+      return json({ success: true, display_name: display_name || null });
     }
 
     // ============ UPDATE ROLE ============

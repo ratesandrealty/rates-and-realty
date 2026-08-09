@@ -432,6 +432,10 @@
        * signature will go; expanding reveals the same editable node. Nothing about
        * send composition changes — the sig still lives in its own contentEditable. */
       '.gm-sig-wrap{padding:2px 16px 10px}',
+      '.gm-sig-who{font-size:11px;color:#8a8475;padding:0 0 5px 1px}',
+      '.gm-sig-who b{color:#c9c3b4;font-weight:600}',
+      '.gm-sig-who .none{color:#8a8475;font-style:italic}',
+      '.gm-sig-who .stale{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;font-size:9.5px;font-weight:700;background:rgba(224,82,82,.12);color:#E05252;border:1px solid rgba(224,82,82,.3)}',
       '.gm-sig-dots{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:18px;padding:0 7px;border:none;border-radius:9px;background:rgba(255,255,255,.10);color:#9a9a9a;font-size:12px;line-height:1;letter-spacing:1px;cursor:pointer;font-family:inherit}',
       '.gm-sig-dots:hover{background:rgba(255,255,255,.18);color:#fff}',
       '.gm-sig-dots.on{background:rgba(201,168,76,.20);color:var(--g,#c9a84c)}',
@@ -994,6 +998,37 @@
     } catch (_) { v = ''; }
     _sigCache[mailbox] = v;
     return v;
+  }
+
+  /* Identity behind the signature, for the line the composer shows before you
+     send. Separate RPC from email_signature_get so the UI never has to parse a
+     signature blob to find out whose name is in it. */
+  var _idCache = {};
+  async function getSignatureIdentity(cl, mailbox) {
+    if (Object.prototype.hasOwnProperty.call(_idCache, mailbox)) return _idCache[mailbox];
+    var v = null;
+    try {
+      var r = await cl.rpc('email_signature_identity', { p_mailbox: mailbox });
+      if (!r.error && r.data) v = r.data;
+    } catch (_) { v = null; }
+    _idCache[mailbox] = v;
+    return v;
+  }
+
+  function renderSigWho(node, id, mailbox) {
+    if (!node) return;
+    if (!id || !id.display_name) {
+      /* HONEST DEGRADATION, matching the signature itself: no name set means the
+         mail goes out as the company block alone. Say that plainly rather than
+         showing a blank or a placeholder name. */
+      node.innerHTML = 'Signing as <span class="none">' + esc(mailbox) +
+        ' — no display name set, company signature only</span>';
+      return;
+    }
+    node.innerHTML = 'Signing as <b>' + esc(id.display_name) + '</b> · ' + esc(mailbox) +
+      (id.stale
+        ? '<span class="stale" title="This name was set before the password on this shared login was last reset. It may belong to whoever held the account before. Check Settings → Users &amp; Roles.">name predates the last password reset</span>'
+        : '');
   }
 
   /**
@@ -2012,7 +2047,14 @@
     /* Collapsed by default, Gmail-style: a ••• chip inline where the signature goes.
      * Expanding shows the same editable node — the signature is never inlined into
      * the body, so send-time composition is unchanged. */
+    /* ── WHO THIS WILL BE SIGNED AS ──────────────────────────────────────────
+     * OUTSIDE the ••• toggle on purpose. The signature body is collapsed by
+     * default, so anything inside it is effectively invisible at send time —
+     * and the one fact that must not be invisible is whose name is going out.
+     * processing@ is a shared, rotating login; the name attached to a borrower
+     * email should never be something you have to go and look up. */
     h.push('<div class="gm-sig-wrap" data-gm="sigwrap" style="display:none">' +
+      '<div class="gm-sig-who" data-gm="sigwho"></div>' +
       '<button type="button" class="gm-sig-dots" data-gm="sigdots" title="Show signature">•••</button>' +
       '<div class="gm-sig-l" data-gm="sigl" style="display:none">Signature — click to edit</div>' +
       '<div class="gm-sig" data-f="sig" contenteditable="true" style="display:none"></div>' +
@@ -2192,6 +2234,12 @@
       try { sigEl.innerHTML = sanitize(sig); } catch (_) { return; }
       sigLoaded = sig;
       applySig();
+    });
+    /* Independent of the signature fetch: the "signing as" line must render
+       even when the signature body fails to load, because a missing signature
+       is obvious and a wrong NAME is not. */
+    getSignatureIdentity(cl, mailbox).then(function (id) {
+      renderSigWho(mountEl.querySelector('[data-gm="sigwho"]'), id, mailbox);
     });
     applySig();
 

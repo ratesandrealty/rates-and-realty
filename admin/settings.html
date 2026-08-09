@@ -18,7 +18,7 @@
      with the ADD_URI_SAFE_ATTR fix that keeps table-based signatures intact. Loading
      it here is inert: the IIFE only defines window.GmailInbox; styles and DOM are
      injected on mount(), which this page never calls. -->
-<script src="/admin/js/inbox.js?v=ebd661bbc6"></script>
+<script src="/admin/js/inbox.js?v=704579db1f"></script>
 <style>
 :root {
   --gold: #c9a84c; --gold2: #e4b84e; --bg: #0a0a0a; --surface: #111;
@@ -108,6 +108,10 @@ select.inp option{background:#1a1a1a;color:#fff}
 .users-table tr:hover td{background:rgba(255,255,255,0.02)}
 .u-email{font-weight:600}
 .u-self-tag{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:var(--gold);background:rgba(201,168,76,0.12);border-radius:10px;padding:2px 7px;margin-left:7px}
+.name-input{padding:5px 9px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:7px;color:#fff;font-size:11.5px;outline:none;width:150px}
+.name-input::placeholder{color:#6f6a5e}
+.name-input:focus{border-color:rgba(201,168,76,0.5)}
+.u-stale{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;font-size:9.5px;font-weight:700;background:rgba(224,82,82,.12);color:#E05252;border:1px solid rgba(224,82,82,.3);cursor:help}
 .role-select{padding:5px 9px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:7px;color:#fff;font-size:11.5px;cursor:pointer;outline:none}
 .role-select:disabled{opacity:0.55;cursor:not-allowed}
 .role-select option{background:#1a1a1a;color:#fff}
@@ -299,11 +303,11 @@ select.inp option{background:#1a1a1a;color:#fff}
         <table class="users-table">
           <thead>
             <tr>
-              <th>Email</th><th>Role</th><th>Status</th><th>Temp password</th><th>Actions</th>
+              <th>Email</th><th>Name</th><th>Role</th><th>Status</th><th>Temp password</th><th>Actions</th>
             </tr>
           </thead>
           <tbody id="usersBody">
-            <tr><td colspan="5" class="tbl-empty">Loading…</td></tr>
+            <tr><td colspan="6" class="tbl-empty">Loading…</td></tr>
           </tbody>
         </table>
       </div>
@@ -639,7 +643,7 @@ function togglePw(idx) {
 function renderUsers() {
   var body = document.getElementById('usersBody');
   if (!_users.length) {
-    body.innerHTML = '<tr><td colspan="5" class="tbl-empty">No users yet.</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="tbl-empty">No users yet.</td></tr>';
     return;
   }
   body.innerHTML = _users.map(function (u, idx) {
@@ -663,8 +667,21 @@ function renderUsers() {
         ' onclick="deleteUser(\'' + u.user_id + '\', \'' + esc(u.email).replace(/'/g, "\\'") + '\')">Delete</button>' +
     '</div>';
 
+    /* NAME — admin-set, inline, saved exactly like ROLE.
+       Admin-set is the point: a self-declared name on a shared rotating login
+       is a claim about who last edited a field, not about who is sending.
+       This feeds EMAIL SIGNATURES ONLY; the call recording announcement is a
+       code constant keyed on uid and is not reachable from here. */
+    var stale = u.display_name_stale
+      ? '<span class="u-stale" title="This name was set before the password was last reset on this login. Confirm it still matches whoever holds it.">stale</span>'
+      : '';
+    var nameCell = '<input class="name-input" type="text" id="name-' + idx + '"' +
+      ' value="' + esc(u.display_name || '') + '" placeholder="Not set"' +
+      ' onchange="changeDisplayName('' + u.user_id + '', this.value)">' + stale;
+
     return '<tr>' +
       '<td><span class="u-email">' + esc(u.email) + '</span>' + (u.is_self ? '<span class="u-self-tag">You</span>' : '') + '</td>' +
+      '<td>' + nameCell + '</td>' +
       '<td>' + roleSel + '</td>' +
       '<td>' + statusBadge(u) + '</td>' +
       '<td>' + pwCell(u, idx) + '</td>' +
@@ -681,10 +698,10 @@ function renderUsers() {
 
 async function loadUsers() {
   var body = document.getElementById('usersBody');
-  body.innerHTML = '<tr><td colspan="5" class="tbl-empty">Loading…</td></tr>';
+  body.innerHTML = '<tr><td colspan="6" class="tbl-empty">Loading…</td></tr>';
   var r = await adminUsers('list');
   if (!r.ok) {
-    body.innerHTML = '<tr><td colspan="5" class="tbl-empty">' + esc(r.message) + '</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="tbl-empty">' + esc(r.message) + '</td></tr>';
     showToast(r.message);
     return;
   }
@@ -719,6 +736,16 @@ async function changeRole(userId, role) {
   var r = await adminUsers('update_role', { user_id: userId, role: role });
   if (!r.ok) { showToast(r.message); await loadUsers(); return; }
   showToast('Role updated.');
+  await loadUsers();
+}
+
+/* Saved the same way ROLE is: one call, then reload so every derived flag
+   (including staleness) comes back from the server rather than being guessed
+   in the browser. */
+async function changeDisplayName(userId, name) {
+  var r = await adminUsers('set_display_name', { user_id: userId, display_name: name });
+  if (!r.ok) { showToast(r.message); await loadUsers(); return; }
+  showToast((name || '').trim() ? 'Name updated.' : 'Name cleared.');
   await loadUsers();
 }
 
