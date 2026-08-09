@@ -1225,6 +1225,54 @@ Deno.serve(async (req) => {
           "storage objects, so restoring revives rows for files deleted since.",
         ].join("\n"),
       };
+    /* ABOVE the orphan branch, deliberately. A completed signature with no
+       legal record outranks a count of known template files sitting in a
+       bucket. It is also the ordering that stops a persistent, accepted orphan
+       count from indefinitely holding the channel against a live failure —
+       which is exactly what happened the moment this check shipped: the
+       voe-forms orphan masked it on its first run.
+       That fixes THIS pair. It does not fix the general shape: one alert per
+       run means whatever is highest and persistently red still masks
+       everything below it. See the masking report. */
+    } else if (!sigRec.ok) {
+      /* Two different claims, two different alerts — the distinction the Drive
+         probe had to learn. "could not run" must never read as either a pass
+         or a failure. */
+      alert = !sigRec.ran
+        ? {
+            key: "signature_record_check_unrunnable",
+            message: [
+              "⚠️ Signed-record check could NOT RUN",
+              "",
+              `Blocked at: ${sigRec.reason}`,
+              "",
+              "This says NOTHING about whether record PDFs are being written.",
+              "The check itself did not complete — treat record generation as",
+              "UNVERIFIED, not as broken and not as healthy.",
+            ].join("\n"),
+          }
+        : {
+            key: "signature_record_missing:" + [...sigRec.missing, ...sigRec.failed].length,
+            message: [
+              `${RED} Completed signature(s) with NO record PDF`,
+              "",
+              ...(sigRec.failed.length
+                ? ["Generation FAILED in the last hour:", ...sigRec.failed.map((f) => "  • " + f), ""]
+                : []),
+              ...(sigRec.missing.length
+                ? [`Completed over ${RECORD_PDF_GRACE_MINUTES} min ago with no final_pdf_path:`,
+                   ...sigRec.missing.map((m) => "  • " + m), ""]
+                : []),
+              "The signature itself is intact — signature_events, signature_signers",
+              "and document_hash are all durable, and the completion email carries",
+              "the signed document and certificate inline. What is missing is the",
+              "PDF record of it.",
+              "",
+              "Look for a record_failed event on the envelope; its detail carries",
+              "the storage error. Eight requests completed before 2026-08-09 are",
+              "excluded by design and will never appear here.",
+            ].join("\n"),
+          };
     } else if (!recon.ok) {
       const over = recon.orphans.filter((o) => o.over > 0);
       alert = {
@@ -1303,45 +1351,6 @@ Deno.serve(async (req) => {
           "cannot authenticate without it.",
         ].join("\n"),
       };
-    } else if (!sigRec.ok) {
-      /* Two different claims, two different alerts — the distinction the Drive
-         probe had to learn. "could not run" must never read as either a pass
-         or a failure. */
-      alert = !sigRec.ran
-        ? {
-            key: "signature_record_check_unrunnable",
-            message: [
-              "⚠️ Signed-record check could NOT RUN",
-              "",
-              `Blocked at: ${sigRec.reason}`,
-              "",
-              "This says NOTHING about whether record PDFs are being written.",
-              "The check itself did not complete — treat record generation as",
-              "UNVERIFIED, not as broken and not as healthy.",
-            ].join("\n"),
-          }
-        : {
-            key: "signature_record_missing:" + [...sigRec.missing, ...sigRec.failed].length,
-            message: [
-              `${RED} Completed signature(s) with NO record PDF`,
-              "",
-              ...(sigRec.failed.length
-                ? ["Generation FAILED in the last hour:", ...sigRec.failed.map((f) => "  • " + f), ""]
-                : []),
-              ...(sigRec.missing.length
-                ? [`Completed over ${RECORD_PDF_GRACE_MINUTES} min ago with no final_pdf_path:`,
-                   ...sigRec.missing.map((m) => "  • " + m), ""]
-                : []),
-              "The signature itself is intact — signature_events, signature_signers",
-              "and document_hash are all durable, and the completion email carries",
-              "the signed document and certificate inline. What is missing is the",
-              "PDF record of it.",
-              "",
-              "Look for a record_failed event on the envelope; its detail carries",
-              "the storage error. Eight requests completed before 2026-08-09 are",
-              "excluded by design and will never appear here.",
-            ].join("\n"),
-          };
     } else if (!embeddings.ok) {
       alert = {
         key: "embeddings_null",
