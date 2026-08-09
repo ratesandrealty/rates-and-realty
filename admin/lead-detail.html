@@ -12963,6 +12963,32 @@ function lpRenderEmailThreads(){
 var _lpMbLoaded = false;
 
 function lpMailboxesForRole(){
+  /* ── PRESENTATION ONLY. THE SERVER IS THE CONTROL. ────────────────────────
+   *
+   * This reads sessionStorage, which the user can edit. That is fine here and
+   * only here, because it decides what the panel ASKS for — never what it gets.
+   * gmail-inbox::resolveMailbox maps role → mailbox BEFORE any Gmail call and
+   * refuses the wrong one. Verified against the live function: a va session
+   * requesting rene@ gets
+   *     HTTP 403  forbidden: role 'va' may not access rene@ratesandrealty.com
+   * and because the panel calls through GmailInbox.call, which unwraps the
+   * error body, that sentence is what renders. Not an empty list, not a
+   * generic failure — the reason.
+   *
+   * Deliberately NOT current_app_role() on every panel open. That RPC would buy
+   * a nicer button label for somebody who has tampered with their own browser
+   * storage to attack themselves, and would charge a round trip to every real
+   * user on the path that matters.
+   *
+   * ── THE CONDITION UNDER WHICH THIS DECISION EXPIRES ──────────────────────
+   * The whole argument rests on the server independently re-deciding. If this
+   * value is ever used to gate something the server does NOT check for itself —
+   * hiding an action, choosing a query the backend accepts unquestioned,
+   * enabling a control with no matching server-side refusal — then it has
+   * stopped being presentation and become access control, and a value the user
+   * can edit cannot be that. At that moment this must move to
+   * current_app_role(), and the latency argument above no longer applies
+   * because the thing being bought is no longer a label. */
   var role='';
   try { role = (sessionStorage.getItem('rnr_app_role')||'').toLowerCase(); } catch(_){ role=''; }
   /* admin sees both; everyone else gets processing@ only. Never build a list
