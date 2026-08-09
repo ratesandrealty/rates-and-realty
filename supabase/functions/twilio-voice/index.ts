@@ -103,7 +103,79 @@ async function greetingConfig(): Promise<{ url: string; text: string }> {
  * calls it and no UI exposes it. A promise that is silently ignored on a
  * recorded borrower call is worse than no promise. The sentence returns when the
  * stop control exists, and not before. */
-async function noticeConfig(): Promise<string> {
+/* ── WHO IS ANNOUNCED, AND WHY IT IS A SERVER-SIDE MAP ──────────────────────
+ *
+ * Keyed on the VERIFIED uid — the same identity get_token derives from the
+ * session (`client:u_<uid>`), not on anything anyone types. There is
+ * deliberately no per-user "announcement name" setting:
+ *
+ *   • processing@ is a SHARED, ROTATING login. A name entered there is not a
+ *     claim about who is on the call, it is a claim about who set the field
+ *     last, and it goes stale silently.
+ *   • This wording is read aloud on an all-party-consent recording. A WRONG
+ *     name on that recording is worse than no name — the company name is always
+ *     true, an incorrect personal name is a false statement in the evidence.
+ *
+ * So: known uid → their wording. Everyone else, including every VA session and
+ * anything with no identity at all → the company name, which is the current
+ * behaviour and cannot be wrong. Adding a person is a deploy, on purpose. */
+const NOTICE_NAME_BY_UID: Record<string, string> = {
+  // Rene Duarte — uid with dashes stripped, matching the client:u_<uid> form.
+  '59e012b08a204bd19b08b5e10f76eea2': 'Rene Duarte with Rates and Realty',
+};
+
+/** `client:u_59e0...` → `59e0...`. Anything else → '' (unknown identity). */
+function uidFromClientIdentity(from: string): string {
+  const m = String(from || '').match(/^client:u_([0-9a-f]{32})$/i);
+  return m ? m[1].toLowerCase() : '';
+}
+
+/* ── GETTING THE RIGHT WORDING TO THE CHILD LEG WITHOUT SAYING WHO ──────────
+ *
+ * The whisper URL is fetched by Twilio and is deliberately UNAUTHENTICATED (see
+ * canRecord: requiring a signature there is what created the fail-open). So it
+ * must not carry a uid or a name — anyone probing that endpoint could then
+ * enumerate staff identities out of it.
+ *
+ * Instead it carries an OPAQUE TAG: the first 12 hex of
+ * HMAC-SHA256(TWILIO_AUTH_TOKEN, 'notice-variant:' + uid). The endpoint
+ * recomputes the tag for each uid in the map above and compares. Properties:
+ *
+ *   • no uid and no name ever appears in the query string
+ *   • the tag cannot be reversed to a uid, and cannot be produced without the
+ *     account auth token, so it cannot be forged or enumerated
+ *   • a probe with a missing or wrong tag gets the default company wording —
+ *     the endpoint reveals nothing at all about who calls, or even that a
+ *     personalised variant exists
+ *   • stateless: nothing to store, expire or clean up
+ *
+ * What it does NOT defend against is someone who can already read the TwiML in
+ * flight, i.e. Twilio and us. That is the same trust boundary the call itself
+ * has, so there is nothing further to win there. */
+async function noticeVariantTag(uid: string): Promise<string> {
+  if (!uid) return '';
+  /* Read from the environment directly: the AUTH_TOKEN const lives inside
+   * Deno.serve and is not visible at module scope. check-functions caught this
+   * as TS2304 — it would have been a ReferenceError thrown while building the
+   * TwiML, i.e. a dead outbound dialer, on the first real call. */
+  const key = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(Deno.env.get('TWILIO_AUTH_TOKEN') ?? ''),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode('notice-variant:' + uid));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
+}
+
+/** Reverse the tag by trying every known uid. Constant, tiny map. */
+async function nameForVariantTag(tag: string): Promise<string> {
+  if (!tag) return '';
+  for (const uid of Object.keys(NOTICE_NAME_BY_UID)) {
+    if (await noticeVariantTag(uid) === tag) return NOTICE_NAME_BY_UID[uid];
+  }
+  return '';
+}
+
+async function noticeConfig(nameOverride?: string): Promise<string> {
   const fallbackName = 'Rates and Realty';
   const fallbackText =
     "Hi, this is {name}. Before we get started — this call is recorded for " +
@@ -124,6 +196,11 @@ async function noticeConfig(): Promise<string> {
   } catch (e) {
     console.error('[twilio-voice] notice config read failed, using approved default:', String(e));
   }
+  /* The per-caller name replaces the {name} slot only — the SENTENCE stays in
+   * app_config, so compliance wording is still a row edit rather than a deploy.
+   * An empty override falls through to the company name, which is why an
+   * unknown caller cannot end up with a blank or wrong announcement. */
+  if (nameOverride) name = nameOverride;
   return text.replace(/\{name\}/g, name).trim();
 }
 
@@ -375,8 +452,12 @@ Deno.serve(async (req) => {
      * cannot be played, which trades a compliance gap for dropped borrower
      * calls. Flagged for Rene rather than decided here. */
     if (subAction === 'record_notice') {
-      const noticeText = await noticeConfig();
-      console.log('[twilio-voice] record_notice served');
+      /* `v` is an opaque HMAC tag, never a uid or a name. Absent, wrong or
+         forged -> nameForVariantTag returns '' -> the company wording. A prober
+         cannot tell from any response that a personalised variant exists. */
+      const variantName = await nameForVariantTag((reqUrl.searchParams.get('v') || '').trim());
+      const noticeText = await noticeConfig(variantName);
+      console.log(`[twilio-voice] record_notice served variant=${variantName ? 'named' : 'default'}`);
       return twimlRes(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   ${noticeSay(noticeText)}
@@ -665,8 +746,15 @@ Deno.serve(async (req) => {
          * browser client — which also makes it audible to them that it fired —
          * and the url= whisper reaches the person being dialled on answer,
          * before the bridge. */
-        const noticeText = await noticeConfig();
-        const noticeUrl = `${recordingCb}?action=record_notice`;
+        /* The caller's identity comes from `from`, which Twilio sets to the
+           client identity the TOKEN was minted for — get_token derives that
+           from the verified session, so it cannot be spoofed by the browser.
+           Unknown identity yields '' and the company wording. */
+        const callerUid = uidFromClientIdentity(from);
+        const callerName = NOTICE_NAME_BY_UID[callerUid] || '';
+        const noticeText = await noticeConfig(callerName);
+        const variantTag = callerName ? await noticeVariantTag(callerUid) : '';
+        const noticeUrl = `${recordingCb}?action=record_notice${variantTag ? `&v=${variantTag}` : ''}`;
         const rec = await canRecord(noticeUrl, noticeText);
         if (!rec.ok) console.error(`[twilio-voice] OUTBOUND NOT RECORDED — ${rec.reason}`);
         /* DUAL. Identical start trigger to record-from-answer, so the notice
