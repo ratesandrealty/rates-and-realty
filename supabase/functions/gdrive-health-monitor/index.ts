@@ -270,22 +270,54 @@ async function checkDriveWriteCredential(): Promise<CredCheck> {
    * per CLAUDE.md. If the fixture has no folder yet the probe reports that
    * rather than silently skipping, because a skipped write test is the same as
    * no write test. Cleaned up immediately whether or not the write succeeds. */
-  const { data: fx } = await sb.from("contacts")
-    .select("id, gdrive_folder_id").eq("first_name", "ZZ-TEST").maybeSingle();
-  if (!fx?.gdrive_folder_id) {
+  /* ── THE TARGET IS A PINNED PROBE FOLDER, NOT THE FIXTURE CONTACT ──────────
+   *
+   * This used to read ZZ-TEST's gdrive_folder_id, and that coupling broke the
+   * check TWICE: once when the fixture was deleted (2026-08-04) and again when
+   * trg_borrower_foldering_ins gained
+   * WHEN (NEW.lead_source IS DISTINCT FROM 'automated-test'), after which a
+   * recreated fixture never gets a folder at all. The probe was dark from
+   * 2026-08-06 17:07Z until this change.
+   *
+   * The folder is now permanent and pinned in app_config. It was created by the
+   * SAME path that creates borrower folders — the n8n "Borrower Stage
+   * Foldering" workflow, whose Drive nodes use googleDriveOAuth2Api, i.e.
+   * rene@'s user OAuth through n8n's OAuth client.
+   *
+   * That provenance is the whole point and is easy to destroy by "simplifying"
+   * this later: a folder created by the SERVICE ACCOUNT, or by our own OAuth
+   * client, would still be writable by a token holding only drive.file — so the
+   * probe would go green in exactly the scope-downgrade scenario it exists to
+   * catch. If this folder ever has to be recreated, recreate it through the
+   * same workflow. */
+  const { data: cfg } = await sb.from("app_config")
+    .select("value").eq("key", "gdrive_probe_folder_id").maybeSingle();
+  const probeFolderId = String((cfg as any)?.value || "").trim();
+  if (!probeFolderId) {
     return { ok: false, stage: "write_test_unavailable", scopes, user,
-             reason: "ZZ-TEST fixture contact has no gdrive_folder_id — cannot prove a write into a borrower folder. Recreate the fixture (see CLAUDE.md)." };
+             reason: "app_config.gdrive_probe_folder_id is unset — there is no probe folder to write into. See CLAUDE.md → Dedicated test locations." };
   }
   try {
     const cr = await fetch("https://www.googleapis.com/drive/v3/files?fields=id", {
       method: "POST",
       headers: { Authorization: `Bearer ${access}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ name: `_probe_${Date.now()}.txt`, mimeType: "text/plain", parents: [fx.gdrive_folder_id] }),
+      body: JSON.stringify({ name: `_probe_${Date.now()}.txt`, mimeType: "text/plain", parents: [probeFolderId] }),
     });
     const cd = await cr.json();
     if (!cr.ok || !cd.id) {
+      const msg = `${cd?.error?.message || cr.status}`;
+      /* A MISSING PROBE FOLDER IS A CONFIG FAULT, NOT A CREDENTIAL FAULT.
+       * 404 means the pinned id points at nothing — deleted, trashed, or
+       * mistyped. The credential was never exercised, so reporting "WRITE
+       * credential is broken" would be the same cry-wolf that made the
+       * 2026-08-04 alert wrong. Anything else (403, quota, 5xx) DID exercise the
+       * credential and stays a real failure. */
+      if (cr.status === 404) {
+        return { ok: false, stage: "write_test_unavailable", scopes, user,
+                 reason: `probe folder ${probeFolderId} not found (${msg}) — app_config.gdrive_probe_folder_id points at nothing. The folder is named "RR HEALTH PROBE - DO NOT DELETE" and must not be deleted.`.slice(0, 300) };
+      }
       return { ok: false, stage: "borrower_folder_write", scopes, user,
-               reason: `cannot create in a borrower folder: ${cd?.error?.message || cr.status}`.slice(0, 220) };
+               reason: `cannot create in the probe folder: ${msg}`.slice(0, 220) };
     }
     await fetch(`https://www.googleapis.com/drive/v3/files/${cd.id}`, {
       method: "PATCH",
@@ -326,9 +358,12 @@ function buildProbeUnrunnableAlert(c: CredCheck): { key: string; message: string
       "  • the write path is UNVERIFIED, not known-broken",
       "  • borrower uploads may be working normally; nothing here says otherwise",
       "",
-      "FIX: recreate the ZZ-TEST fixture contact so the probe has a borrower",
-      "folder to write into (see CLAUDE.md → Dedicated test locations).",
-      "Inserting the contact fires the Drive-foldering trigger, which creates it.",
+      "FIX: the probe writes into a permanent Drive folder named",
+      '"RR HEALTH PROBE - DO NOT DELETE", pinned in',
+      "app_config.gdrive_probe_folder_id. Either that key is unset or the folder",
+      "was deleted. If it must be recreated, create it through the n8n",
+      '"Borrower Stage Foldering" workflow — NOT by hand and NOT with the',
+      "service account, or the probe stops proving anything (see CLAUDE.md).",
     ].join("\n"),
   };
 }
