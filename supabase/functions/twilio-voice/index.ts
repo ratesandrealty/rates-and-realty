@@ -354,7 +354,7 @@ async function resolveContactByPhone(
  * ran anyway. The endpoint returns a fixed disclosure sentence — no caller data,
  * no side effects, nothing an attacker gains by reading it aloud to themselves.
  * Dropping the signature removes a failure mode and protects nothing less. */
-async function canRecord(noticeUrl: string, text: string): Promise<{ ok: boolean; reason: string }> {
+async function canRecord(noticeUrl: string, text: string, expectName?: string): Promise<{ ok: boolean; reason: string }> {
   if (!text) return { ok: false, reason: 'notice text is empty' };
   try {
     const ctl = new AbortController();
@@ -364,6 +364,18 @@ async function canRecord(noticeUrl: string, text: string): Promise<{ ok: boolean
     if (!res.ok) return { ok: false, reason: `notice endpoint HTTP ${res.status}` };
     const xml = await res.text();
     if (!xml.includes('<Say')) return { ok: false, reason: 'notice endpoint returned no <Say>' };
+    /* The preflight already has the whisper body in hand, so checking WHICH
+       wording came back is free. Without this, a broken variant tag is
+       invisible: the borrower hears the company name, the call records
+       normally, and nothing anywhere reports that the personalisation stopped
+       working.
+       LOGGED, NOT FAIL-CLOSED. The fail-closed rule exists to stop us capturing
+       audio nobody was told about; a correct disclosure carrying the wrong NAME
+       is still a valid disclosure, and refusing to record over it would trade a
+       real protection for a cosmetic one. */
+    if (expectName && !xml.includes(expectName)) {
+      console.error(`[twilio-voice] NOTICE VARIANT MISMATCH — expected "${expectName}" in the whisper, got the default. Recording proceeds with the company wording.`);
+    }
     return { ok: true, reason: 'ok' };
   } catch (e) {
     return { ok: false, reason: `notice endpoint unreachable: ${String((e as Error)?.message || e)}` };
@@ -755,7 +767,7 @@ Deno.serve(async (req) => {
         const noticeText = await noticeConfig(callerName);
         const variantTag = callerName ? await noticeVariantTag(callerUid) : '';
         const noticeUrl = `${recordingCb}?action=record_notice${variantTag ? `&v=${variantTag}` : ''}`;
-        const rec = await canRecord(noticeUrl, noticeText);
+        const rec = await canRecord(noticeUrl, noticeText, callerName || undefined);
         if (!rec.ok) console.error(`[twilio-voice] OUTBOUND NOT RECORDED — ${rec.reason}`);
         /* DUAL. Identical start trigger to record-from-answer, so the notice
          * ordering below is unchanged. Here the parent leg is the staff
