@@ -17,6 +17,33 @@
 //    va    -> processing@ ONLY   (a VA requesting rene@ is REJECTED 403)
 //    else  -> 403
 // rene@ holds 160k+ personal messages; a VA reaching it would be a serious breach.
+//
+// ⚠️ THAT GATE IS ABOUT *WHICH MAILBOX*, NOT *WHAT YOU MAY DO IN IT*.
+// resolveMailbox runs once, per request, and answers exactly one question. Every
+// action below inherits it and NOTHING ELSE — there is no per-action role check
+// anywhere in this file. That is deliberate and currently correct, because
+// nothing here can destroy mail:
+//    modify        builds its label list from two booleans (mark_read, archive).
+//                  `add` is ALWAYS empty and client-supplied labels are never
+//                  read, so it cannot be coerced into adding TRASH.
+//    untag/unfile  clears a CRM link (email_thread_tags row; email_log.contact_id
+//                  = null). Deletes no mail and no rows. Re-tagging restores it.
+//    delete_draft  the only DELETE verb in this file. Gmail drafts are not
+//                  trashed so it is permanent, but it destroys unsent text only.
+//    TRASH         exists solely as a read-only FOLDER VIEW. There is no trash
+//                  action, no empty-trash, no messages.delete, no threads.delete.
+//
+// SO: IF YOU ADD A TRASH OR DELETE ACTION, IT NEEDS ITS OWN ADMIN GATE, HERE, IN
+// THE SAME COMMIT. Adding `trash` next to `modify` and stopping there gives every
+// va the power to remove borrower correspondence, because the mailbox gate above
+// already said yes and no second question is ever asked. The gate must REFUSE
+// WITH A REASON — `return err('Moving mail to Trash is admins only', 403)` — not
+// hide a button and not no-op. A silent no-op is a bug report; "admins only" is
+// information. Rene's rule for the va role is: full mailbox function, EXCEPT
+// deleting.
+// (Related, and already closed: email_log's DELETE/TRUNCATE grants were revoked
+// from `authenticated` on 2026-08-09. That was the only irreversible path, and
+// it was outside this function entirely.)
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // Actions: list_threads, get_thread, send, modify, tag, untag, label_counts,
