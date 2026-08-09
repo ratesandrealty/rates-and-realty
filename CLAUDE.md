@@ -148,6 +148,132 @@ return was found", one 401, one 5 s timeout). Nothing watches this table. A
 periodic sweep of it is the cheapest cron-failure alarm available, and does not
 exist yet.
 
+## Health alerts are a DIGEST keyed on the set of red checks
+
+`gdrive-health-monitor` sends **one message listing every currently-red check**,
+and the alert key is the **sorted set of red check names** —
+`digest:drive_write+signature_records`. Not the first failure, not a
+content-derived string.
+
+The property that matters: **a new failure always breaks the cooldown**, because
+a check that was not red before changes the set, which changes the key. A
+12-hour cooldown on the old set cannot suppress it.
+
+### What this replaced, and the 32 hours it cost
+
+The old chain was `if / else if` down a priority list: it picked the single
+highest red check, and then —
+
+```js
+const can = await shouldAlert(alert.key);
+if (!can) { result.alert_skipped_reason = "cooldown"; return ok({ ... }); }
+```
+
+— **returned**. It did not fall through. So a cooldown on the top red check
+silenced the *entire channel* for 12 hours, even when a lower check was red and
+had never alerted once. Selection and suppression compounded.
+
+That is not hypothetical. `storage_orphans` was red continuously from
+2026-08-06 17:09, and between **2026-08-07 21:07 and 2026-08-09 05:17 — 32
+hours, ~32 hourly runs — it was completely silent**, held under
+`drive_write_probe_unrunnable`. It escaped exactly once, at 08-07 21:07, and
+only by accident: the orphan count spread to a second bucket, so the key changed
+from `storage_orphans:esign` to `storage_orphans:borrower-documents,esign`, and
+a key with no cooldown history sends. The digest makes that accident the rule.
+
+The same thing then happened to the signature-record check on its first run —
+the `voe-forms` orphan masked it immediately, and it surfaced only because
+somebody read the JSON rather than waiting for a text.
+
+### The trade-off, stated on purpose
+
+Keys are the check's **identity only**, never its content. This replaced three
+separate accidents — `storage_orphans:<buckets>`, `static_keys:<names>`,
+`signature_record_missing:<count>` — each of which baked its payload into the
+key, so an orphan count moving 1→2 minted a new key and re-alerted while a
+steady 1 stayed quiet for 12 hours.
+
+**So a change WITHIN an already-reported check no longer re-alerts during the
+cooldown window.** Orphans going 1→2, a second API key failing: silent until the
+cooldown expires. That is deliberate. "Something new broke" is worth
+interrupting someone for; "the thing you were already told about got slightly
+worse" is not, and the alternative is the noise that trains people to stop
+reading the messages.
+
+### could-not-run vs failed survives into the digest
+
+Each red check renders as `— FAILED` or `— COULD NOT RUN`, with different
+markers, and the count line says how many could not run:
+
+```
+🔴 3 checks red (1 could NOT run)
+  ⚠️ Drive write credential — COULD NOT RUN
+  🔴 Signed record PDFs — FAILED
+```
+
+**This split is load-bearing, not cosmetic. It is how the Drive probe was found
+at all.** Every `drive_write_credential` alert this monitor ever sent — one, on
+2026-08-04 — actually meant `write_test_unavailable`: the fixture had been
+deleted 29 minutes earlier and the credential was fine. An alert that says
+"broken" when it means "untested" is how a real one stops being believed.
+Flattening the two back into one line inside a digest would undo the reason the
+digest exists.
+
+### `cooldownFor` keys on the FACT, not the string
+
+It used to be `alertKey === "drive_write_credential" ? 3 : 12`. Under digest
+keys that string can never match again, so **the 3-hour urgent cadence would
+have silently degraded to 12 hours** — a real regression that no test would
+fail. It now takes a boolean: is the Drive write credential *genuinely broken*,
+as opposed to merely unrunnable. An unrunnable probe stays at 12; nothing is
+known to be failing, and a 3-hourly "could not check" is exactly the noise
+described above.
+
+### `monitor_runs` — the monitor's own history
+
+`system_state:monitor:gdrive_health` is **overwritten every run** and holds only
+the latest. That is why the 32-hour masking window above had to be *inferred*
+from spacing between alert sends of different keys, rather than queried.
+
+`public.monitor_runs` appends one row per run: `ran_at`, `status`, `red_keys[]`,
+`unrunnable_keys[]`, `alert_key`, `alert_sent`, `skipped_reason`. Green runs are
+recorded too — "nothing was red at 04:00" is what bounds when something started.
+
+Finding masking events is now a query (there is a partial index for it):
+
+```sql
+select ran_at, red_keys, alert_key, alert_sent, skipped_reason
+from monitor_runs
+where array_length(red_keys, 1) > 1
+order by ran_at desc;
+```
+
+**30-day retention is trimmed by the monitor itself**, inside `recordRun()`, not
+by a separate cron job. Deliberately: pg_cron job 2 `weekly-crm-backup` sat
+disabled while everything downstream looked fine, and a retention job that gets
+disabled leaves a table growing forever with nobody watching. The cleanup cannot
+outlive the thing that maintains it. `recordRun` also never throws — a monitor
+that dies because it could not write its own logbook is worse than one with a
+gap in the logbook.
+
+### NEVER add a check that can pass when it could not run
+
+A check has three outcomes, not two: passed, failed, **could not run**. The
+third must feed `allOk` as false — so `last_ok` cannot advance — and must be
+reported in its own words. Two worked examples in this repo:
+
+- **Drive write probe** (`checkDriveWriteCredential`) — returns
+  `stage: "write_test_unavailable"` with `ok: false` when the probe folder is
+  missing, and a 404 on the parent is classified as unavailable rather than a
+  credential failure, because the credential was never exercised.
+- **Signature-record sweep** (`checkSignatureRecords`) — returns
+  `{ ok: false, ran: false, reason }` when its own query fails, and says
+  "UNVERIFIED, not broken and not healthy".
+
+The failure this prevents is the one that has already happened twice here: a
+check that silently returns healthy because it never executed, and a green
+dashboard over a broken pipeline.
+
 ## Call transcription — `call-intelligence`
 
 Twilio Conversational Intelligence (classic). Transcript + Conversation Summary
