@@ -27,7 +27,7 @@
  *   node tools/check-js.mjs admin/js/inbox.js --min 150000 --require "})();" --require "function renderThread"
  *   node tools/check-js.mjs --baseline            check every known file against its committed size
  */
-import { readFileSync, existsSync, statSync, writeFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, writeFileSync, unlinkSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -205,13 +205,64 @@ function baselineDrift(path) {
 }
 
 const argv = process.argv.slice(2);
-let failures = [], warnings = [];
+let failures = [], warnings = [], sweptPages = 0;
+
+/* ── EVERY HTML PAGE WITH INLINE SCRIPT, NOT JUST THE LISTED ONES ───────────
+ *
+ * GUARDED is hand-curated, and the curation is the hole. When admin/settings.html
+ * shipped with `changeDisplayName('' + u.user_id + '', ...)` — escaped quotes
+ * that had lost their backslashes — the page's ONE inline script failed to
+ * parse, so nothing ran and the content area rendered empty behind an intact
+ * static shell. check-js reported "OK — 26 guarded files" and was telling the
+ * truth: settings.html was not one of them.
+ *
+ * It had all the machinery already. HTML inline-block parsing was added after
+ * people.html shipped broken; what was missing was settings.html's NAME in a
+ * list somebody has to remember to update. An audit at the time of this change
+ * found 37 of 44 pages with >=4KB of inline script were unlisted, including
+ * sign.html, auth/index.html and the public portal.
+ *
+ * So discovery replaces memory. Every .html in the repo is parse-checked.
+ * Pages already in GUARDED keep their stronger checks (byte floor + tail
+ * anchors, which need measuring per file and cannot be inferred); everything
+ * else gets the parse check, which is the one that would have caught this and
+ * costs nothing to apply universally.
+ *
+ * Deliberately NOT extended to scope analysis — a name that exists but is out
+ * of scope still parses fine. That needs a real scope analyser (ESLint
+ * no-undef), and is separate work. */
+const SWEEP_SKIP = /(^|\/)(node_modules|\.git|\.claude|\.wrangler|\.db-observe|snapshots)(\/|$)/;
+function discoverHtml(dir, out = []) {
+  let entries;
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const e of entries) {
+    const p = `${dir}/${e.name}`.replace(/^\.\//, '');
+    if (SWEEP_SKIP.test(p)) continue;
+    if (e.isDirectory()) discoverHtml(p, out);
+    else if (/\.html?$/i.test(e.name)) out.push(p);
+  }
+  return out;
+}
 
 if (argv.includes('--baseline') || argv.length === 0) {
   for (const [p, o] of Object.entries(GUARDED)) {
     if (!existsSync(p)) continue;
     failures.push(...check(p, o));
     const w = baselineDrift(p); if (w) warnings.push(w);
+  }
+  /* Parse-only sweep over every unlisted HTML page. No floor, no anchors —
+   * those are per-file measurements. A page with no inline script at all is
+   * skipped rather than reported, since "no blocks found" is only meaningful
+   * for a page that is supposed to have them. */
+  for (const p of discoverHtml('.')) {
+    if (GUARDED[p]) continue;
+    let src = '';
+    try { src = readFileSync(p, 'utf8'); } catch { continue; }
+    const hasInline = [...src.matchAll(/<script([^>]*)>([\s\S]*?)<\/script\s*>/gi)]
+      .some(([, attrs, code]) => !/\bsrc\s*=/i.test(attrs || '') && code.trim().length > 0);
+    if (!hasInline) continue;
+    sweptPages++;
+    failures.push(...check(p, { min: 0, require: [] }));
   }
 } else {
   const path = argv[0];
@@ -231,4 +282,4 @@ if (failures.length) {
   for (const f of failures) console.error('FAIL  ' + f);
   process.exit(1);
 }
-console.log(`OK — ${argv.includes('--baseline') || argv.length === 0 ? Object.keys(GUARDED).filter(existsSync).length + ' guarded files' : argv[0]}: non-empty, above floor, parses, anchors present.`);
+console.log(`OK — ${argv.includes('--baseline') || argv.length === 0 ? Object.keys(GUARDED).filter(existsSync).length + ' guarded files + ' + sweptPages + ' swept HTML page(s)' : argv[0]}: non-empty, above floor, parses, anchors present.`);
