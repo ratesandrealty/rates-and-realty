@@ -165,6 +165,55 @@ function completionEmailPdfHtml(env: any, signers: any[], finalUrl: string|null)
   </div>`;
 }
 
+/* ── THE COMPLETION RECORD PDF ──────────────────────────────────────────────
+ *
+ * Generated HERE, at completion, so the artifact is contemporaneous with the
+ * signature it attests to. Before 2026-08-09 it was only ever written as a side
+ * effect of a human clicking Download, which is why eight completed requests
+ * have no record PDF and the four that do were created 14 minutes to 5 days
+ * after completion.
+ *
+ * THIS FUNCTION CANNOT THROW, AND MUST NOT.
+ *
+ * finalizeAndNotify's job is completion. A signature that completed is more
+ * important than a PDF of it: if this fails, the completion still stands and
+ * the emails still go, because the signer already signed and the record of that
+ * lives in signature_events, signature_signers and document_hash regardless.
+ * Blocking or rolling back a completed signature over a failed PDF render would
+ * be the worse outcome by a wide margin.
+ *
+ * But it must not fail QUIETLY either — that is how the eight got here. So
+ * every outcome writes a signature_events row, which is the envelope's own
+ * audit trail, is rendered into the record PDF itself, and is the place someone
+ * looking at this envelope will actually be. Plus console.error for the logs.
+ *
+ * Event types (both new):
+ *   record_generated — detail { path, reused_existing }
+ *   record_failed    — detail { error }
+ * `reused_existing` matters because esign-docs never overwrites: a true there
+ * means the object was already present and was deliberately left alone. */
+async function buildRecordSafely(db: any, env: any): Promise<{ ok: boolean; path?: string; existed?: boolean; error?: string }> {
+  try {
+    const r = await callEsignDocs('build_record', { envelope_id: env.id });
+    if (r && r.path && !r.error) {
+      await logEvent(db, env.id, null, 'record_generated', null, 'system',
+        { path: r.path, reused_existing: !!r.existed });
+      return { ok: true, path: r.path, existed: !!r.existed };
+    }
+    const why = (r && r.error) ? String(r.error) : 'esign-docs build_record returned no path';
+    console.error(`[esign] record PDF FAILED envelope=${env.id}: ${why}`);
+    await logEvent(db, env.id, null, 'record_failed', null, 'system', { error: why.slice(0, 400) });
+    return { ok: false, error: why };
+  } catch (e) {
+    /* Even the failure logging is wrapped: a completion must survive a dead
+     * signature_events insert too. */
+    const why = String(e).slice(0, 400);
+    console.error(`[esign] record PDF THREW envelope=${env.id}: ${why}`);
+    try { await logEvent(db, env.id, null, 'record_failed', null, 'system', { error: why }); } catch (_) {}
+    return { ok: false, error: why };
+  }
+}
+
 async function finalizeAndNotify(db: any, env: any, force = false) {
   if (!force) {
     const { data: already } = await db.from('signature_events').select('id').eq('request_id', env.id).eq('event_type', 'completed_emailed').limit(1);
@@ -172,6 +221,10 @@ async function finalizeAndNotify(db: any, env: any, force = false) {
   }
 
   if (env.document_type === 'pdf') {
+    /* Record first, emails after. buildRecordSafely never throws, so putting it
+       first cannot stop the email — and it means the record exists by the time
+       anyone reads the notification. */
+    const rec = await buildRecordSafely(db, env);
     const fin = await callEsignDocs('build_final', { envelope_id: env.id });
     const finalUrl = (fin && (fin.combined_url || fin.url)) ? (fin.combined_url || fin.url) : (env.combined_pdf_url || env.final_pdf_url || null);
     const { data: signers } = await db.from('signature_signers').select('*').eq('request_id', env.id).order('routing_order');
@@ -182,7 +235,7 @@ async function finalizeAndNotify(db: any, env: any, force = false) {
     }
     await sendRaw({ to_email: OWNER_EMAIL, cc: PROCESSING_EMAIL, subject: `Completed & signed: ${env.document_title}`, html, contact_id: env.contact_id });
     await logEvent(db, env.id, null, 'completed_emailed', null, 'system', { recipients: (signers || []).length, processing: PROCESSING_EMAIL, pdf: true, final_pdf: !!finalUrl });
-    return { emailed: true, pdf: true, final_pdf: !!finalUrl, recipients: (signers || []).length + 1 };
+    return { emailed: true, pdf: true, final_pdf: !!finalUrl, recipients: (signers || []).length + 1, record: rec };
   }
 
   const { data: signers } = await db.from('signature_signers').select('*').eq('request_id', env.id).order('routing_order');
@@ -190,6 +243,11 @@ async function finalizeAndNotify(db: any, env: any, force = false) {
   const signedDoc = renderDocument(env.document_html, signers || []);
   const hash = await sha256Hex(signedDoc);
   await db.from('signature_requests').update({ document_hash: hash }).eq('id', env.id);
+  /* AFTER document_hash is stored: the record PDF prints that hash as its
+     integrity line, so building it first would stamp a hash computed inside
+     esign-docs instead of the one persisted here. Same value today, but the
+     ordering is the thing that keeps it true. */
+  const rec = await buildRecordSafely(db, { ...env, document_hash: hash });
   const certificate = buildCertificate(env, signers || [], events || [], hash);
   const html = completionEmailHtml(env, signers || [], signedDoc, certificate);
   for (const s of (signers || [])) {
@@ -198,7 +256,7 @@ async function finalizeAndNotify(db: any, env: any, force = false) {
   }
   await sendRaw({ to_email: OWNER_EMAIL, cc: PROCESSING_EMAIL, subject: `Completed & signed: ${env.document_title}`, html, contact_id: env.contact_id });
   await logEvent(db, env.id, null, 'completed_emailed', null, 'system', { recipients: (signers || []).length, processing: PROCESSING_EMAIL });
-  return { emailed: true, recipients: (signers || []).length + 1 };
+  return { emailed: true, recipients: (signers || []).length + 1, record: rec };
 }
 
 function signerBlock(tpl: any, signer: { id: string; name: string }) {

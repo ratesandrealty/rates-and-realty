@@ -689,12 +689,48 @@ async function download(req: Request, body: any) {
 
   const out = await pdf.save();
   const path = `signed/${env.id}_record.pdf`;
-  const up = await db.storage.from(BUCKET).upload(path, out, { contentType: 'application/pdf', upsert: true });
-  if (up.error) return json({ error: 'could not save signed PDF: ' + up.error.message }, 500);
+
+  /* ── NEVER OVERWRITE AN EXISTING RECORD ──────────────────────────────────
+   *
+   * This uploaded with upsert:true until 2026-08-09. That meant every later
+   * click of Download silently replaced the contemporaneous record with a
+   * fresh reconstruction — of a document whose entire purpose is to attest to
+   * what was signed and when. The four surviving June/July originals would
+   * have been overwritten by the first re-download.
+   *
+   * upsert:false and the duplicate error is READ, not just checked for
+   * absence: doing it this way is atomic. A list-then-upload would have a
+   * window between the two where a concurrent completion could slip in, which
+   * is the same class of race as checking a file exists before writing it.
+   *
+   * If the object is already there, it IS the record. Serve that one. */
+  const up = await db.storage.from(BUCKET).upload(path, out, { contentType: 'application/pdf', upsert: false });
+  const isDuplicate = !!up.error && /exist|duplicate|409/i.test(String((up.error as any)?.message || ''));
+  if (up.error && !isDuplicate) {
+    console.error(`[esign-docs] record upload FAILED ${env.id}: ${(up.error as any)?.message}`);
+    return json({ error: 'could not save signed PDF: ' + (up.error as any).message, path }, 500);
+  }
+  const existed = isDuplicate;
+
+  /* The pointer is written HERE, beside the upload, rather than left to the
+   * caller. signature_requests.final_pdf_path joined the reconcile REGISTRY on
+   * 2026-08-09, so an object that lands with no row referencing it is an
+   * orphan from the instant it exists — the exact state the backfill just
+   * finished clearing. Only filled when null: never repoint a record that
+   * already has one. */
+  if (!env.final_pdf_path) {
+    const { error: pErr } = await db.from('signature_requests')
+      .update({ final_pdf_path: path }).eq('id', env.id).is('final_pdf_path', null);
+    if (pErr) console.error(`[esign-docs] final_pdf_path write FAILED ${env.id}: ${pErr.message}`);
+  }
+
+  /* Internal callers (finalizeAndNotify) want the path, not a browser download. */
+  if (body.return_path) return json({ path, existed, wrote: !existed });
+
   const signed = await db.storage.from(BUCKET).createSignedUrl(path, 60 * 60);
   if (signed.error) return json({ error: signed.error.message }, 500);
   const fname = (env.document_title || 'document').replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '') + '_record.pdf';
-  return json({ url: signed.data.signedUrl, filename: fname });
+  return json({ url: signed.data.signedUrl, filename: fname, path, existed });
 }
 
 Deno.serve(async (req: Request) => {
@@ -718,7 +754,12 @@ Deno.serve(async (req: Request) => {
       case 'build_final': return await buildFinal(req, body);
       case 'final_url': return await finalUrl(req, body);
       case 'download': return await download(req, body);
-      default: return json({ error: 'unknown action', actions: ['upload','doc_url','list_documents','library_list','library_save','library_remove','clone_document','delete_document','save_fields','get_fields','resolve_merge','stamp_preview','build_final','final_url','download'] }, 400);
+      /* Same builder as download, but returns the storage path instead of a
+       * browser URL. Called by esign's finalizeAndNotify so the record exists
+       * at completion rather than only when a human happens to click Download
+       * — which is why eight completed requests have no record PDF at all. */
+      case 'build_record': return await download(req, { ...body, return_path: true });
+      default: return json({ error: 'unknown action', actions: ['upload','doc_url','list_documents','library_list','library_save','library_remove','clone_document','delete_document','save_fields','get_fields','resolve_merge','stamp_preview','build_final','final_url','download','build_record'] }, 400);
     }
   } catch (e: any) {
     return json({ error: e?.message || 'error' }, 500);
