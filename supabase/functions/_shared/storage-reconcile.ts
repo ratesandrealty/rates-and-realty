@@ -41,6 +41,25 @@ export const REGISTRY: RegistryEntry[] = [
   { table: "lender_guidelines", column: "storage_path", bucket: "lender-guidelines" },
   { table: "esign_documents", column: "storage_path", bucket: "esign",
     note: "executed signature documents — legal artifacts" },
+  /* Added 2026-08-09. These three were the reason six esign objects counted as
+   * orphans: the signed output of a request had NO column watching it, because
+   * the only registered esign column was esign_documents.storage_path, which
+   * points at documents/ — the unsigned source, not the signed result.
+   *
+   * That is a worse failure than an orphan reads as. Four completed signature
+   * requests had their signed PDF sitting in the bucket with nothing in the
+   * database pointing at it: every final_pdf_path, combined_pdf_path and
+   * final_pdf_url on all 16 requests was null. Deleting them as "litter" would
+   * have destroyed the only copy of a borrower's executed signature and
+   * produced NO dangling reference afterwards, because no row referred to them.
+   * Undetectable loss, in the one store PITR does not cover.
+   *
+   * Verified before registering: 4 non-null, 0 would dangle. */
+  { table: "signature_requests", column: "final_pdf_path", bucket: "esign",
+    note: "the signed PDF for a completed request — legal artifact" },
+  { table: "signature_requests", column: "combined_pdf_path", bucket: "esign",
+    note: "multi-document envelopes, merged" },
+  { table: "esign_documents", column: "final_pdf_path", bucket: "esign" },
   { table: "videos", column: "storage_path", bucket: "video-messages" },
 ];
 
