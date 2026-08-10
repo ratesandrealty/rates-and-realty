@@ -6,6 +6,26 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
+
+/* THE READ FILTER — "who are my contacts now", not "what happened".
+ *
+ * contact_merge soft-deletes the loser by setting merged_into_contact_id; the row
+ * is RETAINED and every merge is reversible, so the row must stay readable by id.
+ * What must not happen is a merged-away duplicate reappearing in a list, a count,
+ * an audience or a dialer queue.
+ *
+ * Use this for anything that ANSWERS A QUESTION ABOUT THE CURRENT ROSTER. Do NOT
+ * use it where the caller has already named the contacts it means — the bulk tag
+ * and bulk update actions below take an explicit contact_ids array the user
+ * selected, and silently dropping one because it was merged would make the UI lie
+ * about what it just did.
+ *
+ * Deliberately a helper rather than a filter inside contacts_secure: lead-detail
+ * loads a contact through contacts_secure BY ID, so filtering the view would make
+ * a merged contact unreachable by direct link. Disappearing from a list is
+ * correct; becoming unreachable is not. */
+const liveContacts = (cols: string, opts?: any) =>
+  sb.from("contacts").select(cols as any, opts as any).is("merged_into_contact_id", null);
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -148,7 +168,7 @@ Deno.serve(async (req) => {
       const offset = parseInt(body.offset) || 0;
 
       // Removed target_purchase_price (doesn't exist on contacts table)
-      let q = sb.from("contacts").select(`
+      let q = liveContacts(`
         id, first_name, last_name, email, phone, secondary_phone,
         city, state, lead_temperature, score_tier, total_score, lead_score,
         loan_type, pipeline_status, lead_status, source, tags,
@@ -171,18 +191,18 @@ Deno.serve(async (req) => {
 
     if (action === "filter_options") {
       const queries = await Promise.all([
-        sb.from("contacts").select("pipeline_status").not("pipeline_status", "is", null),
-        sb.from("contacts").select("loan_type").not("loan_type", "is", null),
-        sb.from("contacts").select("source").not("source", "is", null),
-        sb.from("contacts").select("city").not("city", "is", null),
-        sb.from("contacts").select("state").not("state", "is", null),
-        sb.from("contacts").select("tags").not("tags", "is", null),
-        sb.from("contacts").select("score_tier").not("score_tier", "is", null),
-        sb.from("contacts").select("lead_temperature").not("lead_temperature", "is", null),
-        sb.from("contacts").select("timeline").not("timeline", "is", null),
-        sb.from("contacts").select("credit_score_range").not("credit_score_range", "is", null),
-        sb.from("contacts").select("contact_type").not("contact_type", "is", null),
-        sb.from("contacts").select("assigned_to").not("assigned_to", "is", null),
+        liveContacts("pipeline_status").not("pipeline_status", "is", null),
+        liveContacts("loan_type").not("loan_type", "is", null),
+        liveContacts("source").not("source", "is", null),
+        liveContacts("city").not("city", "is", null),
+        liveContacts("state").not("state", "is", null),
+        liveContacts("tags").not("tags", "is", null),
+        liveContacts("score_tier").not("score_tier", "is", null),
+        liveContacts("lead_temperature").not("lead_temperature", "is", null),
+        liveContacts("timeline").not("timeline", "is", null),
+        liveContacts("credit_score_range").not("credit_score_range", "is", null),
+        liveContacts("contact_type").not("contact_type", "is", null),
+        liveContacts("assigned_to").not("assigned_to", "is", null),
       ]);
       const dedupe = (rows: any[], key: string) => Array.from(new Set((rows || []).map(r => r[key]).filter(Boolean))).sort();
       const flattenTags = (rows: any[]) => Array.from(new Set((rows || []).flatMap(r => r.tags || []).filter(Boolean))).sort();
@@ -216,7 +236,7 @@ Deno.serve(async (req) => {
         { count: active },
         { count: needsFollowUp }, { count: stalled },
       ] = await Promise.all([
-        sb.from("contacts").select("id", { count: "exact", head: true }),
+        liveContacts("id", { count: "exact", head: true }),
         /* Derived from lead_score, NOT the stored lead_temperature column.
          *
          * The pill and the Hot TAB used to be different quantities wearing the
@@ -228,11 +248,11 @@ Deno.serve(async (req) => {
          * These thresholds are the same 75/50 as admin/js/lead-tiers.js. They
          * cannot literally share the constant across the Deno/browser boundary,
          * so if you change one, change the other. */
-        sb.from("contacts").select("id", { count: "exact", head: true }).gte("lead_score", 75),
-        sb.from("contacts").select("id", { count: "exact", head: true }).gte("lead_score", 50).lt("lead_score", 75),
-        sb.from("contacts").select("id", { count: "exact", head: true }).or("lead_score.lt.50,lead_score.is.null"),
-        sb.from("contacts").select("id", { count: "exact", head: true }).gte("created_at", dayAgo),
-        sb.from("contacts").select("id", { count: "exact", head: true }).gte("created_at", weekAgo),
+        liveContacts("id", { count: "exact", head: true }).gte("lead_score", 75),
+        liveContacts("id", { count: "exact", head: true }).gte("lead_score", 50).lt("lead_score", 75),
+        liveContacts("id", { count: "exact", head: true }).or("lead_score.lt.50,lead_score.is.null"),
+        liveContacts("id", { count: "exact", head: true }).gte("created_at", dayAgo),
+        liveContacts("id", { count: "exact", head: true }).gte("created_at", weekAgo),
         /* "Active clients" = a live loan. Was ["Pre-Approved","Processing",
          * "Under Contract","Submitted","Approved"]: 'Submitted' and 'Approved'
          * are not pipeline stages and never have been — fossils of an older
@@ -243,9 +263,9 @@ Deno.serve(async (req) => {
          * time anyone reached Clear to Close. One contact sat there in June.
          * Follow Up is deliberately out: it is a lead being nurtured, not a
          * client with a loan in progress. */
-        sb.from("contacts").select("id", { count: "exact", head: true }).in("pipeline_status", ["Pre-Approved", "Processing", "Under Contract", "Clear to Close"]),
-        sb.from("contacts").select("id", { count: "exact", head: true }).or(`last_contact_date.is.null,last_contact_date.lt.${sevenDaysAgo}`).not("pipeline_status", "in", '("Closed","Lost")'),
-        sb.from("contacts").select("id", { count: "exact", head: true }).or(`last_contact_date.is.null,last_contact_date.lt.${fourteenDaysAgo}`).not("pipeline_status", "in", '("Closed","Lost")'),
+        liveContacts("id", { count: "exact", head: true }).in("pipeline_status", ["Pre-Approved", "Processing", "Under Contract", "Clear to Close"]),
+        liveContacts("id", { count: "exact", head: true }).or(`last_contact_date.is.null,last_contact_date.lt.${sevenDaysAgo}`).not("pipeline_status", "in", '("Closed","Lost")'),
+        liveContacts("id", { count: "exact", head: true }).or(`last_contact_date.is.null,last_contact_date.lt.${fourteenDaysAgo}`).not("pipeline_status", "in", '("Closed","Lost")'),
       ]);
       return ok({
         success: true,
