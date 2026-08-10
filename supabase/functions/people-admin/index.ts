@@ -2,6 +2,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -95,6 +96,27 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   const ok = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, "Content-Type": "application/json" } });
   const err = (m: string, s = 400) => new Response(JSON.stringify({ error: m }), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
+
+  /* GUARD — BEFORE req.json(), deliberately.
+   *
+   * This function held the service role and had NO authorization of any kind.
+   * Verified live before this change, with the PUBLIC anon key that is printed
+   * in every page's source: list_contacts returned 500 real contacts (of 1042)
+   * with names, emails and phones, and bulk_update reached payload validation
+   * rather than a 401. verify_jwt does not help — the anon key is a
+   * project-signed JWT, which is the whole point of the note in CLAUDE.md.
+   *
+   * Placed above req.json() per require-staff's own note 2: a check placed after
+   * body parsing is one that a later action can be written in front of by
+   * accident. STAFF_ROLES rather than admin-only, because the four actions the
+   * page actually sends are ordinary staff work. */
+  const staff = await requireStaff(req, { what: "The people admin API" });
+  if (!staff.ok) {
+    console.error("[people-admin] REJECTED:", staff.status, staff.msg);
+    return new Response(JSON.stringify({ success: false, error: staff.msg || "unauthorized" }),
+      { status: staff.status || 403, headers: { ...cors, "Content-Type": "application/json" } });
+  }
+  const actorUid = staff.userId || null;
 
   try {
     const body = await req.json();
@@ -281,8 +303,54 @@ Deno.serve(async (req) => {
     if (action === "bulk_update") {
       if (!Array.isArray(body.contact_ids) || !body.contact_ids.length) return err("contact_ids required");
       const allowed: any = {};
-      for (const k of ["lead_temperature", "pipeline_status", "lead_status", "score_tier", "assigned_to", "loan_type", "timeline", "sms_opt_in"]) {
+      /* sms_opt_in is NOT here, and must not be added back.
+       *
+       * Consent is not a bulk field. 1035 of 1046 contacts are already true, so
+       * the only thing a bulk set achieves is manufacturing consent for the
+       * remaining eleven — and while this endpoint was open, anyone with the
+       * public anon key could do exactly that, untraceably. contacts.sms_opt_in
+       * DEFAULTS TO TRUE, which is why every insert path in people.html and
+       * lead-detail.html sets it to false explicitly.
+       *
+       * If a legitimate caller ever needs to change it, that is a
+       * single-contact action carrying its own audit row and its own record of
+       * where the consent came from. Not a checkbox applied to a selection. */
+      for (const k of ["lead_temperature", "pipeline_status", "lead_status", "score_tier", "assigned_to", "loan_type", "timeline"]) {
         if (body[k] !== undefined) allowed[k] = body[k];
+      }
+
+      /* AUDIT BEFORE THE WRITE, and refuse the write if the audit fails.
+       *
+       * Same ordering as delete-contacts, for the same reason: a post-hoc audit
+       * that fails leaves a completed change with no trace, which is the gap
+       * that made the seven April–May deletions unanswerable. Ordered this way,
+       * "audited" and "completed" cannot come apart.
+       *
+       * This matters here specifically because a mass write through this
+       * endpoint was previously indistinguishable from ordinary work — 472
+       * contacts have updated_at inside the last week and nothing says who
+       * touched them. Records WHO (the verified session, not a claim in the
+       * body), WHAT is being set, and WHICH ids. */
+      const auditRow = {
+        table_name: "contacts",
+        row_id: null as string | null,
+        operation: "bulk_update",
+        old_data: null,
+        new_data: {
+          via: "people-admin",
+          actor_role: staff.role || null,
+          fields: allowed,
+          add_tags: Array.isArray(body.add_tags) ? body.add_tags : null,
+          remove_tags: Array.isArray(body.remove_tags) ? body.remove_tags : null,
+          contact_ids: body.contact_ids,
+          contact_count: body.contact_ids.length,
+        },
+        changed_by: actorUid,
+      };
+      const { error: auditErr } = await sb.from("audit_log").insert(auditRow);
+      if (auditErr) {
+        console.error("[people-admin] bulk_update REFUSED — audit write failed:", auditErr.message);
+        return err("Refusing to bulk update: the audit record could not be written (" + auditErr.message + ")", 500);
       }
       if (Array.isArray(body.add_tags) && body.add_tags.length) {
         const { data: existing } = await sb.from("contacts").select("id, tags").in("id", body.contact_ids);
