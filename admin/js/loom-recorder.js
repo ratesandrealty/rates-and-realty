@@ -536,6 +536,41 @@
     var inp = document.getElementById('lr-title-in');
     var title = (inp && inp.value.trim()) || defaultTitle(_rec.kind);
     if (_rec.blob.size > MAX_BYTES) { if (errEl) errEl.textContent = 'Recording is over 100 MB — record a shorter clip.'; return; }
+
+    /* ── DELIVERY: hosted link (default) or raw blob ────────────────────────
+     * Staff chat wants the recording ATTACHED to the message, not turned into
+     * a shareable /v/<slug> page — an internal clip does not need a public
+     * landing page, view scoring, or a slug that outlives the conversation.
+     * SMS and email want the opposite: a link, because neither can carry a
+     * 40 MB webm.
+     *
+     * That difference is about DELIVERY, not capture. Capture is the hard part
+     * — four modes, canvas compositing, the picture-in-picture bubble, mime
+     * negotiation, permission failures — and forking it to get a different
+     * destination is exactly the drift this consolidation exists to undo.
+     * So the caller passes onBlob and gets the File; everything above this
+     * line is shared. */
+    if (typeof _opts.onBlob === 'function') {
+      if (_rec.blob.size < MIN_BYTES) {
+        if (errEl) errEl.textContent = 'That recording captured no video (' + _rec.blob.size + ' bytes). '
+          + 'Nothing was saved — record again, and keep this tab visible while you do.';
+        return;
+      }
+      /* Capture everything off _rec BEFORE closing — closeOverlay() clears it,
+         and reading it afterwards hands the caller nulls. */
+      var bKind = _rec.kind, bIsAudio = !!_rec.isAudio;
+      var bfile = new File(
+        [_rec.blob],
+        (bIsAudio ? 'audio' : bKind === 'screen' ? 'screen' : 'video') + '-' + Date.now() + '.webm',
+        { type: bIsAudio ? 'audio/webm' : 'video/webm' }
+      );
+      var cb = _opts.onBlob;
+      closeOverlay();
+      try { cb(bfile, { kind: bKind, isAudio: bIsAudio, title: title }); }
+      catch (e) { console.error('[loom] onBlob threw', e); }
+      return;
+    }
+
     /* Lower bound too. Only the ceiling was checked, so a capture that produced
      * no frames uploaded happily, minted a slug and reported success — the
      * caller had a link to a video that plays nothing, which is worse than an

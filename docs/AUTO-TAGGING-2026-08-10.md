@@ -170,3 +170,101 @@ So the first change in any of this is not a matcher. It is:
    `contact_id`.
 
 **Not built. No schema changed, no function deployed, nothing backfilled.**
+
+---
+
+# CORRECTION — measured 2026-08-10, after the report above
+
+The report above named **rule 2 (vendor → most recent order)** as the active
+misfiling risk. **That was wrong, and the direction of the error matters.**
+Reconstructing which rule filed each of the 199 threads:
+
+| rule | threads filed |
+|---|---|
+| **rule 1** — a participant address is a contact's `email` / `secondary_email` | **194** |
+| **rule 2** — participant is a vendor → that vendor's most recent order | **0** |
+| neither (send path, or the one manual tag) | 5 |
+
+**Rule 2 has never filed a single thread.** It remains structurally unsound —
+see the NULL-ordering note below — but it has no blast radius today. Rule 1,
+which the report above called "exact, case-insensitive, safe", is the one doing
+all the work and the one that misfiles.
+
+## The misfile, and why the proposed tell would have missed it
+
+Thread `19f964d623e8a4c0`, three messages, subject **"Update Insurance 947 N
+Alamo St, Anaheim, CA 92801"**. Filed on **Alexander Duarte**.
+
+947 North Alamo Street is **Tania Monje Flores'** property — it is her
+`contacts.property_address`, verbatim. The mail is about her loan. Alexander
+Duarte is the real-estate agent, **CC'd**, at `alex@tdgsells.com`.
+
+Of every address on that thread, exactly one resolves to a contact: the agent's.
+The borrower's own address on the thread (`1rgnmd@msn.com`) is not on her contact
+record, so she cannot be matched. Rule 1 therefore filed the mail on the only
+contact it could find — which is precisely the wrong one.
+
+**Rule 1's flaw is not a bug in the lookup. It is the premise:** "this address
+appears in the thread" is not "this mail is about this person". Anyone in the
+CRM who is copied — an agent, a referral partner, a co-borrower, a past client —
+outranks a borrower whose address we do not hold.
+
+**The tell proposed for this investigation — a vendor appearing on more than one
+contact — would not have found this.** It is not a vendor match at all. The
+vendor on the thread (`judy@legacy1escrow.com`) has exactly one order, Tania's,
+so rule 2 would have filed it **correctly**. The safer-looking rule produced the
+error and the riskier-looking rule would have prevented it.
+
+There is one genuinely ambiguous vendor, for when rule 2 does start firing:
+`tle@fnf.com`, two title orders, two different borrowers. And the tie-break is
+worse than "most recent wins": the PostgREST call orders by `ordered_at desc`,
+Postgres sorts **NULLS FIRST** under DESC, and one of those two orders has a
+**null `ordered_at`** and status `needs_revision`. So the winner would be the
+order that was never placed.
+
+## What this changes about the recommendation
+
+1. **Narrowing rule 2 is no longer the first fix.** It files nothing. Fixing it
+   is cheap and still worth doing — require exactly one plausible order, and
+   sort `nulls last` — but it is not urgent.
+2. **Rule 1 needs a subject test, not just a participant test.** Filing should
+   prefer a participant who is the *borrower on an active loan* over any other
+   contact, and should decline to file when the only match is a contact with no
+   loan of their own. Declining is cheap; the thread stays searchable by address
+   under `[ This borrower ]`, which is the toggle shipped today.
+3. **The address rule is worth more than the "2% coverage" figure suggested.**
+   The subject line of this very thread carries the address that identifies the
+   right borrower, and `property_address` on her record matches it. On the one
+   case where rule 1 demonstrably failed, address matching would have succeeded.
+
+## `match_source` + `match_evidence`, made concrete
+
+Two columns on `email_log`, written by whatever sets `contact_id`:
+
+```
+match_source    text  -- 'human' | 'address' | 'vendor' | 'reference' | 'address_norm' | 'send'
+match_evidence  text  -- the literal token matched, verbatim
+match_at        timestamptz
+```
+
+For the misfile above the row would read:
+
+```
+contact_id      9b251094…            (Alexander Duarte)
+match_source    'address'
+match_evidence  'alex@tdgsells.com'
+```
+
+…which is the whole argument for the columns. **Nobody reading that would leave
+it in place**: an insurance thread about 947 N Alamo, filed on a contact because
+an agent's address appeared in the CC. Today the same row is a bare uuid,
+indistinguishable from a decision somebody made on purpose.
+
+The rule that follows: **a matcher may write `contact_id` only if it can name
+the token it matched.** If it cannot quote its evidence, it produces a
+suggestion, not a filing.
+
+Backfill is not possible. The existing 199 can only be marked `'unknown'`
+honestly — except this one, which is now documented here.
+
+**Still read-only. Nothing built, nothing backfilled, no rule changed.**

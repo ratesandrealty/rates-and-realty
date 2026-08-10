@@ -28,7 +28,7 @@
     .pac-icon{display:none!important;}
     .pac-logo::after{display:none!important;}
   </style>
-  <script src="/admin/js/auth-guard.js?v=82631977dc"></script>
+  <script src="/admin/js/auth-guard.js?v=08ab2212e7"></script>
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
   <!-- Loaded after auth-guard so window._supabaseClient exists when fnFetch reads it. -->
   <script src="/admin/js/fn-call.js?v=85d03d2a98"></script>
@@ -34114,6 +34114,11 @@ function _buildEmailComposerHTML(contact) {
               '<span onclick="openSigEditor()" style="font-size:11px;color:#7A5820;cursor:pointer;margin-left:12px;" onmouseover="this.style.color=\'#C9A84C\'" onmouseout="this.style.color=\'#7A5820\'">Edit Signature</span>' +
               '<span id="ecCharCount">0 chars</span>' +
               '<button type="button" class="ec-attach-btn" onclick="document.getElementById(\'emailFileInput\').click()">&#128206; Attach</button>' +
+              /* Same shared recorder as the SMS composer and staff chat. Email
+                 takes the LINK delivery, not onBlob: a webm is far past any
+                 mailbox attachment limit, and /v/<slug> scores views against
+                 the lead. */
+              '<button type="button" class="ec-attach-btn" id="ecRecordBtn" title="Record a screen or camera message and insert the link">&#127909; Record</button>' +
               '<input type="file" id="emailFileInput" multiple accept="*/*" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">' +
             '</div>' +
             '<div class="ec-footer-right">' +
@@ -34183,6 +34188,40 @@ async function openEmailComposer(opts) {
   // callers can run their own pipeline (voe_request_log + email-service reply_to + attachments).
   document.getElementById('ecDraftBtn').addEventListener('click', saveEmailDraft);
   document.getElementById('ecSendBtn').addEventListener('click', (opts && typeof opts.onSend === 'function') ? opts.onSend : sendEmailFromComposer);
+
+  /* Record → shared recorder → link appended to the body.
+     The composer-closed guard is the SMS composer's, and it is here for the same
+     reason: the recorder outlives the composer, and a link delivered to a closed
+     editor is lost silently after the upload has already succeeded. Never report
+     success in that case — surface the link so it can be pasted. */
+  var _ecRec = document.getElementById('ecRecordBtn');
+  if (_ecRec) _ecRec.addEventListener('click', function () {
+    if (!window.LoomRecorder || typeof window.LoomRecorder.open !== 'function') {
+      showToast('Recorder not loaded — reload the page and try again', true); return;
+    }
+    window.LoomRecorder.open({
+      context: 'email',
+      contact_id: (typeof lpCid === 'function' ? lpCid() : null),
+      onSaved: function (v) {
+        var link = v && (v.watch_url || (v.slug ? 'https://ratesandrealty.com/v/' + v.slug : ''));
+        if (!link) { showToast('Video saved but no link came back', true); return; }
+        var ed = document.getElementById('emailEditor');
+        var ov = document.getElementById('ecOverlay');
+        /* .ec-overlay is opened by adding .open, not by clearing display —
+           checking style.display here would read "open" on a closed composer. */
+        var isOpen = !!ed && !!ov && ov.classList.contains('open');
+        if (!isOpen) {
+          showToast('Video saved, but the composer was closed — link: ' + link, true);
+          console.warn('[ec] video saved with no open composer to receive it:', link);
+          return;
+        }
+        ed.innerHTML += '<p>&#128249; <a href="' + link + '">' + link + '</a></p>';
+        // The char count updates on 'input', which innerHTML does not fire.
+        ed.dispatchEvent(new Event('input', { bubbles: true }));
+        showToast('Video link added');
+      }
+    });
+  });
   if (opts && (opts.to || opts.subject || opts.bodyHtml)) {
     if (opts.to) { var _tc = document.getElementById('toChips'); if (_tc) { _tc.innerHTML = '<div class="ec-chip"><span>' + String(opts.to).replace(/</g,'&lt;') + '</span><button onclick="this.parentElement.remove()">✕</button></div><input class="ec-chip-input" id="toInput" placeholder="Add recipient..." onkeydown="handleChipKey(event,\'toChips\')">'; } }
     if (opts.subject != null) { var _si = document.getElementById('subjectInput'); if (_si) _si.value = opts.subject; }
@@ -34284,8 +34323,14 @@ async function openEmailComposer(opts) {
 
   // Wire attachment file input
   document.getElementById('emailFileInput').addEventListener('change', function() {
+    _ecAttachFiles(Array.from(this.files));
+    this.value = '';
+  });
+
+  function _ecAttachFiles(files) {
     var pillsRow = document.getElementById('attachPills');
-    Array.from(this.files).forEach(function(file) {
+    if (!pillsRow || !files || !files.length) return;
+    files.forEach(function(file) {
       if (!window._attachedFiles) window._attachedFiles = [];
       window._attachedFiles.push(file);
       var pill = document.createElement('span');
@@ -34294,8 +34339,32 @@ async function openEmailComposer(opts) {
       pillsRow.appendChild(pill);
     });
     pillsRow.style.display = 'flex';
-    this.value = '';
-  });
+  }
+
+  /* PASTE / DROP into the email composer.
+     Routed through the SAME per-file body as the file input above, via
+     _ecAttachFiles, so staging, the pills row and the send path are shared —
+     this adds ways IN, not a second attach path. A pasted screenshot carries the
+     browser's placeholder name ("image.png"), so every paste would be called
+     image.png in the pills and on the message; renamed on the way in. */
+  var _ecEd = document.getElementById('emailEditor');
+  if (_ecEd) {
+    _ecEd.addEventListener('paste', function (e) {
+      var files = _rrFilesFromTransfer(e.clipboardData);
+      if (!files.length) return;              // plain text/html paste — untouched
+      e.preventDefault();
+      _ecAttachFiles(files);
+    });
+    _ecEd.addEventListener('dragover', function (e) {
+      if (e.dataTransfer && e.dataTransfer.types && Array.prototype.indexOf.call(e.dataTransfer.types, 'Files') > -1) e.preventDefault();
+    });
+    _ecEd.addEventListener('drop', function (e) {
+      var files = _rrFilesFromTransfer(e.dataTransfer);
+      if (!files.length) return;
+      e.preventDefault();
+      _ecAttachFiles(files);
+    });
+  }
 
   // Close template dropdown + schedule picker on outside click
   document.addEventListener('click', _closeDropdowns);
@@ -35946,6 +36015,9 @@ function openTextComposer(){
   var _rs=document.getElementById('tcRecipSearch'); if(_rs) _rs.value='';
   var _rr=document.getElementById('tcRecipResults'); if(_rr) _rr.innerHTML='';
   _tcRenderRecipChips(); _tcUpdateSendLabel();
+  // Wire here, not at load: #tcBody is built with the composer, so a listener
+  // attached earlier would bind nothing. Guarded, so reopening does not stack.
+  _tcWirePasteDrop();
   _tcHideSchedule(); _tcCharCount();
   var _hsP=document.getElementById('tcHsPanel'); if(_hsP) _hsP.style.display='none';
   var _drP=document.getElementById('tc-draft-panel'); if(_drP) _drP.style.display='none';
@@ -36217,7 +36289,62 @@ async function _tcUploadToBucket(file){
 }
 function _tcMediaPick(){ var f=document.getElementById('tcMediaFile'); if(f) f.click(); }
 function _tcMediaDrop(ev){ ev.preventDefault(); var z=document.getElementById('tcMediaZone'); if(z) z.style.borderColor='rgba(201,168,76,0.25)'; var f=ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0]; if(f) _tcHandleMediaFile(f); }
+/* Files out of a clipboard or a drop, with pasted screenshots renamed.
+   Shared by the SMS composer and the email composer on this page; staff-chat.js
+   carries the same logic because it is a separate script with no shared module,
+   and duplicating twenty lines is better than a build step for one helper — but
+   if a third copy is ever needed, extract it rather than paste it again.
+
+   A pasted screenshot arrives as a File named "image.png" (Chrome) or unnamed.
+   Left alone, every paste is called image.png in the tray, in the bucket, and to
+   the recipient. */
+function _rrFilesFromTransfer(dt){
+  if(!dt) return [];
+  var out=[];
+  if(dt.files && dt.files.length) out=Array.prototype.slice.call(dt.files);
+  else if(dt.items && dt.items.length){
+    out=Array.prototype.slice.call(dt.items)
+      .filter(function(it){ return it.kind==='file'; })
+      .map(function(it){ return it.getAsFile(); }).filter(Boolean);
+  }
+  return out.map(function(f,i){
+    if(f.name && !/^image\.(png|jpe?g|webp|gif)$/i.test(f.name)) return f;
+    var ext=(f.type && f.type.indexOf('/')>0) ? f.type.split('/')[1].split('+')[0] : 'png';
+    var d=new Date(), p=function(n){ return ('0'+n).slice(-2); };
+    var nm='pasted-'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'-'
+      +p(d.getHours())+p(d.getMinutes())+p(d.getSeconds())+(i?'-'+(i+1):'')+'.'+ext;
+    try{ return new File([f], nm, { type: f.type||'image/png' }); }catch(_){ return f; }
+  });
+}
+
 function _tcMediaFileChosen(input){ var f=input.files && input.files[0]; input.value=''; if(f) _tcHandleMediaFile(f); }
+
+/* PASTE / DROP for the SMS composer. Routed into _tcHandleMediaFile, which
+   already enforces images-only and the 5 MB MMS ceiling — so a pasted PDF or a
+   40 MB screenshot is refused by the same rule as a picked one, with the same
+   message. MMS carries ONE media item, so only the first file is taken and the
+   rest are reported rather than silently dropped. */
+function _tcWirePasteDrop(){
+  var ta=document.getElementById('tcBody'); if(!ta || ta._rrPasteWired) return;
+  ta._rrPasteWired = true;
+  ta.addEventListener('paste', function(e){
+    var files=_rrFilesFromTransfer(e.clipboardData);
+    if(!files.length) return;                 // ordinary text paste — untouched
+    e.preventDefault();
+    if(files.length>1) showToast('A text message carries one image — attaching the first', true);
+    _tcHandleMediaFile(files[0]);
+  });
+  ta.addEventListener('dragover', function(e){
+    if(e.dataTransfer && e.dataTransfer.types && Array.prototype.indexOf.call(e.dataTransfer.types,'Files')>-1) e.preventDefault();
+  });
+  ta.addEventListener('drop', function(e){
+    var files=_rrFilesFromTransfer(e.dataTransfer);
+    if(!files.length) return;
+    e.preventDefault();
+    if(files.length>1) showToast('A text message carries one image — attaching the first', true);
+    _tcHandleMediaFile(files[0]);
+  });
+}
 async function _tcHandleMediaFile(file){
   if(!/^image\//.test(file.type||'')){ showToast('Attach an image (use Record for video)', true); return; }
   if(file.size > 5*1024*1024){ showToast('Image too large (max 5 MB)', true); return; }
@@ -38525,6 +38652,6 @@ async function recordNewVoicemail() {
 })();
 </script>
 
-  <script src="/admin/js/loom-recorder.js?v=027bbb283e"></script>
+  <script src="/admin/js/loom-recorder.js?v=25cd65c3cc"></script>
 </body>
 </html>

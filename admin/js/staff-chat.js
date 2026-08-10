@@ -23,7 +23,7 @@
 
   var _sb = null, _threads = [], _active = null, _msgs = [], _channel = null;
   var _open = false, _mode = 'floating', _pollId = null, _lastBadge = 0;   // _mode: 'floating' | 'full' | 'column'
-  var _pending = [], _signed = {}, _pidSeq = 0, _rec = null;               // staged attachments, signed-URL cache, recorder state
+  var _pending = [], _signed = {}, _pidSeq = 0;               // staged attachments, signed-URL cache, recorder state
   // ── CRM Copilot (relocated from layout.js so the combined bubble is app-wide) ──
   var _tab = 'chat';                                                        // active panel tab: 'chat' | 'copilot'
   var _copHistory = [], _copBusy = false, _copActions = {}, _copActionSeq = 0, _copConvoDate = null;
@@ -327,6 +327,76 @@
   }
   function handleFiles(list) { Array.prototype.slice.call(list || []).forEach(function (f) { stageFile(f); }); }
 
+  /* ── PASTE / DROP ──────────────────────────────────────────────────────────
+   * Both funnel into handleFiles, so staging, upload, the tray and the send
+   * gate are untouched — this adds two ways IN, not a second upload path.
+   *
+   * A pasted screenshot arrives as a File whose name is the browser's own
+   * placeholder ("image.png" in Chrome, blank in some others). Every paste would
+   * then be called image.png in the tray and in storage, so the recipient sees a
+   * column of identical names and cannot tell them apart. Rename on the way in.
+   *
+   * Paste must NOT swallow ordinary text: only act when the clipboard actually
+   * carries files, and let everything else reach the input unmodified. */
+  function pastedName(file, i) {
+    var ext = (file.type && file.type.indexOf('/') > 0) ? file.type.split('/')[1].split('+')[0] : 'png';
+    var d = new Date(), p = function (n) { return ('0' + n).slice(-2); };
+    return 'pasted-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate())
+      + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds())
+      + (i ? '-' + (i + 1) : '') + '.' + ext;
+  }
+  function filesFromClipboard(dt) {
+    if (!dt) return [];
+    var out = [];
+    // DataTransfer.files is populated for a pasted screenshot in every browser
+    // we support; items[] is the fallback for older Safari.
+    if (dt.files && dt.files.length) out = Array.prototype.slice.call(dt.files);
+    else if (dt.items && dt.items.length) {
+      out = Array.prototype.slice.call(dt.items)
+        .filter(function (it) { return it.kind === 'file'; })
+        .map(function (it) { return it.getAsFile(); })
+        .filter(Boolean);
+    }
+    return out.map(function (f, i) {
+      // Give the placeholder names a real one; leave a real filename alone.
+      if (!f.name || /^image\.(png|jpe?g|webp|gif)$/i.test(f.name)) {
+        try { return new File([f], pastedName(f, i), { type: f.type || 'image/png' }); }
+        catch (_) { return f; }
+      }
+      return f;
+    });
+  }
+  function wirePasteAndDrop() {
+    if (document._scPasteWired) return;
+    document._scPasteWired = true;
+    document.addEventListener('paste', function (e) {
+      if (!_active) return;                               // no open conversation to attach to
+      var inp = document.getElementById('sc-input');
+      if (!inp) return;
+      // Only when the chat input has focus, or the paste landed inside the chat.
+      var t = e.target;
+      var inChat = t === inp || (t && t.closest && t.closest('.sc-composer, #sc-input'));
+      if (!inChat) return;
+      var files = filesFromClipboard(e.clipboardData);
+      if (!files.length) return;                          // plain text — leave it alone
+      e.preventDefault();
+      handleFiles(files);
+      scToast(files.length === 1 ? 'Screenshot attached' : files.length + ' files attached');
+    });
+    ['dragover', 'drop'].forEach(function (evt) {
+      document.addEventListener(evt, function (e) {
+        var host = e.target && e.target.closest && e.target.closest('.sc-composer, .sc-msgs, #sc-input');
+        if (!host || !_active) return;
+        if (!e.dataTransfer || !e.dataTransfer.types || e.dataTransfer.types.indexOf('Files') < 0) return;
+        e.preventDefault();
+        if (evt === 'drop') {
+          var files = filesFromClipboard(e.dataTransfer);
+          if (files.length) { handleFiles(files); scToast(files.length + ' file(s) attached'); }
+        }
+      });
+    });
+  }
+
   function signedUrl(path) {
     var now = Date.now(), c = _signed[path];
     if (c && c.exp > now) return Promise.resolve(c.url);
@@ -443,102 +513,34 @@
     });
   }
 
-  // ── recording (camera / audio-only / screen) ─────────────────────────────
+  /* ── recording — delegated to the SHARED recorder ────────────────────
+   * This file used to carry its own recorder: three modes (camera / audio /
+   * screen), its own overlay, its own permission handling, its own MediaRecorder
+   * setup. admin/js/loom-recorder.js carried a fuller one — four modes, with
+   * "Screen + camera bubble" — and the two drifted, so staff chat quietly
+   * offered less than the SMS composer on the same screen.
+   *
+   * One implementation now. Chat still ATTACHES the file rather than sending a
+   * /v/<slug> link, via the recorder's onBlob delivery — an internal clip does
+   * not need a public landing page. That is a delivery choice, not a second
+   * recorder. See the delivery note in loom-recorder.js.
+   *
+   * If the shared script is missing the button says so rather than doing
+   * nothing: a silent no-op is how a broken control survives for months. */
   function openRecordMenu() {
     if (!_active) { scToast('Open a conversation first'); return; }
-    closeRecordUi();
-    var ov = document.createElement('div'); ov.className = 'sc-rec-ov'; ov.id = 'sc-rec-ov';
-    ov.innerHTML = '<div class="sc-rec-box"></div>';
-    document.body.appendChild(ov);
-    showRecMenu();
-  }
-  function showRecMenu() {
-    stopRecording();
-    var box = document.querySelector('#sc-rec-ov .sc-rec-box'); if (!box) return;
-    box.innerHTML = '<div class="sc-rec-head"><span>Record</span><button type="button" class="sc-icon" data-sc-rec-cancel>✕</button></div>'
-      + '<div class="sc-rec-menu">'
-      + '<button type="button" class="sc-rec-opt" data-sc-rec-start="camera">🎥 Record camera (myself)</button>'
-      + '<button type="button" class="sc-rec-opt" data-sc-rec-start="audio">🎙️ Record audio only</button>'
-      + '<button type="button" class="sc-rec-opt" data-sc-rec-start="screen">🖥️ Record screen</button>'
-      + '</div>';
-  }
-  function stopTracks() { if (_rec && _rec.stream) { try { _rec.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {} } }
-  function closeRecordUi() {
-    stopRecording();
-    if (_rec && _rec.previewUrl) { try { URL.revokeObjectURL(_rec.previewUrl); } catch (_) {} }
-    var ov = document.getElementById('sc-rec-ov'); if (ov) ov.remove();
-    _rec = null;
-  }
-  // Never throws: shows a clear inline "grant permission" message + a Back button.
-  function recPermError(box, mode) {
-    stopTracks();
-    var msg = (mode === 'screen')
-      ? 'Screen sharing was blocked or cancelled. Go back and try again.'
-      : 'Allow camera & microphone for this site in your browser settings, then try again.';
-    box.innerHTML = '<div class="sc-rec-head"><span>Permission needed</span><button type="button" class="sc-icon" data-sc-rec-cancel>✕</button></div>'
-      + '<div class="sc-rec-msg">🔒 ' + esc(msg) + '</div>'
-      + '<div class="sc-rec-ctrl"><button type="button" class="sc-rec-opt sc-rec-discard" data-sc-rec-menu>← Back</button></div>';
-  }
-  async function beginRecording(mode) {
-    var box = document.querySelector('#sc-rec-ov .sc-rec-box'); if (!box) return;
-    if (!navigator.mediaDevices) { recPermError(box, mode); return; }
-    var isAudio = (mode === 'audio'), stream;
-    try {
-      if (mode === 'screen') {
-        stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-        try { var mic = await navigator.mediaDevices.getUserMedia({ audio: true }); mic.getAudioTracks().forEach(function (t) { stream.addTrack(t); }); } catch (_) { /* mic optional */ }
-      } else if (isAudio) {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } else {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    if (!window.LoomRecorder || typeof window.LoomRecorder.open !== 'function') {
+      scToast('Recorder not loaded on this page — reload and try again');
+      return;
+    }
+    window.LoomRecorder.open({
+      context: 'chat',
+      onBlob: function (file, meta) {
+        stageFile(file, (meta && meta.isAudio) ? 'audio' : 'recording')
+          .then(function () { send(); })
+          .catch(function (e) { scToast('Could not attach the recording: ' + ((e && e.message) || 'failed')); });
       }
-    } catch (e) { recPermError(box, mode); return; }
-    var recMime = isAudio ? 'audio/webm' : 'video/webm';
-    var useMime = (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(recMime)) ? recMime : '';
-    var recorder;
-    try { recorder = useMime ? new MediaRecorder(stream, { mimeType: useMime }) : new MediaRecorder(stream); }
-    catch (e) { scToast('Recording is not supported in this browser'); try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {} return; }
-    var chunks = [];
-    recorder.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
-    recorder.onstop = function () { showRecPreview(new Blob(chunks, { type: recMime })); };
-    _rec = { recorder: recorder, stream: stream, mode: mode, isAudio: isAudio, timer: null, blob: null, previewUrl: null };
-    box.innerHTML = '<div class="sc-rec-head"><span>Recording…</span><button type="button" class="sc-icon" data-sc-rec-cancel>✕</button></div>'
-      + (isAudio
-          ? '<div class="sc-rec-audio"><span class="sc-rec-dot"></span> Recording audio…</div>'
-          : '<video class="sc-rec-preview" autoplay muted playsinline></video>')
-      + '<div class="sc-rec-ctrl">' + (isAudio ? '' : '<span class="sc-rec-dot"></span>') + '<span id="sc-rec-timer">0:00</span>'
-      + '<button type="button" class="sc-rec-stop" data-sc-rec-stop>■ Stop</button></div>';
-    if (!isAudio) { var v = box.querySelector('.sc-rec-preview'); if (v) v.srcObject = stream; }
-    try { recorder.start(); } catch (e) { scToast('Could not start recording'); closeRecordUi(); return; }
-    var secs = 0;
-    _rec.timer = setInterval(function () {
-      secs++; var t = document.getElementById('sc-rec-timer');
-      if (t) t.textContent = Math.floor(secs / 60) + ':' + ('0' + (secs % 60)).slice(-2);
-    }, 1000);
-  }
-  function stopRecording() {
-    if (_rec && _rec.recorder && _rec.recorder.state !== 'inactive') { try { _rec.recorder.stop(); } catch (_) {} }
-    if (_rec && _rec.timer) { clearInterval(_rec.timer); _rec.timer = null; }
-    stopTracks();
-  }
-  function showRecPreview(blob) {
-    var box = document.querySelector('#sc-rec-ov .sc-rec-box'); if (!box || !_rec) return;
-    var url = URL.createObjectURL(blob); _rec.blob = blob; _rec.previewUrl = url;
-    box.innerHTML = '<div class="sc-rec-head"><span>Preview</span><button type="button" class="sc-icon" data-sc-rec-cancel>✕</button></div>'
-      + (_rec.isAudio
-          ? '<div class="sc-rec-audiowrap"><audio class="sc-rec-audio-el" controls src="' + url + '"></audio></div>'
-          : '<video class="sc-rec-preview" controls playsinline src="' + url + '"></video>')
-      + '<div class="sc-rec-ctrl"><button type="button" class="sc-rec-opt sc-rec-discard" data-sc-rec-menu>↺ Redo</button>'
-      + '<button type="button" class="sc-send" data-sc-rec-send>Send</button></div>';
-  }
-  async function sendRecording() {
-    if (!_rec || !_rec.blob) return;
-    var isAudio = _rec.isAudio, mode = _rec.mode, blob = _rec.blob;
-    var base = isAudio ? 'audio' : (mode === 'screen' ? 'screen' : 'video');
-    var file = new File([blob], base + '-' + Date.now() + '.webm', { type: isAudio ? 'audio/webm' : 'video/webm' });
-    closeRecordUi();
-    await stageFile(file, isAudio ? 'audio' : 'recording');
-    send();
+    });
   }
 
   // ── CRM Copilot engine (ported from layout.js; reuses esc/client/scToast) ──
@@ -1057,24 +1059,6 @@
       // full-size image lightbox
       '.sc-att-vidbtns{display:flex;gap:6px;flex-wrap:wrap}',
       '.sc-att-filewrap{display:flex;align-items:stretch;gap:6px;max-width:100%}',
-      // record overlay
-      '.sc-rec-ov{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:18px}',
-      '.sc-rec-box{width:min(420px,94vw);background:#0d0d0d;border:1px solid rgba(201,168,76,.3);border-radius:14px;overflow:hidden;box-shadow:0 20px 56px rgba(0,0,0,.6);display:flex;flex-direction:column}',
-      '.sc-rec-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.08);font-size:13px;font-weight:700;color:#C9A84C}',
-      '.sc-rec-menu{display:flex;flex-direction:column;gap:8px;padding:16px}',
-      '.sc-rec-opt{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);color:#eee;border-radius:8px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}',
-      '.sc-rec-opt:hover{background:rgba(255,255,255,.09)}',
-      '.sc-rec-discard{flex:1}',
-      '.sc-rec-preview{width:100%;max-height:50vh;background:#000;display:block}',
-      '.sc-rec-ctrl{display:flex;align-items:center;gap:10px;padding:12px 14px;border-top:1px solid rgba(255,255,255,.08)}',
-      '.sc-rec-dot{width:10px;height:10px;border-radius:50%;background:#E5484D;animation:sc-blink 1s steps(2,start) infinite;flex-shrink:0}',
-      '@keyframes sc-blink{50%{opacity:.25}}',
-      '#sc-rec-timer{font-size:12px;color:#ddd;flex:1}',
-      '.sc-rec-stop{background:#E5484D;border:none;color:#fff;font-weight:700;font-size:12px;border-radius:8px;padding:8px 14px;cursor:pointer;font-family:inherit}',
-      '.sc-rec-msg{padding:20px 18px;color:#e6c9a0;font-size:13px;line-height:1.5;text-align:center}',
-      '.sc-rec-audio{display:flex;align-items:center;justify-content:center;gap:10px;padding:34px 18px;color:#ddd;font-size:13px;font-weight:600}',
-      '.sc-rec-audiowrap{padding:24px 18px;display:flex;justify-content:center}',
-      '.sc-rec-audio-el{width:100%}',
       // toast
       '.sc-toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%) translateY(10px);z-index:120;background:#1a1a1a;border:1px solid rgba(201,168,76,.4);color:#fff;font-size:12.5px;padding:9px 14px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.5);opacity:0;transition:opacity .25s,transform .25s;max-width:90vw;text-align:center}',
       '.sc-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}'
@@ -1170,6 +1154,7 @@
 
   // ── events ───────────────────────────────────────────────────────────────
   function wireEvents() {
+    wirePasteAndDrop();
     document.addEventListener('click', function (e) {
       if (e.target.closest('[data-sc-toggle]')) { setOpen(!_open); return; }
       if (e.target.closest('[data-sc-close]')) { setOpen(false); return; }
@@ -1199,13 +1184,6 @@
       if (e.target.closest('[data-sc-record]')) { openRecordMenu(); return; }
       var rm = e.target.closest('[data-sc-tray-remove]'); if (rm) { removePending(rm.getAttribute('data-sc-tray-remove')); return; }
       // record overlay controls
-      if (e.target.classList && e.target.classList.contains('sc-rec-ov')) { stopRecording(); closeRecordUi(); return; }
-      if (e.target.closest('[data-sc-rec-cancel]')) { stopRecording(); closeRecordUi(); return; }
-      var rst = e.target.closest('[data-sc-rec-start]'); if (rst) { beginRecording(rst.getAttribute('data-sc-rec-start')); return; }
-      if (e.target.closest('[data-sc-rec-menu]')) { showRecMenu(); return; }
-      if (e.target.closest('[data-sc-rec-stop]')) { stopRecording(); return; }
-      if (e.target.closest('[data-sc-rec-discard]')) { closeRecordUi(); return; }
-      if (e.target.closest('[data-sc-rec-send]')) { sendRecording(); return; }
       var row = e.target.closest('[data-sc-thread]'); if (row) { openThread(row.getAttribute('data-sc-thread')); return; }
     });
     document.addEventListener('keydown', function (e) {

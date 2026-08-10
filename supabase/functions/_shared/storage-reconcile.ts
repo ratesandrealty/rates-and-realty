@@ -61,6 +61,16 @@ export const REGISTRY: RegistryEntry[] = [
     note: "multi-document envelopes, merged" },
   { table: "esign_documents", column: "final_pdf_path", bucket: "esign" },
   { table: "videos", column: "storage_path", bucket: "video-messages" },
+  /* Added with paste-to-upload, 2026-08-10, and in the SAME change deliberately.
+   * chat-attachments had no watcher: an upload that succeeded while its
+   * staff_message_attachments row failed left a file nobody could reach and
+   * nobody could see. That was a latent gap while the only route in was a file
+   * picker one file at a time. Paste makes it an active one — pasting a
+   * screenshot is the cheapest possible way to put bytes in a bucket, and it
+   * will be used constantly.
+   * Verified bucket-relative before registering: 7 rows, 0 full URLs,
+   * '<uuid>/<uuid>-<name>'. */
+  { table: "staff_message_attachments", column: "storage_path", bucket: "chat-attachments" },
 ];
 
 /* Deliberately NOT in the registry, with the reason, so a future reader does
