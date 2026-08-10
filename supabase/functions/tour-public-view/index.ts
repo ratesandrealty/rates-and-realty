@@ -85,7 +85,7 @@ async function notifyAgent(subject: string, smsBody: string, htmlBody: string) {
   fetch(`${SUPABASE_URL}/functions/v1/sms-service`, {
     method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SERVICE_KEY}` },
     body: JSON.stringify({
-      trigger: "custom", to_phone: RENE_PHONE,
+      trigger: "custom", to_phone: RENE_PHONE, quiet_hours_bypass: "staff_alert",
       params: { message: smsBody },
     }),
   }).catch(() => {});

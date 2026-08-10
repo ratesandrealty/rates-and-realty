@@ -992,6 +992,9 @@ async function sendSms(message: string): Promise<{ ok: boolean; sid: string | nu
       },
       body: JSON.stringify({
         trigger: "custom",
+        // Recipient is staff (adminPhone/RENE_CELL), not a consumer. A monitor
+        // muted overnight is how the 32-hour masking window happened.
+        quiet_hours_bypass: "staff_alert",
         to_phone: to,
         /* The digest, not the report. The full text is in the CRM row. */
         params: { message: smsDigest(message) },

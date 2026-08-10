@@ -192,6 +192,9 @@ async function handleBooking(booking: any, triggerEvent: string) {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` },
         body: JSON.stringify({
           trigger: 'custom',
+          // The borrower booked/changed this appointment a moment ago; this is the
+          // confirmation of their own action, not outbound marketing.
+          quiet_hours_bypass: 'user_initiated',
           to_phone: '+17144728508',
           params: {
             message: `\u26a0\ufe0f Auto-blocked suspicious Cal.com booking from ${attendeeEmail || attendeeName}. Reason: ${reason.substring(0, 100)}. Cancel in Cal.com manually.`

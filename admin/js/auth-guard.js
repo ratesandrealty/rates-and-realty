@@ -236,7 +236,7 @@
     function mountStaffChat() {
       if (document.querySelector('script[src*="/admin/js/staff-chat.js"]')) return;
       const sc = document.createElement('script');
-      sc.src = '/admin/js/staff-chat.js?v=c1c8cfd043';
+      sc.src = '/admin/js/staff-chat.js?v=c72c6286d7';
       document.head.appendChild(sc);
     }
     // Universal help-video ⓘ buttons (window.HelpTopic). Same app-wide, idempotent

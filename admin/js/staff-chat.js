@@ -658,7 +658,7 @@
       if (!c.phone) throw new Error('No phone on file for this lead');
       var sr = await fetch(base + '/functions/v1/sms-service', {
         method: 'POST', headers: await _scAuthHeaders(anon),   // session token: sms-service is guarded / has no caller auth of its own
-        body: JSON.stringify({ trigger: 'manual', to_phone: c.phone, params: { message: a.body || '' }, contact_id: a.contact_id, direction: 'outbound' })
+        body: JSON.stringify({ trigger: 'manual', quiet_hours_bypass: 'staff_message', to_phone: c.phone, params: { message: a.body || '' }, contact_id: a.contact_id, direction: 'outbound' })
       });
       var sd = await sr.json().catch(function () { return {}; });
       if (!sd.success) throw new Error(sd.error || 'SMS failed');

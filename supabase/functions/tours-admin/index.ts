@@ -143,7 +143,7 @@ async function sendInitialShare(batch: any, contact: any, channels: string[]) {
   if (channels.includes("sms") && contact.phone) {
     const smsBody = `Hi ${contact.first_name || "there"} \u2014 here's your home tour itinerary for ${dateStr} ${timeStr ? "at " + timeStr : ""}:\n\n${linkForSms}\n\n${stopsStr} lined up. Tap to view, confirm, or message me with questions.\n\n\u2014 Rene\nReply STOP to opt out`;
     try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/sms-service`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SERVICE_KEY}` }, body: JSON.stringify({ trigger: "custom", to_phone: contact.phone, params: { message: smsBody }, contact_id: contact.id, trigger_id: batch.id }) });
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/sms-service`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SERVICE_KEY}` }, body: JSON.stringify({ trigger: "custom", quiet_hours_bypass: "user_initiated", to_phone: contact.phone, params: { message: smsBody }, contact_id: contact.id, trigger_id: batch.id }) });
       const d = await res.json();
       const okFlag = res.ok && (d.sid || d.success);
       await sb.from("showing_messages").insert({ batch_id: batch.id, contact_id: contact.id, channel: "sms", trigger: "initial_share", recipient_phone: contact.phone, body_text: smsBody, status: okFlag ? "sent" : "failed", scheduled_for: new Date().toISOString(), sent_at: okFlag ? new Date().toISOString() : null, sms_log_id: d.sms_log_id || null, failure_reason: okFlag ? null : (d.error || "unknown") });
@@ -320,7 +320,7 @@ Deno.serve(async (req) => {
         if (contact?.phone) {
           const dateStr = batch.scheduled_start ? formatDateForSMS(batch.scheduled_start) : "";
           const cancelBody = `Hi ${contact.first_name || ""} \u2014 unfortunately I need to cancel our tour ${dateStr ? "on " + dateStr : ""}.${body.reason ? " Reason: " + body.reason : ""} Let's reschedule \u2014 reply with a few times that work. \u2014 Rene\nReply STOP to opt out`;
-          fetch(`${SUPABASE_URL}/functions/v1/sms-service`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SERVICE_KEY}` }, body: JSON.stringify({ trigger: "custom", to_phone: contact.phone, params: { message: cancelBody }, contact_id: contact.id, trigger_id: batch.id }) }).catch(() => {});
+          fetch(`${SUPABASE_URL}/functions/v1/sms-service`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SERVICE_KEY}` }, body: JSON.stringify({ trigger: "custom", quiet_hours_bypass: "user_initiated", to_phone: contact.phone, params: { message: cancelBody }, contact_id: contact.id, trigger_id: batch.id }) }).catch(() => {});
           await sb.from("showing_messages").insert({ batch_id: batch.id, contact_id: contact.id, channel: "sms", trigger: "cancel_notice", recipient_phone: contact.phone, body_text: cancelBody, status: "sent", scheduled_for: new Date().toISOString(), sent_at: new Date().toISOString() });
         }
       }

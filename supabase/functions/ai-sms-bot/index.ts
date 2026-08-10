@@ -387,7 +387,7 @@ async function sendBotReply(phone: string, body: string, contactId: string | nul
     const res = await fetch(`${SUPABASE_URL}/functions/v1/sms-service`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SERVICE_KEY}` },
-      body: JSON.stringify({ trigger: "custom", to_phone: phone, params: { message: safe }, contact_id: contactId || undefined, trigger_id: conversationId }),
+      body: JSON.stringify({ trigger: "custom", quiet_hours_bypass: "user_initiated", to_phone: phone, params: { message: safe }, contact_id: contactId || undefined, trigger_id: conversationId }),
     });
     const data = await res.json();
     if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
@@ -405,7 +405,7 @@ async function notifyRene(message: string) {
     await fetch(`${SUPABASE_URL}/functions/v1/sms-service`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SERVICE_KEY}` },
-      body: JSON.stringify({ trigger: "custom", to_phone: "+17144728508", params: { message } }),
+      body: JSON.stringify({ trigger: "custom", quiet_hours_bypass: "staff_alert", to_phone: "+17144728508", params: { message } }),
     });
   } catch {}
 }

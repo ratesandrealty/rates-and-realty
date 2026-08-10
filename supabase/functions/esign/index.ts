@@ -109,7 +109,7 @@ async function sendLinkSms(env: any, signer: any, force = false) {
     await fetch(`${SUPABASE_URL}/functions/v1/sms-service`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': SERVICE, 'Authorization': `Bearer ${SERVICE}` },
-      body: JSON.stringify({ trigger: 'custom', to_phone: phone, params: { message: msg, firstName: first }, contact_id: signer.person_contact_id || env.contact_id || null, trigger_id: env.id })
+      body: JSON.stringify({ trigger: 'custom', quiet_hours_bypass: 'user_initiated', to_phone: phone, params: { message: msg, firstName: first }, contact_id: signer.person_contact_id || env.contact_id || null, trigger_id: env.id })
     });
   } catch (_e) { /* non-fatal */ }
 }
