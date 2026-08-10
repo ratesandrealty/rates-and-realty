@@ -3,6 +3,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -545,6 +546,28 @@ Deno.serve(async (req) => {
   const ok = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, "Content-Type": "application/json" } });
   const err = (m: string, s = 400, extra: any = {}) => new Response(JSON.stringify({ error: m, ...extra }), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
   if (req.method !== "POST") return err("Method not allowed", 405);
+
+  /* GUARD — BEFORE req.json().
+   *
+   * This function SENDS AN SMS from the business line, under Rene's NMLS. It
+   * had no authorization: probed with the public anon key it returned 400
+   * "phone and message_body required", so authorization was not what stopped an
+   * anonymous caller from texting an arbitrary number in Rene's name.
+   *
+   * The two internal callers survive unchanged, and were checked before this
+   * landed rather than after: bot-process-queue and twilio-inbound both send
+   * `Authorization: Bearer ${SERVICE_KEY}`, and requireStaff accepts the service
+   * key in either header. There is NO browser caller — the only frontend
+   * mention is a comment in admin/js/rr-time.js. So this guard has no
+   * frontend-first dependency, which is why it can land in the same commit. */
+  const staff = await requireStaff(req, { what: "The SMS bot" });
+  if (!staff.ok) {
+    console.error("[ai-sms-bot] REJECTED:", staff.status, staff.msg);
+    return new Response(JSON.stringify({ error: staff.msg || "unauthorized" }),
+      { status: staff.status || 403, headers: { ...cors, "Content-Type": "application/json" } });
+  }
+  const actorUid = staff.userId || null;
+  const actorRole = staff.role || null;
 
   let phaseLog: string[] = [];
   let conversationId: string | null = null;

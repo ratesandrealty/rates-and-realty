@@ -12,6 +12,7 @@
 // anon key + the user's session; we additionally re-check the contact exists.)
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { requireStaff } from '../_shared/require-staff.ts';
 
 const cors = { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,Authorization,apikey,x-client-info' };
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -34,6 +35,26 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
   const ok = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, 'Content-Type':'application/json' } });
   const err = (m: string, s=400) => new Response(JSON.stringify({ error: m }), { status: s, headers: { ...cors, 'Content-Type':'application/json' } });
+
+  /* GUARD — BEFORE req.json().
+   *
+   * This function places a REAL CALL on Rene's licensed line and bills his
+   * Twilio account. It had no authorization: probed with the public anon key it
+   * returned 400 'valid to_phone or contact_id required', so a payload check was
+   * all that stood between an anonymous caller and outbound dialling.
+   *
+   * Its only browser caller is crmCall in admin/js/crm-comms.js, which already
+   * sends the signed-in user's session token through fnFetch — the anon-key
+   * version was retired when email-service was guarded. power-dialer's bridge
+   * button calls twilio-voice bridge_call, not this, and is already guarded.
+   * So no frontend change is needed for this one. */
+  const staff = await requireStaff(req, { what: 'Placing a call' });
+  if (!staff.ok) {
+    console.error('[click-to-call] REJECTED:', staff.status, staff.msg);
+    return new Response(JSON.stringify({ success: false, error: staff.msg || 'unauthorized' }),
+      { status: staff.status || 403, headers: { ...cors, 'Content-Type':'application/json' } });
+  }
+  const actorUid = staff.userId || null;
 
   try {
     if (!TWILIO_SID || !TWILIO_TOKEN) return err('Twilio not configured', 500);
