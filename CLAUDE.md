@@ -530,6 +530,71 @@ the draft intact; the scheduled send checks `res.ok` and alerts; `saveEmailDraft
 never looks at the response at all — it toasts "Draft saved" and closes the
 composer, discarding the text, whatever the server said.
 
+## Quiet hours: we cannot tell whether a recipient is staff
+
+TCPA covers texts the same as calls. `twilio-voice` has enforced calling hours
+for a while; `sms-service` had **nothing** — the only guard that ever existed was
+a `confirm()` in `power-dialer.html`, which a user can click past and which no
+other caller had at all. The VA works 5pm–2am Pacific, the exact window the rule
+protects. `voicemail_drop` is still unguarded at the time of writing.
+
+`sms-service` now has `quietHours()`, mirroring `callingHours()` including
+allow-and-log on an unknown area code. **Staged behind `SMS_QUIET_HOURS`, which
+defaults OFF.** While off the check still runs and still writes its verdict to
+`audit_log` as `SMS_WOULD_BLOCK`, so the decisions it would have made are visible
+before it starts making them.
+
+### Why there are eight bypasses and not one lookup
+
+The largest exemption category is **"the recipient is staff"** — a health alert
+to Rene's cell, a staff-to-staff message, the tour notices `unified-portal.html`
+sends to a hardcoded `+17144728508`. None of that is a consumer being marketed
+to, and blocking it would silence the monitor overnight, which is exactly how the
+32-hour masking window happened.
+
+**We cannot detect it.** There is no staff-phone source anywhere in this project.
+No `staff_*` table holds a number — `staff_messages`, `staff_threads`,
+`staff_thread_participants`, `staff_view_as_log` are all message plumbing. The
+only staff number available anywhere is the `RENE_CELL` env var, which covers one
+person. Resolving staff numbers through `auth_user_roles` is not clean and would
+still miss anyone without a CRM login.
+
+So the rule cannot key on WHO is being texted. It keys on the CALLER declaring
+why it is exempt:
+
+```
+quiet_hours_bypass: 'staff_alert' | 'staff_message' | 'user_initiated'
+```
+
+**Closed set, and an unrecognised value FAILS THE SEND.** Free text would become
+"urgent" meaning "I did not want to think about it", and a bypass nobody can
+enumerate is not a bypass, it is the absence of a rule.
+
+- `staff_alert` — recipient is staff. `gdrive-health-monitor`, `unified-portal`'s
+  two tour notices.
+- `staff_message` — staff-to-staff. `admin/js/staff-chat.js`.
+- `user_initiated` — the recipient acted a moment ago and this is the reply or
+  confirmation: `ai-sms-bot` answering an inbound text, `calcom-webhook`,
+  `newsletter-signup`, `tour-public-view`, `tours-admin` `initial_share` /
+  `cancel_notice`, `esign`. Consented transactional traffic, not marketing.
+
+Deliberately NOT exempt: reminders, listing alerts, campaigns, and anything staff
+composes and sends outbound. That is the traffic the rule exists for.
+
+### The consequence, which is the part that will bite
+
+**Every new `sms-service` caller must now choose its bypass by hand**, and a
+forgotten one fails CLOSED — the message silently stops going out at night, which
+is the hardest failure to notice and the one this codebase keeps rediscovering.
+Adding a caller is no longer a one-line change.
+
+**If a staff-phone source ever exists, this whole scheme collapses into one
+lookup.** A `staff_phones` table, or phone numbers on `auth_user_roles`, would let
+`quietHours()` answer "is this a consumer?" directly, and `staff_alert` and
+`staff_message` would both disappear — leaving only `user_initiated`, which is a
+genuine policy exemption rather than a workaround for missing data. Build that
+source before adding a fourth reason to the set.
+
 ## Probes and tests never touch a borrower's things
 
 **A probe, health check, or test fixture must never create, modify, or delete

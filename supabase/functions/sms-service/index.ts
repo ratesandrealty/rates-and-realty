@@ -88,6 +88,92 @@ const T: Record<string,(p:any)=>string> = {
   custom: p => p.message,
   manual: p => p.message,
 };
+/* ── QUIET HOURS (TCPA) — STAGED, OFF UNTIL PROVEN ───────────────────────────
+ *
+ * TCPA covers texts the same as calls, and until now NOTHING stopped an
+ * after-hours text server-side: the only guard that ever existed was a browser
+ * confirm() in power-dialer.html, which a user can click past and which no other
+ * caller has at all. The VA works 5pm–2am Pacific — the exact window the rule
+ * protects.
+ *
+ * Mirrors twilio-voice's callingHours() deliberately, down to the behaviour on
+ * an unknown area code: ALLOW and log. Do not block on ignorance — a missing
+ * timezone row is our gap, not the recipient's, and refusing to text someone
+ * because we cannot classify their area code is worse than the risk it avoids.
+ *
+ * ENFORCEMENT IS OFF until both probes pass (outside the window refused with the
+ * recipient's local time; inside the window still sends). Set SMS_QUIET_HOURS=on
+ * to enable. While off, the check still RUNS and still logs, so the decision it
+ * would have made is visible before it starts making it. */
+const QUIET_HOURS_ENFORCED = (Deno.env.get('SMS_QUIET_HOURS') || '').toLowerCase() === 'on';
+const SMS_WINDOW_START = 8;   // 8am local to the recipient
+const SMS_WINDOW_END   = 21;  // 9pm local to the recipient
+
+/* CLOSED SET. An unrecognised reason FAILS THE SEND rather than passing it —
+ * free text would become "urgent" meaning "I did not want to think about it",
+ * and a bypass nobody can enumerate is not a bypass, it is an absence of rule.
+ *
+ * staff_alert    — the recipient is staff, not a consumer. TCPA does not apply.
+ *                  unified-portal's tour notices (hardcoded to RENE_CELL) and
+ *                  gdrive-health-monitor. A monitor muted overnight is how the
+ *                  32-hour masking window happened.
+ * staff_message  — staff-to-staff. admin/js/staff-chat.js.
+ * user_initiated — the recipient did something a moment ago and this is the
+ *                  reply or confirmation: ai-sms-bot answering an inbound text,
+ *                  calcom-webhook, newsletter-signup, tour-public-view,
+ *                  tours-admin initial_share / cancel_notice, esign.
+ *                  Consented transactional traffic, not marketing.
+ *
+ * NOT a bypass, deliberately: reminders, listing alerts, campaigns, and anything
+ * staff composes and sends outbound. Those are the traffic the rule is for. */
+const BYPASS_REASONS = new Set(['staff_alert', 'staff_message', 'user_initiated']);
+
+type QuietVerdict = { allowed:boolean; areaCode:string|null; tz:string|null; localTime:string|null; known:boolean; reason:string };
+
+async function quietHours(toPhone:string): Promise<QuietVerdict> {
+  const digits = (toPhone || '').replace(/\D/g, '');
+  const nat = digits.length === 11 && digits[0] === '1' ? digits.slice(1) : digits;
+  const areaCode = nat.length >= 10 ? nat.slice(0, 3) : null;
+
+  if (!areaCode) {
+    return { allowed:true, areaCode:null, tz:null, localTime:null, known:false,
+             reason:'no area code could be read from the number' };
+  }
+
+  let tz: string | null = null;
+  try {
+    const { data } = await sb.from('area_code_timezones').select('tz').eq('area_code', areaCode).maybeSingle();
+    tz = (data as any)?.tz || null;
+  } catch (e) {
+    // A lookup failure must not become a block. Recorded as unknown, which is honest.
+    console.error('[sms-service] area_code_timezones lookup failed:', String(e));
+  }
+
+  if (!tz) {
+    console.warn(`[sms-service] QUIET HOURS: unknown area code ${areaCode} — allowing`);
+    try {
+      await sb.from('audit_log').insert({
+        table_name:'quiet_hours', row_id:areaCode, operation:'UNKNOWN_AREA_CODE',
+        new_data:{ area_code:areaCode, to:toPhone, allowed:true, channel:'sms' },
+      });
+    } catch (_) { /* a worklist, not a gate */ }
+    return { allowed:true, areaCode, tz:null, localTime:null, known:false,
+             reason:`area code ${areaCode} is not in area_code_timezones — allowed, and logged` };
+  }
+
+  const now = new Date();
+  const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour:'numeric', hour12:false }).format(now));
+  const localTime = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour:'numeric', minute:'2-digit', hour12:true }).format(now);
+  const allowed = hour >= SMS_WINDOW_START && hour < SMS_WINDOW_END;
+
+  return {
+    allowed, areaCode, tz, localTime, known:true,
+    reason: allowed
+      ? `${localTime} for area code ${areaCode} (${tz})`
+      : `It is ${localTime} for the person you are texting (area code ${areaCode}, ${tz}). Texts are limited to 8:00 AM–9:00 PM in their local time.`,
+  };
+}
+
 
 /* OPT-OUT GATE for every message this function originates.
  *
@@ -116,9 +202,58 @@ async function isOptedOut(to_phone:string, contact_id?:string): Promise<boolean>
   } catch (e) { console.error('[sms-service] suppression check threw:', String(e)); return true; }
 }
 
-async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{contact_id?:string;portal_user_id?:string;borrower_id?:string;trigger_id?:string},mediaUrl?:string,fromOverride?:string) {
+/* Explicit return type: the refusal branches below carry fields the send path
+   does not (blocked, blocked_quiet_hours, local_time), and callers read .sid off
+   the result. Without this the union hides sid and the call sites stop compiling. */
+type SendOutcome = { sent:boolean; sid?:string; error?:string; blocked?:boolean; blocked_quiet_hours?:boolean; local_time?:string|null };
+
+async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{contact_id?:string;portal_user_id?:string;borrower_id?:string;trigger_id?:string},mediaUrl?:string,fromOverride?:string,bypass?:string): Promise<SendOutcome> {
   const effectiveTrigger = trigger === 'manual' ? 'custom' : trigger;
   const msg = T[effectiveTrigger](params);
+
+  /* An unrecognised bypass reason FAILS THE SEND. Checked before anything else,
+     including opt-out, because a caller passing a reason we do not know is a
+     caller we do not understand — and this is the only send path in the
+     business. Fail closed and loudly rather than quietly ignoring the field. */
+  if (bypass !== undefined && bypass !== null && bypass !== '' && !BYPASS_REASONS.has(bypass)) {
+    const why = `unrecognised quiet_hours_bypass '${bypass}' — must be one of: ${[...BYPASS_REASONS].join(', ')}`;
+    console.error('[sms-service] REFUSED:', why);
+    await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:why,media_url:mediaUrl});
+    return { sent:false, error:why, blocked:true };
+  }
+
+  /* QUIET HOURS. Runs even while enforcement is OFF, so the decision it would
+     have made is recorded before it starts making it — the flag changes whether
+     we ACT on the verdict, never whether we compute it. */
+  const qh = await quietHours(to_phone);
+  if (!qh.allowed) {
+    const bypassed = bypass ? BYPASS_REASONS.has(bypass) : false;
+    if (!bypassed) {
+      try {
+        await sb.from('audit_log').insert({
+          table_name:'quiet_hours', row_id:ids.contact_id || null,
+          operation: QUIET_HOURS_ENFORCED ? 'SMS_BLOCKED' : 'SMS_WOULD_BLOCK',
+          new_data:{ channel:'sms', enforced:QUIET_HOURS_ENFORCED, to:to_phone, trigger:effectiveTrigger,
+                     area_code:qh.areaCode, tz:qh.tz, local_time:qh.localTime, reason:qh.reason },
+          changed_by:_actorUid,
+        });
+      } catch (_) { /* never let the logbook stop the decision */ }
+      if (QUIET_HOURS_ENFORCED) {
+        await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:qh.reason,media_url:mediaUrl});
+        return { sent:false, error:qh.reason, blocked:true, blocked_quiet_hours:true, local_time:qh.localTime };
+      }
+    } else {
+      try {
+        await sb.from('audit_log').insert({
+          table_name:'quiet_hours', row_id:ids.contact_id || null, operation:'SMS_BYPASSED',
+          new_data:{ channel:'sms', bypass_reason:bypass, to:to_phone, trigger:effectiveTrigger,
+                     local_time:qh.localTime, tz:qh.tz },
+          changed_by:_actorUid,
+        });
+      } catch (_) { /* as above */ }
+    }
+  }
+
   if (await isOptedOut(to_phone, ids.contact_id)) {
     // Logged, not silently dropped: a suppressed message must still be visible.
     await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:'recipient has opted out of SMS',media_url:mediaUrl});
@@ -140,6 +275,8 @@ Deno.serve(async (req:Request) => {
   try {
     const body = await req.json();
     const {trigger, to_phone, params={}, contact_id, portal_user_id, borrower_id, trigger_id, media_url} = body;
+    /* Closed set — see BYPASS_REASONS. An unknown value fails the send. */
+    const quiet_hours_bypass = body.quiet_hours_bypass;
     if (!trigger) return err('trigger required');
 
     // ── AI COMPOSE ────────────────────────────────────────────────────────────
@@ -229,7 +366,7 @@ Deno.serve(async (req:Request) => {
        * templated borrower-facing triggers must keep the business line, or a
        * caller could quietly send borrower mail from an internal number. */
       const fromOverride = (effectiveTrigger === 'custom' && typeof body.from_phone === 'string') ? body.from_phone : undefined;
-      const result = await handleSingleSMS(trigger, to_phone, params, {contact_id, portal_user_id, borrower_id, trigger_id}, media_url, fromOverride);
+      const result = await handleSingleSMS(trigger, to_phone, params, {contact_id, portal_user_id, borrower_id, trigger_id}, media_url, fromOverride, quiet_hours_bypass);
       if (trigger === 'portal_signup') await sendTwilioSMS(RENE_PHONE, `New portal signup: ${params.firstName} ${params.lastName||''} (${params.email||to_phone}). ID: ${params.borrowerId||'—'}. Check CRM.`);
       if (trigger === 'showing_request') await sendTwilioSMS(RENE_PHONE, `New showing request from ${params.firstName}: ${params.homeCount} home${params.homeCount!==1?'s':''} on ${params.date||'TBD'}. Check CRM showings.`);
       return ok({success:true, sent:result.sent, sid:result.sid, error:result.error});
