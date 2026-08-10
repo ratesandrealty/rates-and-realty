@@ -5,6 +5,52 @@
 -- open questions below are answered.
 --
 -- ============================================================================
+-- STATUS 2026-08-10 — STAGED ON PURPOSE. NOT FORGOTTEN. DECIDED, NOT DEFERRED.
+-- ============================================================================
+-- Reviewed 2026-08-10 during the contact-merge read-filter work and DELIBERATELY
+-- LEFT STAGED. If you are reading this months from now, "never applied" is a
+-- decision with a named blocker, not an oversight.
+--
+-- WHAT UNBLOCKS IT — one thing, and it is not technical:
+--
+--   The 25 orphan rows below must be resolved first, and resolving them is a
+--   COMPLIANCE DECISION SITTING WITH E MORTGAGE, not a data-cleanup task.
+--   ADD CONSTRAINT validates existing rows, so those 25 abort the script.
+--   They carry residual creditor account numbers belonging to 7 contacts
+--   deleted before 2026-06-19.
+--
+--   Deleting them so the constraint validates would be resolving a retention
+--   question by destroying the evidence of it. If any of those 7 was an erasure
+--   request, the creditor account numbers are precisely what the request was
+--   meant to remove and their deletion needs recording as fulfilment. If it was
+--   CRM tidying, they are dead weight and can go. Same rows, opposite handling,
+--   and nobody in this repo can tell which from the data.
+--
+--   This is the SAME question as the 12 orphaned borrower Drive files and the
+--   seven April–May contact deletions. Rene's compliance email to E Mortgage
+--   covers all three. Answer arrives -> unblock all three together.
+--
+-- WHAT APPLYING IT WOULD *NOT* FIX — do not apply it hoping for this:
+--
+--   It changes nothing retroactively. contact_merge reads contact_fk_catalogue
+--   at MERGE time, and the four merges of 2026-08-08 already ran. Adding FKs
+--   makes FUTURE merges see these tables; it does not re-scan the past.
+--
+--   The one row the 2026-08-08 merges actually missed — a video on Rene's
+--   loser id — was repointed by hand on 2026-08-10 and recorded in
+--   contact_merge_moves, so contact_merge_undo replays it. Undo replays from
+--   contact_merge_moves and never reads the catalogue, so that record is real.
+--   Nothing else needed moving: property_estimates had zero ghost rows, and
+--   contact_earnings is excluded from this script for the reason at the bottom.
+--
+-- THE COST OF LEAVING IT STAGED, stated so it is a choice and not a drift:
+--
+--   Any table with a contact_id and no FK stays invisible to contact_merge, so
+--   the NEXT merge will miss the same way this one did. That is survivable
+--   while merges are rare and hand-checked; it is not survivable if merging
+--   becomes routine. If someone proposes a bulk dedupe, this file blocks it.
+--
+-- ============================================================================
 -- WHY
 -- ============================================================================
 -- 27 columns reference contacts with NO foreign key. Nothing enforces them, so
