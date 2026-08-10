@@ -637,6 +637,45 @@ lookup.** A `staff_phones` table, or phone numbers on `auth_user_roles`, would l
 genuine policy exemption rather than a workaround for missing data. Build that
 source before adding a fourth reason to the set.
 
+## `assigned_to` is TWO columns with one name, and only one is a control
+
+They look identical in a grep. This already sent one spec wrong: a "show the VA
+her assigned leads" request was written against `contacts.assigned_to`, which
+would have rendered an empty page.
+
+| | `contacts.assigned_to` | `tasks.assigned_to` |
+|---|---|---|
+| type | **text** | **uuid** → a real user |
+| written by | one free-text box, `lead-detail.html` Lead Details | `tg_tasks_autoassign` via `va_account_uid()`, and `va_task_add` |
+| read for | display, and as a `people-admin` filter option | **permissions** |
+| gates anything? | **NO** — 0 RLS policies reference it | **YES** — `va_daily_tasks`, `va_task_list`, `add_task_note` |
+| actual data | 1046 of 1046 rows say Rene, under two spellings: `reneduarte.realty1@gmail.com` (974) and `Rene D.` (72) | real per-user assignment |
+
+**`contacts.assigned_to` is a label, not a control.** Nothing depends on it, which
+is why it degraded into two spellings of one person without anything breaking.
+Do not build access logic, filters that imply ownership, or "my leads" features
+on it. Typing it properly would not help: all 1046 rows resolve to one human, so
+a correctly-typed version returns zero for anyone else. The problem is that
+nothing has ever been assigned to anyone but Rene, and a type change does not
+create assignments.
+
+**`tasks.assigned_to` is load-bearing.** `tg_tasks_autoassign` stamps it with
+`va_account_uid()` for `related_table='loan_orders'`, and three functions gate on
+`assigned_to = auth.uid()`. Changing it changes who can see and act on work.
+
+### What "the VA's leads" actually means
+
+`lead_shares(contact_id, shared_with_user_id, …)`, surfaced by
+`is_lead_shared_with_me()` and `va_shared_leads()`, driven by the **Share with VA**
+toggle on lead-detail (`admin/js/lead-share.js`, admin-only by RLS).
+
+That one IS enforced: `contacts_select_scoped` and `contacts_update_scoped` both
+reference it, as does `contacts_secure`. It is the real delegation mechanism and
+it has real data. `admin/va-people.html` is built on it.
+
+So: **"assigned" is a word on a form. "shared" is the permission.** When a request
+says "assigned to the VA", it almost certainly means shared.
+
 ## Probes and tests never touch a borrower's things
 
 **A probe, health check, or test fixture must never create, modify, or delete
