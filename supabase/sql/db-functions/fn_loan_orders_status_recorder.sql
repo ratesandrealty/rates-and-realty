@@ -1,8 +1,30 @@
--- AFTER UPDATE recorder on loan_orders: who changed a status, by what route.
--- "Who marked this ordered" was unanswerable — Vincent Solis's VOE went to
--- 'ordered' on 2026-08-07 16:50:33, a day after every send attempt and 87 seconds
--- after a note: two separate actions, neither recorded.
--- A RECORDER, NOT A GATE. Same shape as trg_contacts_delete_recorder: wrapped so
--- a failure warns and the update proceeds, and a null actor is DIAGNOSTIC
--- ("not through the app") rather than merely missing.
--- Full definition lives in migration voe_delivery_evidence_error_capture_order_audit.
+-- fn_loan_orders_status_recorder()
+-- language: plpgsql
+-- Captured from production 2026-08-10.
+
+CREATE OR REPLACE FUNCTION public.fn_loan_orders_status_recorder()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  if NEW.status is distinct from OLD.status then
+    begin
+      insert into public.audit_log (table_name, row_id, operation, old_data, new_data, changed_by)
+      values ('loan_orders', NEW.id::text, 'STATUS_CHANGE',
+        jsonb_build_object('status', OLD.status, 'ordered_at', OLD.ordered_at),
+        jsonb_build_object(
+          'status', NEW.status, 'ordered_at', NEW.ordered_at, 'order_type', NEW.order_type,
+          'auth_uid', auth.uid(), 'db_user', current_user,
+          'application_name', coalesce(nullif(current_setting('application_name', true),''), '(unset)'),
+          'route_hint', case when auth.uid() is not null then 'session via PostgREST'
+                             when current_user = 'service_role' then 'service role (edge function)'
+                             else 'DIRECT DB - not through the app' end),
+        auth.uid());
+    exception when others then
+      raise warning 'fn_loan_orders_status_recorder: could not record % (%)', NEW.id, sqlerrm;
+    end;
+  end if;
+  return NEW;
+end $function$;
