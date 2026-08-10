@@ -13408,11 +13408,19 @@ function _lpScopeBarHtml(active){
     + '</div>';
 }
 
-/* Tagged threads are rendered HERE rather than merged into the Gmail list, and
-   that is deliberate: Gmail's query language cannot express "thread id in (…)",
-   so a merged list would cost one get_thread per tag. It also keeps PROVENANCE
-   visible — "somebody filed this to the loan" and "this address appears in it"
-   are different claims, and the first is the one that survives a CC. */
+/* Filed threads render HERE rather than merged into the Gmail list: Gmail's
+   query language cannot express "thread id in (…)", so merging would cost one
+   get_thread per row. Keeping them separate also keeps the two claims apart —
+   "this is filed on the loan" and "this address appears in it" are different
+   things, and the first is the one that survives a CC.
+
+   "FILED", NOT "TAGGED", AND THE DIFFERENCE IS NOT COSMETIC. lead_email_threads
+   reads email_log.contact_id, not email_thread_tags. Most of that column is
+   written AUTOMATICALLY by gmail-inbox::matchContact on thread open — 198 of
+   the 199 filed threads have no manual tag row at all. Calling this list
+   "tagged" would credit a human decision to a match nobody reviewed. Showing
+   which is which needs provenance the RPC does not currently return; see the
+   auto-tagging note in CLAUDE.md. */
 async function _lpInboxRenderTagged(el){
   if (!el) return;
   var cid = lpCid();
@@ -13441,13 +13449,13 @@ async function _lpInboxRenderTagged(el){
 
   if (!vis.length) {
     el.innerHTML = '<div style="font-size:11.5px;color:#8a8475;padding:4px 2px 10px;">'
-      + 'No threads tagged to this lead yet. Open a thread and tag it to file it here.' + hiddenNote + '</div>';
+      + 'No threads filed on this lead yet. Open a thread and tag it to file it here.' + hiddenNote + '</div>';
     return;
   }
 
   el.innerHTML =
     '<div style="font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#8a8475;padding:2px 2px 6px;">'
-      + 'Tagged to this lead · ' + vis.length + '</div>'
+      + 'Filed on this lead · ' + vis.length + '</div>'
     + '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;">' + vis.map(function(t){
       var inbound = String(t.last_direction || '').toLowerCase() === 'inbound';
       var dir = '<span style="color:' + (inbound ? '#50c878' : '#C9A84C') + ';font-weight:700;">' + (inbound ? '↓' : '↑') + '</span>';
