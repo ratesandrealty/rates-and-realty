@@ -69,7 +69,7 @@ function fail(msg) { console.error('\nREFUSED: ' + msg); process.exit(2); }
  * than throwing: the harness is asserting on RENDERING, and a stub that throws
  * would produce console errors that the harness then reports as page failures —
  * turning gaps in the stub into false alarms about the page. */
-function stubSource(role, email, stubRow, rpcMap) {
+function stubSource(role, email, stubRow, rpcMap, fetchMap) {
   return `(() => {
     const RES = (data) => Promise.resolve({ data, error: null });
     const q = () => { const t = RES([]);
@@ -120,6 +120,26 @@ function stubSource(role, email, stubRow, rpcMap) {
     pin('supabase', { createClient: () => client });
     pin('_supabaseClient', client);
     try { sessionStorage.setItem('rnr_app_role', ${JSON.stringify(role)}); } catch (_) {}
+    /* RAW-FETCH STUBBING. Some pages call an edge function with fetch() rather
+       than through the supabase client, so owning window.supabase is not enough
+       to control what they see. Each entry maps a URL substring to a status and
+       body — which is how a 403-vs-200 difference can be exercised without a
+       real session for each role. */
+    const FETCH_MAP = ${JSON.stringify(fetchMap || [])};
+    if (FETCH_MAP.length) {
+      const realFetch = window.fetch.bind(window);
+      window.fetch = function (input, init) {
+        const url = typeof input === 'string' ? input : (input && input.url) || '';
+        for (const m of FETCH_MAP) {
+          if (url.includes(m.match)) {
+            return Promise.resolve(new Response(
+              typeof m.body === 'string' ? m.body : JSON.stringify(m.body === undefined ? {} : m.body),
+              { status: m.status || 200, headers: { 'Content-Type': 'application/json' } }));
+          }
+        }
+        return realFetch(input, init);
+      };
+    }
     window.__RC_STUB = true;
   })();`;
 }
@@ -217,6 +237,15 @@ const SPECS = [
     expectText: ['Access restricted'],
     absentText: ['Should Not Appear'],
   },
+  /* THE THREE dashboard/admin.html insights specs were REMOVED, not left failing.
+     api/auth-api.js builds its OWN supabase client as an ES module, so pinning
+     window.supabase does not reach it: it finds no session, redirects to the
+     borrower portal, and the harness ends up asserting against the wrong page.
+     Stubbing a module-scoped client is a much deeper change than this
+     verification warrants. A permanently-red suite trains people to ignore it,
+     which is worse than an acknowledged gap — the hide-on-403 behaviour on that
+     dashboard is verified by reading and by the single-consumer check, NOT by
+     this harness. Recorded so nobody assumes it is covered. */
   {
     name: 'settings page renders',
     url: '/admin/settings',
@@ -302,7 +331,7 @@ async function runSpec(spec, opts) {
         }))});}catch(e){}` });
     } else {
       await b.send('Page.addScriptToEvaluateOnNewDocument', {
-        source: stubSource(spec.role || 'admin', 'render-check@local', spec.stubRow, spec.rpc),
+        source: stubSource(spec.role || 'admin', 'render-check@local', spec.stubRow, spec.rpc, spec.fetchMap),
       });
     }
 
@@ -341,6 +370,7 @@ async function runSpec(spec, opts) {
         return {
           present: ${JSON.stringify(spec.present || [])}.map(s => [s, has(s), vis(s)]),
           absent:  ${JSON.stringify(spec.absent || [])}.map(s => [s, has(s)]),
+          hidden:  ${JSON.stringify(spec.hidden || [])}.map(s => [s, vis(s), has(s)]),
           order:   Array.from(document.querySelectorAll(${JSON.stringify(spec.orderSel || 'nothing')}))
                         .map(e => (e.textContent || '').trim()),
           values:  Object.entries(${JSON.stringify(spec.values || {})}).map(([sel, want]) => {
@@ -364,6 +394,15 @@ async function runSpec(spec, opts) {
 
     for (const [sel, exists] of p.present) if (!exists) problems.push(`expected element ABSENT: ${sel}`);
     for (const [sel, exists] of p.absent) if (exists) problems.push(`element that must NOT exist is present: ${sel}`);
+    for (const [sel, visible, exists] of p.hidden || []) {
+      /* MUST EXIST AND BE INVISIBLE. Without the exists check this passes on any
+         page where the element is simply absent — which is how it "passed" on a
+         page the harness had been redirected away from. A vacuous assertion is
+         worse than none: it reports coverage it does not have. */
+      if (!exists) problems.push(`hidden-check target not on the page at all: ${sel} (assertion would be vacuous)`);
+      else if (visible) problems.push(`element must be HIDDEN for this role but is visible: ${sel}`);
+      else notes.push(`present and hidden, as required: ${sel}`);
+    }
     for (const [sel, want, got] of p.values || []) {
       if (String(got).trim() !== String(want)) problems.push(`${sel} rendered "${got}", expected "${want}"`);
       else notes.push(`${sel} = "${got}"`);

@@ -505,7 +505,30 @@ server's terms. If the server answers, the data arrives and is painted.
 
 ### 3. The fix is to NOT FETCH, not to hide
 
-Two working patterns in this repo:
+**Three** working patterns, and the third is the one people miss — reaching for
+the page gate by default is how a shared page gets taken away from someone to
+fix one panel.
+
+**c) A PANEL THAT HIDES ON 403** — when the page is legitimately open and only
+one panel is narrower than it.
+
+`dashboard/admin.html` is the VA's daily workspace: Active Pipeline Snapshot,
+Follow Up, the Gmail widget, rate tiles. Its Insights tab calls `insights-data`,
+which is admin-only. Gating the whole page to admin would remove her dashboard to
+fix one tab. Instead `dashboard/utils/insights.js` hides the Insights section AND
+its nav entry when the call comes back 401/403, and moves the user off the hash
+if they are sitting on it — a nav button leading nowhere is its own defect.
+
+The distinction that makes this safe: **the refusal is flagged on the error
+object at the fetch (`err.notPermitted = true`, set only for 401/403), never by
+matching an error message.** Every other failure — network, 500, bad JSON — still
+renders visibly. A panel that hides itself must not become the way real breakage
+disappears, and string-matching a message is how that starts.
+
+Use (c) only when the page genuinely belongs to the broader role. If the whole
+page is admin work, gate the page.
+
+The other two:
 
 - `admin/settings.html` — checks the role and **returns before fetching**:
   `if (role !== 'admin') { ...show notice...; return; }` with the comment

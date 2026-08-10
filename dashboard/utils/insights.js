@@ -61,7 +61,14 @@
     if (!res.ok) {
       var body = '';
       try { body = await res.text(); } catch (e) {}
-      throw new Error('insights-data ' + res.status + (body ? ': ' + body.slice(0, 120) : ''));
+      var err = new Error('insights-data ' + res.status + (body ? ': ' + body.slice(0, 120) : ''));
+      /* FLAG THE ROLE REFUSAL ON THE ERROR ITSELF, not by matching its message.
+         insights-data is admin-only; this dashboard is open to all staff, so a
+         VA gets 403 here and that is expected, not breakage. A hidden panel must
+         never become the way REAL failures disappear — so only 401/403 sets this
+         flag, and everything else (network, 500, bad JSON) still surfaces. */
+      if (res.status === 403 || res.status === 401) err.notPermitted = true;
+      throw err;
     }
     return res.json();
   }
@@ -197,6 +204,7 @@
       renderKpis(data.kpis, target);
     } catch (e) {
       console.error('[insights] overview failed:', e);
+      if (e && e.notPermitted) { hideInsightsEntirely(); return; }
       target.innerHTML = '<div class="insights-error">Overview failed: ' + esc(e.message || 'unknown') + '</div>';
     }
   }
@@ -226,6 +234,7 @@
       panel.querySelectorAll('.insights-chart-body').forEach(function (el) { renderChart(el); });
     } catch (e) {
       console.error('[insights] ' + report + ' failed:', e);
+      if (e && e.notPermitted) { hideInsightsEntirely(); return; }
       panel.innerHTML = '<div class="insights-error">Failed to load ' + esc(report) + ': ' + esc(e.message || 'unknown') + '</div>';
     }
   }
@@ -310,6 +319,25 @@
         document.querySelectorAll('.insights-chart-body').forEach(function (el) { renderChart(el); });
       }, 200);
     });
+  }
+
+
+  /* Remove the Insights tab entirely when the signed-in role may not have it.
+     Not an error box, not an empty chart, not a "no access" message: this
+     dashboard is the VA's daily workspace and a permanent apology occupying a
+     card is worse than the tab simply not being there. The nav entry goes with
+     it — a button that leads to nothing is its own defect. */
+  var _hidden = false;
+  function hideInsightsEntirely() {
+    if (_hidden) return;
+    _hidden = true;
+    var section = document.getElementById('tab-analytics');
+    if (section) section.style.display = 'none';
+    var nav = document.querySelector('[data-crm-nav="analytics"]');
+    if (nav) nav.style.display = 'none';
+    // If the user is sitting on the hash right now, move them somewhere real.
+    var hash = (location.hash || '').replace(/^#/, '');
+    if (hash === 'analytics' || hash === 'insights') location.hash = '#dashboard';
   }
 
   function initInsights() {
