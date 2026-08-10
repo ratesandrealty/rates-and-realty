@@ -157,6 +157,28 @@ function stubSource(role, email, stubRow, rpcMap, fetchMap) {
 
 // ── specs ───────────────────────────────────────────────────────────────────
 const SPECS = [
+  /* The pipeline strip renders nine stages into whatever width the header row
+     has left over. Rene saw "Ne[Cnt]loweAntrProcTClose,os" — nine labels each
+     cut mid-word. Checked at two widths because the failure is width-dependent
+     and a single width proves only that width. */
+  {
+    name: 'pipeline strip legible @1440',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin', width: 1440,
+    present: ['#pipelineTimeline'],
+    noClip: ['#pipelineTimeline > *'],
+    /* Google logs "included multiple times" when its bootstrap runs twice.
+       Counting the tags says whether that is a second <script> or something
+       else — a warning alone does not. */
+    rowCount: { selector: 'script[src*="maps.googleapis.com/maps/api/js"]', expect: 1 },
+  },
+  {
+    name: 'pipeline strip legible @1100',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin', width: 1100,
+    present: ['#pipelineTimeline'],
+    noClip: ['#pipelineTimeline > *'],
+  },
   {
     name: 'lead-detail tab order',
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,
@@ -333,6 +355,16 @@ async function runSpec(spec, opts) {
     await b.send('Runtime.enable');
     await b.send('Log.enable').catch(() => {});
 
+    /* Headless Chrome's default viewport is 800×600. A layout check that does not
+       STATE its width is testing an accidental one — and 800 is narrow enough
+       that a bug present only there reads as "reproduced" when the real screen is
+       fine, and vice versa. Every spec runs at a declared width. */
+    const vw = spec.width || opts.width || 1440;
+    const vh = spec.height || 900;
+    await b.send('Emulation.setDeviceMetricsOverride', {
+      width: vw, height: vh, deviceScaleFactor: 1, mobile: false,
+    }).catch(() => {});
+
     if (opts.token) {
       // Real-session mode: seed the token supabase-js would have stored.
       await b.send('Page.addScriptToEvaluateOnNewDocument', { source:
@@ -396,6 +428,19 @@ async function runSpec(spec, opts) {
                         !(document.body ? (document.body.innerText || '') : '').includes(t)),
           badText: ${JSON.stringify(spec.absentText || [])}.filter((t) =>
                      (document.body ? (document.body.innerText || '') : '').includes(t)),
+          /* Text clipped by its own box. An element with overflow:hidden whose
+             scrollWidth exceeds its clientWidth is showing a FRAGMENT of its
+             label, and if it is also centred the fragment is cut at BOTH ends —
+             mid-word — so adjacent cells read as one garbled string. Nothing
+             throws, no console error, the text is all "on the page" as far as
+             innerText is concerned. Only geometry catches it. */
+          clip: ${JSON.stringify(spec.noClip || [])}.map(sel => {
+            const all = Array.from(document.querySelectorAll(sel));
+            const bad = all.filter(e => e.scrollWidth > e.clientWidth + 1)
+              .map(e => ((e.textContent || '').trim() || '(empty)')
+                        + ' needs ' + e.scrollWidth + 'px in ' + e.clientWidth + 'px');
+            return [sel, all.length, bad];
+          }),
           textLen: (document.body ? (document.body.innerText || '').trim().length : 0),
           title:   document.title,
         };
@@ -441,6 +486,13 @@ async function runSpec(spec, opts) {
     for (const t of p.missingText || []) problems.push(`expected text NOT on page: "${t}"`);
     if (spec.expectText && !(p.missingText || []).length) notes.push(`found: ${spec.expectText.join(' | ')}`);
     if (spec.absentText && !(p.badText || []).length) notes.push(`no forbidden text (${spec.absentText.length} pattern(s) checked)`);
+    for (const [sel, count, bad] of p.clip || []) {
+      /* Same lesson as the hidden[] check: zero matches is not a pass. */
+      if (!count) problems.push(`no-clip target matched nothing: ${sel} (assertion would be vacuous)`);
+      else if (bad.length) {
+        problems.push(`TEXT CLIPPED at ${vw}px — ${bad.length}/${count} of ${sel} cannot show their own label:\n      · ` + bad.join('\n      · '));
+      } else notes.push(`no clipping at ${vw}px: ${sel} × ${count}`);
+    }
     if (spec.minVisibleText && p.textLen < spec.minVisibleText) {
       problems.push(`page rendered only ${p.textLen} chars of visible text (need ≥ ${spec.minVisibleText}) — this is the blank-page signature`);
     }

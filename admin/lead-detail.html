@@ -12633,7 +12633,8 @@ async function lpVoeReqOpen(k){
     sendLabel: 'Send VOE Request &#10148;',
     attachNote: attachNote,
     hideDraftSchedule: true,                 // VOE must go through voe_request_log — no generic draft/schedule
-    onSend: function(){ return _voeComposerSend(st); }
+    onSend: function(){ return _voeComposerSend(st); },
+    onTestCopy: function(){ return _voeSendTestCopy(st); }
   });
   // Reflect the signed borrower authorization in the attachment note if one is on file (display only).
   if(cfg.voe_form_url){
@@ -12645,6 +12646,45 @@ async function lpVoeReqOpen(k){
 // VOE send via the shared composer — mirrors the original lpVoeReqSend pipeline EXACTLY, only sourcing
 // subject / body / recipients from the composer DOM. Preserves: VOE-form + signed-auth attachments (with
 // the confirm() gate), voe_request_log (token + order status), reply_to, CC, and the ytd screenshot embed.
+/* TEST COPY — mails the composed draft to the SIGNED-IN USER only.
+ *
+ * Three things it deliberately does NOT do, each of which is the reason it
+ * exists:
+ *   1. It never calls voe_request_log, so hr_contact_email is untouched. That
+ *      overwrite is what made Vincent Solis's three 2026-08-06 previews
+ *      indistinguishable from real requests.
+ *   2. It logs with template 'voe_request_test', not 'voe_request'. The
+ *      evidence check in order_reminders_run matches on template='voe_request'
+ *      AND to_email = hr_contact_email, so a test copy fails BOTH conditions.
+ *      Excluded twice, structurally, not by remembering to exclude it.
+ *   3. It never touches loan_orders, so nothing advances to 'ordered'.
+ *
+ * The subject is prefixed so the copy is obvious in the recipient's own inbox
+ * too — a preview that looks identical to the real thing in Gmail is the same
+ * trap one layer up. */
+async function _voeSendTestCopy(st){
+  const cid = lpCid(); if(!cid) { showToast('No contact loaded', true); return; }
+  const me = (window._adminUser && window._adminUser.email) || '';
+  if(!me){ showToast('Cannot tell who you are — reload and sign in again.', true); return; }
+  const subjEl = document.getElementById('ecSubject'), bodyEl = document.getElementById('ecBody');
+  const subject = '[TEST COPY — not sent to HR] ' + ((subjEl && subjEl.value) || 'VOE Request');
+  const bodyHtml = '<div style="padding:10px;margin:0 0 14px;border:1px solid #C9A84C;border-radius:8px;'
+    + 'background:#fdf8ec;color:#6b5620;font-family:sans-serif;font-size:13px;">'
+    + '<b>This is a test copy.</b> It was sent to you only. The employer has not received anything, '
+    + 'and this message is not recorded as delivery of the VOE request.</div>'
+    + ((bodyEl && bodyEl.innerHTML) || '');
+  const resp = await _authClient().functions.invoke('email-service',{ body:{
+    to: me, subject: subject, html: bodyHtml, contact_id: cid, template: 'voe_request_test'
+  }});
+  const data = resp && resp.data, error = resp && resp.error;
+  if(error || !data || data.success !== true){
+    let _srv='';
+    try{ if(error&&error.context&&typeof error.context.json==='function'){ const j=await error.context.json(); _srv=(j&&(j.error||j.message))||''; } }catch(_){}
+    throw new Error(_srv || (data&&data.error) || (error&&error.message) || 'send failed');
+  }
+  showToast('Test copy sent to ' + me + ' — HR was not contacted ✓');
+}
+
 async function _voeComposerSend(st){
   const cid=st.cid, k=st.k;
   const to=(getChipEmails('toChips')[0]||'').trim();
@@ -20917,26 +20957,53 @@ function resolveStage(raw) {
   return STAGES.find(function(s){return s.key===mapped;}) ? mapped : 'New Lead';
 }
 
-function renderTimeline(activeStage) {
-  var bar = document.getElementById('pipelineTimeline');
-  if (!bar) return;
-  var active = resolveStage(activeStage);
-  var activeIdx = STAGES.findIndex(function(s){return s.key===active;});
-  bar.innerHTML = STAGES.map(function(s,i) {
+/* Build the nine cells. `compact` drops the LABELS and keeps the colour bands.
+   See renderTimeline for why that is a mode rather than a smaller font. */
+function _tlCells(active, activeIdx, compact) {
+  return STAGES.map(function(s,i) {
     var isActive = s.key === active;
     var isPast = i < activeIdx;
     var isLast = i === STAGES.length - 1;
     var bg = isActive ? s.color : isPast ? s.color+'66' : 'transparent';
     var col = isActive ? '#fff' : isPast ? '#ddd' : '#4A4A55';
     return '<div onclick="updatePipelineStage(\'' + s.key + '\')" title="' + s.key + '" ' +
-      'style="flex:1;min-width:0;display:flex;align-items:center;justify-content:center;cursor:pointer;' +
+      /* block + line-height rather than a centred flex box: a flex child that
+         overflows is clipped at BOTH ends, mid-word, which is what produced
+         "Ne[Cnt]loweAntrProcTClose,os". */
+      'style="flex:1;min-width:0;display:block;text-align:center;line-height:24px;cursor:pointer;' +
       'font-size:9px;font-weight:' + (isActive?'700':'400') + ';white-space:nowrap;overflow:hidden;' +
-      'padding:0 1px;transition:all 0.15s;color:' + col + ';background:' + bg + ';' +
+      'text-overflow:ellipsis;padding:0 2px;transition:all 0.15s;color:' + col + ';background:' + bg + ';' +
       'border-right:' + (!isLast?'1px solid rgba(255,255,255,0.04)':'none') + ';" ' +
       'onmouseover="if(\'' + s.key + '\'!==\'' + active + '\'){this.style.background=\'' + s.color + '33\';this.style.color=\'' + s.color + '\'}" ' +
       'onmouseout="if(\'' + s.key + '\'!==\'' + active + '\'){this.style.background=\'' + (isPast?s.color+'66':'transparent') + '\';this.style.color=\'' + (isPast?'#ddd':'#4A4A55') + '\'}">' +
-      (isActive?'\u25CF ':isPast?'\u2713 ':'') + s.short + '</div>';
+      (compact ? '' : (isActive?'\u25CF ':isPast?'\u2713 ':'') + s.short) + '</div>';
   }).join('');
+}
+
+var _tlStage = null;
+
+function renderTimeline(activeStage) {
+  var bar = document.getElementById('pipelineTimeline');
+  if (!bar) return;
+  var active = resolveStage(activeStage);
+  _tlStage = active;
+  var activeIdx = STAGES.findIndex(function(s){return s.key===active;});
+
+  /* The strip is the ONLY shrinkable item in a header row of fifteen controls,
+     so it absorbs the whole shortfall \u2014 at 1100px it gets 72px for nine labels,
+     i.e. 8px per cell. Nine unreadable fragments are worse than no labels: the
+     status bubble immediately beside the strip already shows the active stage
+     by name, so in compact mode nothing is lost but the hover tooltip.
+
+     The breakpoint is MEASURED, not guessed. Render the labels, then ask the
+     layout whether any cell is hiding part of its own; a hard-coded width would
+     go stale the moment a label or font changed. */
+  bar.innerHTML = _tlCells(active, activeIdx, false);
+  var clipped = Array.prototype.some.call(bar.children, function(c){
+    return c.scrollWidth > c.clientWidth + 1;
+  });
+  if (clipped) bar.innerHTML = _tlCells(active, activeIdx, true);
+
   // Sync status bubble
   var stageDef = STAGES.find(function(s){return s.key===active;});
   var bubble = document.getElementById('statusBubble');
@@ -20947,6 +21014,15 @@ function renderTimeline(activeStage) {
     bubble.style.color = stageDef.color;
   }
 }
+
+/* Resizing across the breakpoint has to re-decide compact vs full — otherwise
+   widening the window leaves the strip in colour-band mode for the rest of the
+   session, which reads as a rendering bug of its own. */
+var _tlResizeT = null;
+window.addEventListener('resize', function () {
+  if (_tlResizeT) clearTimeout(_tlResizeT);
+  _tlResizeT = setTimeout(function () { if (_tlStage) renderTimeline(_tlStage); }, 120);
+});
 
 function renderTempBubble(temp) {
   var t = temp ? (temp.charAt(0).toUpperCase() + temp.slice(1).toLowerCase()) : 'Cold';
@@ -33981,6 +34057,31 @@ async function openEmailComposer(opts) {
     if (opts.hideDraftSchedule) {
       var _dBtn = document.getElementById('ecDraftBtn'); if (_dBtn) _dBtn.style.display = 'none';
       var _schBtn = overlay.querySelector('.ec-schedule-btn'); if (_schBtn) _schBtn.style.display = 'none';
+    }
+    /* TEST COPY. opts.onTestCopy adds a button beside Send that mails the draft
+       to the SIGNED-IN USER and nothing else.
+       It exists because the only way to preview a VOE was to type your own
+       address into the HR Email field — and voe_request_log does
+       hr_contact_email = coalesce(p_hr_email, hr_contact_email), so the order's
+       HR contact was overwritten and the send was logged as a genuine
+       voe_request with status='sent'. Vincent Solis has three such rows from
+       2026-08-06 that look like delivered VOEs and are not. */
+    if (typeof opts.onTestCopy === 'function') {
+      var _sendBtn = document.getElementById('ecSendBtn');
+      if (_sendBtn && _sendBtn.parentNode && !document.getElementById('ecTestCopyBtn')) {
+        var _tc = document.createElement('button');
+        _tc.id = 'ecTestCopyBtn'; _tc.type = 'button';
+        _tc.textContent = '✉ Send me a test copy';
+        _tc.title = 'Mails this draft to you only. Does not touch the HR contact on the order, and is never counted as proof the employer received anything.';
+        _tc.style.cssText = 'background:transparent;border:1px solid rgba(255,255,255,.18);color:#c9c3b4;border-radius:8px;'
+          + 'padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;margin-right:8px;';
+        _tc.addEventListener('click', async function () {
+          _tc.disabled = true; var _o = _tc.textContent; _tc.textContent = 'Sending…';
+          try { await opts.onTestCopy(); } catch (e) { showToast('Test copy failed: ' + ((e && e.message) || e), true); }
+          _tc.disabled = false; _tc.textContent = _o;
+        });
+        _sendBtn.parentNode.insertBefore(_tc, _sendBtn);
+      }
     }
     if (opts.attachNote) {
       var _apRow = document.getElementById('attachPills');
