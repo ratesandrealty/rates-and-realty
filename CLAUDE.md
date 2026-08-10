@@ -581,6 +581,48 @@ enumerate is not a bypass, it is the absence of a rule.
 Deliberately NOT exempt: reminders, listing alerts, campaigns, and anything staff
 composes and sends outbound. That is the traffic the rule exists for.
 
+### Flipping the flags — the order matters, and the two paths are NOT alike
+
+Two staged quiet-hours flags, both OFF: `SMS_QUIET_HOURS` (sms-service) and
+`VOICE_QUIET_HOURS` (twilio-voice `voicemail_drop` **only**). The dial path and
+`make_call` have enforced hours for a long time and are deliberately **not**
+behind any flag — verified: `VOICE_QUIET_HOURS` appears at five lines in the
+repo, all inside the `voicemail_drop` handler, and the twelve lines around each
+older check contain zero references. Proven controls must not become switchable
+because a switch exists nearby.
+
+Each flag needs the same two probes before it flips:
+
+1. outside the window → refused, with the recipient's local time in the reason
+2. inside the window → still sends
+
+**But the two paths do not start from the same place, and that changes what a
+failed probe means.**
+
+| path | history | what the probes actually test |
+|---|---|---|
+| `sms-service` | 141 sends in 30 days | the GUARD only — the path is proven working |
+| `voicemail_drop` | **ZERO all time** — `calls_log` has never recorded one | the guard AND the feature, tangled |
+
+**`voicemail_drop` has never run in production.** So probe 2 cannot distinguish
+"the guard wrongly blocked it" from "voicemail drop was already broken and nobody
+noticed" — there is no working baseline to regress from.
+
+**So for voicemail_drop the order is:**
+
+1. With `VOICE_QUIET_HOURS` still OFF, exercise ONE drop inside the calling
+   window and confirm it reaches Twilio and writes its `calls_log` row. That
+   establishes the feature works at all. Use `+1 555 555 XXXX` — the number is
+   unroutable, so what is proven is that the request is accepted and logged, not
+   that a voicemail was heard.
+2. Only then flip the flag and run the two probes.
+
+For `sms-service`, step 1 is unnecessary. 141 sends is the baseline.
+
+Get this backwards and it costs a day: flip the flag, a drop fails, and the day
+goes on debugging a guard that was working, on a feature that never did. The
+steps look identical for both paths and are not.
+
 ### The consequence, which is the part that will bite
 
 **Every new `sms-service` caller must now choose its bypass by hand**, and a
