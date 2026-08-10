@@ -458,9 +458,39 @@
   }
   /* ── calling-hours guardrail + local presence helpers ── */
   function canCall(l){ return !(l && l.callable_now===false); }
-  function confirmHours(l){
+  /* Calling-hours dialog. The wording is per-action ON PURPOSE, because the
+     server does NOT treat these four the same way and the old single dialog
+     implied it did:
+
+       startCall / bridgeCall  → twilio-voice checks callingHours() on the leg
+                                 that dials the lead and refuses it. Proceeding
+                                 is not an option the system offers, so this no
+                                 longer pretends to offer it.
+       dropVM                  → twilio-voice's voicemail_drop posts straight to
+                                 Twilio Calls.json with NO hours check.
+       sendSMS                 → sms-service has no quiet-hours logic at all.
+
+     The last two really do go out. Telling someone "proceed anyway?" and then
+     silently sending is the same failure as telling them they'll be stopped
+     when they won't — so each branch states what actually happens.
+
+     `mode` is 'server_blocks' or 'sends_anyway'. Anything else is treated as
+     'sends_anyway', because the safe default is to warn that it WILL go out. */
+  function confirmHours(l, mode){
     if(canCall(l)) return true;
-    return confirm("It's "+((l&&l.local_time)||'after hours')+" for this lead — outside 8am–9pm. Proceed anyway?");
+    var when = (l && l.local_time) || 'after hours';
+    if (mode === 'server_blocks') {
+      // No fake choice: a dialog offering an option that does not exist is
+      // worse than no dialog.
+      alert("It's " + when + " for this lead — outside the 8am–9pm calling window.\n\n"
+          + "This call will be REFUSED server-side (TCPA), so there is nothing to confirm. "
+          + "The lead will not be dialled.\n\n"
+          + "Try again inside their local calling hours.");
+      return false;
+    }
+    return confirm("It's " + when + " for this lead — outside the 8am–9pm window.\n\n"
+        + "NOTHING BLOCKS THIS SERVER-SIDE. If you continue, it really will go out now.\n\n"
+        + "Send anyway?");
   }
   function leadAreaCode(phone){
     var d=String(phone||'').replace(/\D/g,'');
@@ -473,7 +503,12 @@
     var m=_twNumbers.filter(function(t){ return String(t.area_code||'')===ac || String(t.phone_number||'').replace(/\D/g,'').indexOf(ac)>-1; })[0];
     return m?(m.label||m.phone_number||('area '+ac)):'main';
   }
-  /* ── click-to-call via the user's own phone (bridge_call) ── */
+  /* ── Bridge call: ring the user's own phone, then dial the lead ──
+     Calls the twilio-voice edge function with action 'bridge_call'. It does NOT
+     touch the click-to-call function, despite the similar name — that one is a
+     separate endpoint used by crmCall in admin/js/crm-comms.js, and it rings
+     RENE_CELL rather than a per-user number. This comment used to say
+     "click-to-call", which sent two separate investigations to the wrong file. */
   function getAgentPhone(){ try{ return (localStorage.getItem('pd_agent_phone')||'').trim(); }catch(e){ return ''; } }
   function setAgentPhone(v){ try{ localStorage.setItem('pd_agent_phone', v||''); }catch(e){} }
   function fmtPhone(p){
@@ -495,7 +530,7 @@
     var lead=_queue[_currentIdx]; if(!lead||!lead.phone){ showToast('No phone on file'); return; }
     var agent=getAgentPhone();
     if(!agent){ agent=promptAgentPhone(); if(!agent) return; }
-    if(!confirmHours(lead)) return; // calling-hours guardrail (same as other call actions)
+    if(!confirmHours(lead,'server_blocks')) return; // bridgeCall: twilio-voice refuses the lead leg outside hours
     endBridgeBar(); // replace any prior bridge bar
     try{
       var r=await _authClient().functions.invoke('twilio-voice',{body:{action:'bridge_call', to:lead.phone, agent_phone:agent, contact_id:lead.contact_id}});
@@ -1009,7 +1044,7 @@
   async function startCall(){
     clearAutoTimer(); // a (manual or auto) call supersedes any pending countdown
     var lead=_queue[_currentIdx]; if(!lead||!lead.phone){ showToast('No phone on file'); return; }
-    if(!confirmHours(lead)) return; // calling-hours guardrail
+    if(!confirmHours(lead,'server_blocks')) return; // startCall: the browser dial path goes through twilio-voice's callingHours()
     if(!_voiceReady||!_device){ showToast('Browser calling unavailable'); return; }
     try{
       showCallBar('Ringing…');
@@ -1074,7 +1109,7 @@
   function dropVMByIndex(i){ var t=_vmTemplates[i]; if(t) dropVM(t.url); }
   async function dropVM(url){
     var lead=_queue[_currentIdx]; if(!lead) return;
-    if(!confirmHours(lead)) return; // calling-hours guardrail
+    if(!confirmHours(lead,'sends_anyway')) return; // dropVM: voicemail_drop posts straight to Twilio, NO server hours check
     try{
       var r=await _authClient().functions.invoke('twilio-voice',{body:{action:'voicemail_drop', to:lead.phone, voicemail_url:url, contact_id:lead.contact_id}});
       if(r&&r.error) throw new Error((r.error&&r.error.message)||'drop failed');
@@ -1147,7 +1182,7 @@
     var lead=_queue[_currentIdx]; if(!lead) return;
     var ta=document.getElementById('smsBox'); var msg=((ta&&ta.value)||'').trim();
     if(!msg){ showToast('Type a message'); return; }
-    if(!confirmHours(lead)) return; // calling-hours guardrail
+    if(!confirmHours(lead,'sends_anyway')) return; // sendSMS: sms-service has no quiet-hours logic at all
     if(!/\bstop\b/i.test(msg)) msg=msg+' Reply STOP to opt out.';
     try{
       var r=await _authClient().functions.invoke('sms-service',{body:{trigger:'custom', to_phone:lead.phone, params:{message:msg}, contact_id:lead.contact_id}});
