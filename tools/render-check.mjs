@@ -31,6 +31,17 @@ const CHROME_CANDIDATES = [
 const BASE = process.env.RC_BASE || 'https://admin.ratesandrealty.com';
 const FIXTURE = 'aa74cc5e-2186-4b40-8608-3d2aa033b9ca';   // ZZ-TEST Fixture Borrower
 
+/* The boundary DIFFERS BY MODE. Printing the stubbed one during a real-session
+   run is the same defect this file exists to catch: it understates what the run
+   proved AND misdescribes what it did. */
+const BOUNDARY_REAL = [
+  'WHAT THIS RUN PROVES : the page renders AND a REAL session was used — RLS,',
+  '                       column grants and in-function role checks were all',
+  '                       exercised as this user.',
+  'WHAT IT DOES NOT     : anything about OTHER roles. A pass as an admin says',
+  '                       nothing about what a va or agent would receive; that',
+  '                       needs a token for that role.',
+];
 const BOUNDARY = [
   'WHAT THIS RUN PROVES : the page renders — scripts parse and execute, the',
   '                       expected elements exist, no uncaught or console error.',
@@ -496,6 +507,6 @@ for (let i = 0; i < specs.length; i++) {
   for (const n of notes) console.log(`      · ${n}`);
 }
 
-console.log('\n' + BOUNDARY.join('\n'));
+console.log('\n' + (token ? BOUNDARY_REAL : BOUNDARY).join('\n'));
 console.log(`\n${specs.length - failed}/${specs.length} page(s) rendered clean.`);
 if (failed) { console.log(`${failed} FAILED.`); process.exit(1); }
