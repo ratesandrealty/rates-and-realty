@@ -197,6 +197,38 @@ const SPECS = [
     present: ['#tab-inbox .gm-rail-scoped', '#tab-inbox .gm-scope', '#tab-inbox .gm-search input'],
     // The whole point: the controls that cleared q must not exist to be clicked.
     absent: ['#tab-inbox [data-fd]', '#tab-inbox [data-ct]', '#tab-inbox .gm-compose'],
+    // Scope is now a CHOICE. Both offers must be on the page, not just the mode.
+    expectText: ['This borrower', 'Full mailbox'],
+  },
+  {
+    /* A masked address cannot be searched for, but a TAG is a stored thread_id
+       and needs no address. So the va keeps the narrow view and is told which
+       half of it is unavailable — rather than landing in the whole mailbox. */
+    name: 'lead-detail inbox as va with a masked address — tags only',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'va',
+    stubRow: { email: 'b9f2c1@masked.local', secondary_email: null,
+               first_name: 'ZZ-TEST', last_name: 'Fixture Borrower', property_address: '' },
+    rpc: { lead_email_threads: [] },
+    steps: [{ click: '.ld-tab-btn[onclick*="\'inbox\'"]', waitMs: 3500 }],
+    expectText: ['Showing tagged threads only', 'This borrower', 'Full mailbox'],
+    // The supersede: the whole mailbox must NOT mount itself under this lead.
+    absent: ['#tab-inbox .gm-inbox'],
+  },
+  {
+    /* The toggle has to SWITCH, not merely render. Clicking Full mailbox must
+       mount the unscoped component and bring back the folder rail that scoped
+       mode removes — asserting on the text alone would pass on a dead button. */
+    name: 'lead-detail inbox toggle actually switches to full mailbox',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    steps: [
+      { click: '.ld-tab-btn[onclick*="\'inbox\'"]', waitMs: 3000 },
+      { click: '#lpInboxScopeBar button[onclick*="\'full\'"]', waitMs: 3500 },
+    ],
+    present: ['#tab-inbox .gm-inbox', '#tab-inbox [data-fd]'],
+    absent: ['#tab-inbox .gm-rail-scoped'],
+    expectText: ['not necessarily about this borrower'],
   },
   {
     /* Shelley Hurle's real stored values, fed through the stub. This proves the

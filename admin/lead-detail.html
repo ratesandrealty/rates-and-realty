@@ -4550,6 +4550,10 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
          because .gm-inbox is height:100% and would collapse to nothing inside a
          panel that has no height of its own. -->
     <div class="ld-tab-panel" id="tab-inbox">
+      <!-- Scope is a CHOICE, not a forced mode. Filled by lpMountInboxTab. -->
+      <div id="lpInboxScopeBar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:0 0 10px;"></div>
+      <div id="lpInboxNote"></div>
+      <div id="lpInboxTagged"></div>
       <div id="lpInboxHost" style="height:72vh;min-height:520px;"></div>
     </div>
 
@@ -13358,12 +13362,154 @@ async function lpSearchMailboxes(){
  * MOUNTED ONCE. Re-mounting on every tab click would throw away scroll position,
  * the open thread and any typed search, and re-pay the Gmail round trip for
  * nothing. */
-var _lpInboxMounted = false;
+/* ── SCOPE IS A CHOICE, REMEMBERED PER USER ────────────────────────────────
+ * Forced scope was right about the disclosure risk and wrong about the answer:
+ * address-only scoping MISSES the cases that matter most — a thread where the
+ * borrower was CC'd, or where the employer replied from their own address.
+ * Those are on the loan file and were invisible.
+ *
+ * So: two modes, and the union of two DIFFERENT matching rules inside the
+ * narrow one. Tags catch what addresses cannot, and vice versa.
+ *
+ * Stored per user, not per browser: two people share this machine and one's
+ * preference must not silently become the other's. */
+var _lpInboxMode = null;   // 'lead' | 'full' — the mode currently RENDERED
+
+function _lpInboxScopeKey(){
+  var who = (window._adminUser && (window._adminUser.id || window._adminUser.email)) || 'anon';
+  return 'rr_lead_inbox_scope:' + who;
+}
+function lpInboxScope(){
+  try {
+    var v = localStorage.getItem(_lpInboxScopeKey());
+    if (v === 'full' || v === 'lead') return v;
+  } catch(_) { /* private mode / storage disabled — fall through to the default */ }
+  return 'lead';   // narrow by default, for every role
+}
+function lpSetInboxScope(v){
+  if (v !== 'lead' && v !== 'full') return;
+  try { localStorage.setItem(_lpInboxScopeKey(), v); } catch(_) {}
+  _lpInboxMode = null;      // force the re-render this click is asking for
+  lpMountInboxTab();
+}
+
+function _lpScopeBarHtml(active){
+  var btn = function(v, label, title){
+    var on = v === active;
+    return '<button type="button" onclick="lpSetInboxScope(\'' + v + '\')" title="' + lpEsc(title) + '" '
+      + 'style="font-size:11.5px;font-weight:700;padding:6px 13px;border-radius:8px;cursor:pointer;'
+      + 'border:1px solid ' + (on ? 'rgba(201,168,76,.45)' : 'rgba(255,255,255,.12)') + ';'
+      + 'background:' + (on ? 'rgba(201,168,76,.14)' : 'transparent') + ';'
+      + 'color:' + (on ? '#C9A84C' : '#9a948a') + ';">' + lpEsc(label) + '</button>';
+  };
+  return '<div style="display:flex;gap:6px;">'
+    + btn('lead', 'This borrower', 'Threads tagged to this lead, plus everything to or from their address')
+    + btn('full', 'Full mailbox', 'The whole mailbox, unfiltered — not limited to this lead')
+    + '</div>';
+}
+
+/* Tagged threads are rendered HERE rather than merged into the Gmail list, and
+   that is deliberate: Gmail's query language cannot express "thread id in (…)",
+   so a merged list would cost one get_thread per tag. It also keeps PROVENANCE
+   visible — "somebody filed this to the loan" and "this address appears in it"
+   are different claims, and the first is the one that survives a CC. */
+async function _lpInboxRenderTagged(el){
+  if (!el) return;
+  var cid = lpCid();
+  if (!cid) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div style="color:#8a8475;font-size:11.5px;padding:4px 2px 10px;">Loading tagged threads…</div>';
+
+  var rows = [];
+  try {
+    var r = await _authClient().rpc('lead_email_threads', { p_contact_id: cid });
+    if (r.error) throw r.error;
+    rows = Array.isArray(r.data) ? r.data : [];
+  } catch(e) {
+    el.innerHTML = '<div style="color:#E5484D;font-size:12px;padding:4px 2px 10px;">Could not load tagged threads: '
+      + lpEsc((e && e.message) || String(e)) + '</div>';
+    return;
+  }
+
+  var allowed = lpMailboxesForRole();
+  var vis = rows.filter(function(t){ return !t.mailbox || allowed.indexOf(t.mailbox) > -1; });
+  var hidden = rows.length - vis.length;
+  var hiddenNote = hidden > 0
+    ? '<div style="font-size:11px;color:#8a8475;padding:4px 2px 0;">' + hidden + ' tagged thread'
+      + (hidden === 1 ? '' : 's') + ' ' + (hidden === 1 ? 'is' : 'are')
+      + ' in a mailbox your role cannot open, so ' + (hidden === 1 ? 'it is' : 'they are') + ' not listed.</div>'
+    : '';
+
+  if (!vis.length) {
+    el.innerHTML = '<div style="font-size:11.5px;color:#8a8475;padding:4px 2px 10px;">'
+      + 'No threads tagged to this lead yet. Open a thread and tag it to file it here.' + hiddenNote + '</div>';
+    return;
+  }
+
+  el.innerHTML =
+    '<div style="font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#8a8475;padding:2px 2px 6px;">'
+      + 'Tagged to this lead · ' + vis.length + '</div>'
+    + '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;">' + vis.map(function(t){
+      var inbound = String(t.last_direction || '').toLowerCase() === 'inbound';
+      var dir = '<span style="color:' + (inbound ? '#50c878' : '#C9A84C') + ';font-weight:700;">' + (inbound ? '↓' : '↑') + '</span>';
+      var cnt = (t.message_count > 1)
+        ? '<span style="font-size:10px;color:#888;border:1px solid rgba(255,255,255,.14);border-radius:9px;padding:0 5px;margin-left:6px;">' + t.message_count + '</span>' : '';
+      return '<div class="lp-ib-tag" data-tid="' + lpEsc(t.thread_id) + '" data-mb="' + lpEsc(t.mailbox || '') + '" '
+        + 'style="padding:9px 11px;border:1px solid rgba(201,168,76,.22);border-radius:9px;background:rgba(201,168,76,.045);cursor:pointer;">'
+        + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;">'
+          + '<span style="font-size:13px;color:#eee;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+          + dir + ' ' + lpEsc(t.subject || '(no subject)') + cnt + '</span>'
+          + '<span style="font-size:11px;color:#888;flex-shrink:0;">' + lpEsc(_lpFmtDT(t.last_at)) + '</span></div>'
+        + '<div style="font-size:11px;color:#888;margin-top:3px;">' + lpEsc(t.last_from || '')
+          + (t.mailbox ? (' &nbsp;·&nbsp; ' + lpEsc(t.mailbox)) : '') + '</div></div>';
+    }).join('') + '</div>' + hiddenNote;
+
+  Array.prototype.forEach.call(el.querySelectorAll('.lp-ib-tag'), function(row){
+    row.addEventListener('click', function(){
+      var tid = row.getAttribute('data-tid'), mb = row.getAttribute('data-mb');
+      if (!window.GmailInbox || !window.GmailInbox.openThread) { alert('Inbox viewer not loaded — reload the page.'); return; }
+      if (!mb) { alert('This thread has no mailbox recorded.'); return; }
+      window.GmailInbox.openThread({ client:_authClient(), mailbox:mb, threadId:tid });
+    });
+  });
+}
 
 function lpMountInboxTab(){
-  if (_lpInboxMounted) return;
   var host = document.getElementById('lpInboxHost');
   if (!host) return;
+  var want = lpInboxScope();
+  if (_lpInboxMode === want) return;   // re-clicking the tab must not re-mount
+
+  var bar    = document.getElementById('lpInboxScopeBar');
+  var note   = document.getElementById('lpInboxNote');
+  var tagged = document.getElementById('lpInboxTagged');
+  if (bar) bar.innerHTML = _lpScopeBarHtml(want);
+  if (note) note.innerHTML = '';
+  if (tagged) tagged.innerHTML = '';
+  host.innerHTML = '';
+  host.style.display = '';
+
+  var boxes = lpMailboxesForRole();
+
+  if (want === 'full') {
+    /* The whole mailbox, by explicit choice. The label still matters: without it
+       unrelated threads read as being about this borrower, which is the failure
+       this tab existed to prevent. */
+    if (note) note.innerHTML =
+      '<div style="margin:0 0 12px;padding:10px 13px;border:1px solid rgba(201,168,76,.33);border-radius:10px;background:rgba(201,168,76,.06);">'
+      + '<div style="font-size:12px;color:#c9c3b4;line-height:1.5;">'
+      + 'Showing the <b>whole ' + lpEsc(boxes.join(' and ')) + ' mailbox</b> — these threads are '
+      + '<b>not necessarily about this borrower</b>. Switch to “This borrower” to narrow it.</div></div>';
+    if (window.GmailInbox) {
+      window.GmailInbox.mount({
+        el: host, client: _authClient(), mailboxes: boxes, showSwitcher: boxes.length > 1
+      });
+    }
+    _lpInboxMode = 'full';
+    return;
+  }
+
+  // ── 'lead': tags ∪ address ────────────────────────────────────────────────
+  _lpInboxRenderTagged(tagged);
 
   var emails = lpContactEmails();
 
@@ -13375,57 +13521,41 @@ function lpMountInboxTab(){
    * Refuse to mount at all. A message saying why is the correct output; an
    * empty inbox would be a lie and a full one would be a disclosure. */
   if (!emails.length) {
-    host.innerHTML = '<div style="padding:34px;text-align:center;color:#8a8475;font-size:13px;line-height:1.6;">'
-      + '<div style="font-size:15px;color:#c9c3b4;margin-bottom:6px;">No email on file for this contact</div>'
-      + 'There is no address to search the mailbox with, so nothing is shown here.<br>'
-      + 'Add an email on the Lead Details tab and reopen this tab.'
+    host.style.display = 'none';
+    if (note) note.innerHTML = '<div style="padding:18px 2px;color:#8a8475;font-size:12.5px;line-height:1.6;">'
+      + '<div style="font-size:14px;color:#c9c3b4;margin-bottom:4px;">No email on file for this contact</div>'
+      + 'There is no address to search the mailbox with, so only tagged threads are shown.<br>'
+      + 'Add an email on the Lead Details tab, or switch to “Full mailbox”.'
       + '</div>';
-    _lpInboxMounted = true;   // the message is the final state; do not retry
+    _lpInboxMode = 'lead';
     return;
   }
 
-  /* MASKED EMAIL -> MOUNT THE FULL processing@ MAILBOX, UNSCOPED.
-     Rene's decision, 2026-08-10. This branch used to say "hidden for your role"
-     and show nothing — accurate but useless: the va cannot see the address, so
-     no per-contact query can be built for her.
+  /* MASKED EMAIL -> TAGS ONLY, AND SAY SO.
+     This supersedes the 2026-08-10 behaviour of mounting the whole processing@
+     mailbox here. That was the right instinct — showing nothing was useless —
+     but the wrong lever: the va cannot see the address, so ADDRESS scoping is
+     what is unavailable to her, not scoping as such. TAGS work for her exactly
+     as they work for an admin, because a tag is a stored thread_id and needs no
+     address at all.
 
-     NOT a new disclosure. She reaches the same mailbox in one click from the VA
-     nav, and gmail-inbox re-checks the mailbox server-side either way. What
-     changes is only where she reaches it from.
-
-     THE LABEL IS THE CONTROL. Without it she would read unrelated threads as
-     being about this borrower, which is worse than showing nothing. It sits
-     above the mailbox, not in a tooltip. The scoped-mode chip is deliberately
-     NOT reused — this is the opposite of scoped and must not borrow its look. */
+     So the narrow view stays narrow, and the message names the limitation. The
+     whole mailbox is still one click away on the Full mailbox toggle — an
+     explicit choice rather than a state she lands in without asking. */
   var real = emails.filter(function(e){ return !/@masked.local$/i.test(e); });
   if (!real.length) {
-    host.innerHTML =
-      '<div style="margin:0 0 12px;padding:11px 13px;border:1px solid rgba(201,168,76,.33);'
-        + 'border-radius:10px;background:rgba(201,168,76,.06);">'
-        + '<div style="font-size:12.5px;font-weight:700;color:#C9A84C;margin-bottom:4px;">'
-          + 'Showing the whole processing@ mailbox — NOT this lead&rsquo;s mail</div>'
-        + '<div style="font-size:11.5px;color:#c9c3b4;line-height:1.5;">'
-          + 'This lead&rsquo;s email address is hidden for your role, so the mailbox cannot be '
-          + 'filtered to them. The threads below are the full inbox and are <b>not '
-          + 'necessarily about this borrower</b>. Use the search box to narrow it.</div>'
-      + '</div><div id="lpInboxHostFull"></div>';
-    var fullHost = document.getElementById('lpInboxHostFull');
-    if (fullHost && window.GmailInbox) {
-      /* No q and no scoped:true — deliberately the UNSCOPED product. mount()
-         refuses scoped mode without a query, which is the right guard for a
-         per-lead view and exactly why it must not be used here. */
-      window.GmailInbox.mount({
-        el: fullHost,
-        client: _authClient(),
-        mailboxes: lpMailboxesForRole(),
-        showSwitcher: false
-      });
-    }
-    _lpInboxMounted = true;
+    host.style.display = 'none';
+    if (note) note.innerHTML =
+      '<div style="margin:0 0 12px;padding:10px 13px;border:1px solid rgba(255,255,255,.12);'
+        + 'border-radius:10px;background:rgba(255,255,255,.03);">'
+        + '<div style="font-size:12px;color:#c9c3b4;line-height:1.5;">'
+          + 'Showing <b>tagged threads only</b> — this lead&rsquo;s address is hidden for your role, '
+          + 'so the mailbox cannot be searched for it. Tag a thread from the Inbox to file it here, '
+          + 'or switch to “Full mailbox”.</div></div>';
+    _lpInboxMode = 'lead';
     return;
   }
 
-  var boxes = lpMailboxesForRole();
   var q = '(' + real.map(function(e){ return 'from:' + e + ' OR to:' + e; }).join(' OR ') + ')';
 
   window.GmailInbox.mount({
@@ -13444,7 +13574,7 @@ function lpMountInboxTab(){
     // Shown in the chip instead of the raw Gmail query, which is unreadable.
     scopeLabel: real.join(', ')
   });
-  _lpInboxMounted = true;
+  _lpInboxMode = 'lead';
 }
 
 /* Compose to this contact, from the mailbox this role is allowed to send as.
