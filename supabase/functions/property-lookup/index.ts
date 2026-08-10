@@ -54,12 +54,19 @@ Deno.serve(async (req: Request) => {
   try {
     const body = await req.json().catch(() => ({}));
     const contact_id = body.contact_id || null;
+    /* 'subject' (the property being financed) or 'home' (the borrower's current
+       residence). Defaults to subject so every existing caller is unchanged. */
+    const scope = body.scope === 'home' ? 'home' : 'subject';
     const mode = String(body.mode || 'fetch');
 
     // ── GET SAVED (no RentCast call) ──────────────────────────────────────────
     if (mode === 'get') {
       if (!contact_id) return err('contact_id required for mode=get', 400);
-      const { data } = await sb.from('property_estimates').select('*').eq('contact_id', contact_id).maybeSingle();
+      /* SCOPED. The unique key is (contact_id, scope) since 2026-08-10; without
+         the scope filter this maybeSingle() throws PGRST116 the moment a contact
+         has both a subject-property and a home estimate. */
+      const { data } = await sb.from('property_estimates').select('*')
+        .eq('contact_id', contact_id).eq('scope', scope).maybeSingle();
       return ok({ success: true, saved: !!data, estimate: data || null });
     }
 
@@ -134,11 +141,11 @@ Deno.serve(async (req: Request) => {
     if (contact_id && body.save !== false) {
       try {
         await sb.from('property_estimates').upsert({
-          contact_id, address,
+          contact_id, address, scope,
           estimated_value: value.estimate, value_low: value.low, value_high: value.high,
           rent_estimate: rent.estimate, rent_low: rent.low, rent_high: rent.high,
           details: details || {}, source: 'rentcast', fetched_at, updated_at: fetched_at,
-        }, { onConflict: 'contact_id' });
+        }, { onConflict: 'contact_id,scope' });
       } catch (_e) { /* persistence best-effort; still return the data */ }
     }
 
