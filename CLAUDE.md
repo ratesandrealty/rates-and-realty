@@ -138,6 +138,32 @@ way: the CLI defaults it to `verify_jwt = true`, which is how every
 with nothing alerting. Pin the value — at its current setting if you are not
 trying to change it — and let the file decide.
 
+### OPEN: three Postgres functions are in production with no copy in the repo
+
+`email_signature_identity`, `purge_stale_temp_credentials`,
+`purge_used_temp_credentials`. **Capture them.**
+
+They are the top movers in `observe-db-functions` — 21–23 of 114 runs each — and
+the mechanism is mechanical, not mysterious: `const BASELINE =
+'supabase/sql/db-functions'`, so the observer diffs production against *the repo
+directory*. A function with no file there has no baseline entry and registers as
+movement every single run. Capturing them stops the churn AND closes the gap;
+they are the same act.
+
+Two of the three are from the temp-credential work, so this is a **recent** gap
+rather than aged drift. That is the reassuring reading and it is also exactly how
+`email-service` started — the difference there was only that nobody looked for 85
+days. The mechanism is identical: production holding source the repo has no
+record of, and a deploy from the checkout silently rolling it back.
+
+```
+supabase functions download … / or capture the DDL into supabase/sql/db-functions/
+git add -A && git commit -m "Capture <fn>"      # source-only, no deploy
+```
+
+Until they are captured, treat the observer's movement counts as inflated by
+three, and do not read those three as "changing constantly".
+
 ### Drift: the repo is authoritative, but only because it was made so
 
 All 128 deployed functions now have source here. That is recent. `email-service`
