@@ -25,8 +25,15 @@ const cors = {
 };
 
 async function queryContacts(filter: any) {
+  /* READ FILTER — an audience answers "who are my contacts now".
+   * Without this a merged-away duplicate is a deliverable address in a campaign:
+   * the same person receives the send twice, on an address the merge already
+   * decided was not the one to keep. Every filter below is optional, so an
+   * audience with no filter is the whole table — which is exactly when the
+   * ghosts arrive. */
   let q = sb.from("contacts")
-    .select("id, first_name, last_name, email, phone, sms_opt_in, pipeline_status, lead_status, loan_type, city, lead_temperature, score_tier, tags, last_contact_date");
+    .select("id, first_name, last_name, email, phone, sms_opt_in, pipeline_status, lead_status, loan_type, city, lead_temperature, score_tier, tags, last_contact_date")
+    .is("merged_into_contact_id", null);
 
   // Apply filters from JSON
   if (filter?.loan_type) q = q.eq("loan_type", filter.loan_type);

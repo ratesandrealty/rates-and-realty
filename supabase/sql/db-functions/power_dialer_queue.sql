@@ -38,7 +38,7 @@ begin
                   then substr(regexp_replace(coalesce(c.phone,''),'\D','','g'),2,3)
                 when length(regexp_replace(coalesce(c.phone,''),'\D','','g'))=10
                   then left(regexp_replace(coalesce(c.phone,''),'\D','','g'),3) else null end ac
-    from contacts c
+    from (select * from contacts where merged_into_contact_id is null) c   -- READ FILTER: never dial a merged-away duplicate
     left join la on la.contact_id = c.id
     left join contact_earnings ce on ce.contact_id = c.id
     left join referral_partners rp on rp.id = c.referral_partner_id

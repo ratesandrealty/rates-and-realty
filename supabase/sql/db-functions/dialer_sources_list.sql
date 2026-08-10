@@ -13,6 +13,7 @@ CREATE OR REPLACE FUNCTION public.dialer_sources_list()
 AS $function$
   select c.source, count(*) from contacts c
   where coalesce(c.deal_outcome,'') not in ('won','lost')
+    and c.merged_into_contact_id is null   -- READ FILTER: current roster only
     and coalesce(c.pipeline_status,'') <> 'Closed'
     and coalesce(c.phone,'') <> '' and coalesce(c.is_co_borrower,false) = false
     and c.do_not_call = false and coalesce(c.source,'') <> ''

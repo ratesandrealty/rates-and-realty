@@ -23,6 +23,7 @@ begin
     from contacts c
     left join la on la.contact_id = c.id
     where coalesce(c.deal_outcome,'') not in ('won','lost')
+      and c.merged_into_contact_id is null   -- READ FILTER: current roster only
       and coalesce(c.pipeline_status,'') <> 'Closed'
       and coalesce(c.phone,'') <> ''
       and coalesce(c.is_co_borrower,false) = false
