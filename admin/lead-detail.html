@@ -2548,7 +2548,10 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
             </select>
           </div>
           <div class="ld-field span-3">
-            <label class="ld-label">Property Address</label>
+            <!-- "Subject" is load-bearing next to Current Home Address in Contact
+                 Info. Both labels otherwise read as "a house", and on a purchase
+                 they are different houses. -->
+            <label class="ld-label">Subject Property Address</label>
             <input class="ld-input" type="text" id="f-property" placeholder="123 Main St, City, State ZIP" autocomplete="off" oninput="if(typeof lpPropEstSyncBtn==='function') lpPropEstSyncBtn();">
             <!-- Property estimate (RentCast via property-lookup edge fn) -->
             <div id="lpPropEst" style="margin-top:10px;border:1px solid rgba(201,168,76,0.25);border-radius:10px;background:rgba(201,168,76,0.04);padding:12px 14px;">
@@ -2587,6 +2590,51 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
           <div class="ld-field">
             <label class="ld-label">Secondary Phone</label>
             <input class="ld-input" type="tel" id="f-phone2" placeholder="(555) 000-0000">
+          </div>
+        </div>
+        <!-- CURRENT HOME ADDRESS — contacts.address/city/state/zip.
+             Deliberately NOT "Property Address": on a purchase these are two
+             different houses, and a home address written into property_address
+             would misstate the subject property on the loan file. 263 contacts
+             have had this stored (CSV Import, mismo-import's current_address_*,
+             extract-lead-from-image) with no field on the page to show it. -->
+        <div class="ld-form-grid" style="grid-template-columns:1fr!important;gap:10px 14px;">
+          <div class="ld-field">
+            <label class="ld-label">Current Home Address</label>
+            <input class="ld-input" type="text" id="f-home-address" placeholder="123 Main St" autocomplete="off"
+                   oninput="if(typeof lpHomeEstSyncBtn==='function') lpHomeEstSyncBtn();">
+          </div>
+        </div>
+        <div class="ld-form-grid" style="grid-template-columns:2fr 1fr 1fr!important;gap:10px 14px;">
+          <div class="ld-field">
+            <label class="ld-label">Home City</label>
+            <input class="ld-input" type="text" id="f-home-city" autocomplete="off"
+                   oninput="if(typeof lpHomeEstSyncBtn==='function') lpHomeEstSyncBtn();">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">State</label>
+            <input class="ld-input" type="text" id="f-home-state" maxlength="2" placeholder="CA" autocomplete="off"
+                   oninput="if(typeof lpHomeEstSyncBtn==='function') lpHomeEstSyncBtn();">
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">ZIP</label>
+            <input class="ld-input" type="text" id="f-home-zip" maxlength="10" autocomplete="off"
+                   oninput="if(typeof lpHomeEstSyncBtn==='function') lpHomeEstSyncBtn();">
+          </div>
+        </div>
+        <!-- Estimate on the HOME address. A purchase borrower's current equity is
+             often the down payment, so this is the same question the subject-property
+             estimate answers, asked about the other house. -->
+        <div class="ld-form-grid" style="grid-template-columns:1fr!important;gap:10px 14px;">
+          <div class="ld-field">
+            <div id="lpHomeEst" style="border:1px solid rgba(201,168,76,0.25);border-radius:10px;background:rgba(201,168,76,0.04);padding:12px 14px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                <span style="font-size:12px;font-weight:700;color:#C9A84C;letter-spacing:0.04em;">Home value estimate</span>
+                <button type="button" id="lpHomeEstBtn" onclick="lpHomeEstFetch()" style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,0.4);color:#C9A84C;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;padding:5px 12px;font-family:inherit;">Get home estimate</button>
+              </div>
+              <div id="lpHomeEstBody" style="margin-top:10px;"></div>
+              <div id="lpHomeEstMsg" style="display:none;font-size:11px;color:#E5484D;margin-top:8px;"></div>
+            </div>
           </div>
         </div>
         <div class="ld-form-grid" style="grid-template-columns:1fr!important;gap:10px 14px;">
@@ -6365,6 +6413,13 @@ async function populateUI() {
   setVal('f-ltv', leadData.ltv ? leadData.ltv + '%' : '');
   setSelectVal('f-timeline', leadData.timeline || '');
   setVal('f-property', leadData.property_address || '');
+  /* Current home address — contacts, not leads. 263 records have carried this
+     with nothing on the page reading it back. */
+  setVal('f-home-address', contactData.address || '');
+  setVal('f-home-city',    contactData.city    || '');
+  setVal('f-home-state',   contactData.state   || '');
+  setVal('f-home-zip',     contactData.zip     || '');
+  if (typeof lpHomeEstSyncBtn === 'function') { try { lpHomeEstSyncBtn(); } catch (_) {} }
   if (typeof lpPropEstInit === 'function') { try { lpPropEstInit(); } catch (_) {} }
   if (typeof lpLoadAppLoanDetails === 'function') { try { lpLoadAppLoanDetails(); } catch (_) {} }
   setVal('f-first-name', contactData.first_name || '');
@@ -6533,7 +6588,8 @@ function wireLeadInfoAutoSave(cId) {
   // Autosave Contact Info + Loan Details (these previously saved only via "Save Changes").
   let _ldDebounce = null;
   const _ldAutoSave = () => { clearTimeout(_ldDebounce); _ldDebounce = setTimeout(() => { if (typeof saveLeadDetails === 'function') saveLeadDetails(); }, 700); };
-  ['f-first-name','f-last-name','f-email','f-phone','f-best-time','f-loan-amount','f-purchase-price','f-down-payment','f-ltv','f-timeline','f-property','f-loan-type'].forEach(id => {
+  ['f-first-name','f-last-name','f-email','f-phone','f-best-time','f-loan-amount','f-purchase-price','f-down-payment','f-ltv','f-timeline','f-property','f-loan-type',
+   'f-home-address','f-home-city','f-home-state','f-home-zip'].forEach(id => {
     const e = document.getElementById(id);
     if (!e || e._ldAutoWired) return;
     e._ldAutoWired = true;
@@ -9557,6 +9613,13 @@ async function saveLeadDetails() {
       email:      getVal('f-email'),
       phone:      getVal('f-phone'),
       secondary_phone: getVal('f-phone2'),
+      /* Home address → contacts. Kept OUT of lFields, where property_address
+         lives: writing a residence into the subject-property column would
+         misstate the loan file. */
+      address: getVal('f-home-address'),
+      city:    getVal('f-home-city'),
+      state:   getVal('f-home-state'),
+      zip:     getVal('f-home-zip'),
       best_time_to_call: getVal('f-best-time'),
     };
     const lFields = {
@@ -10073,6 +10136,62 @@ function _lpPropDateMDY(v){
 function _lpPropAddrVal(){ var el=document.getElementById('f-property'); return el?(el.value||'').trim():''; }
 function _lpPropEstMsg(text){ var el=document.getElementById('lpPropEstMsg'); if(!el) return; el.textContent=text||''; el.style.display=text?'block':'none'; }
 
+/* ── HOME-ADDRESS ESTIMATE ────────────────────────────────────────────────────
+ * The same estimate, asked about the borrower's CURRENT home rather than the
+ * subject property. Shares every renderer and formatter below — only the address
+ * source, the element ids and the persistence differ.
+ *
+ * IT DOES NOT PERSIST, deliberately. property-lookup upserts into
+ * property_estimates with `onConflict: 'contact_id'` — ONE row per contact — so
+ * sending this lookup with a contact_id would OVERWRITE the subject property's
+ * saved estimate with the home's. It is sent with `save:false` and no
+ * contact_id: live-only, gone on reload, which is the right trade against
+ * silently corrupting the subject-property figure a loan file depends on. */
+var _lpHomeEstHasData = false;
+var _lpHomeEstBusy = false;
+
+/* '' IS ABSENT. Shelley Hurle's property_address is an empty string, not null,
+ * and city/state/zip arrive blank on plenty of rows — so every "has an address"
+ * test here trims first. Without that the button offers to price nothing. */
+function _lpHomeAddrVal(){
+  var g=function(id){ var el=document.getElementById(id); return el?(el.value||'').trim():''; };
+  var street=g('f-home-address');
+  if(!street) return '';
+  var city=g('f-home-city'), st=g('f-home-state'), zip=g('f-home-zip');
+  var tail=[city, [st,zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  return tail ? (street+', '+tail) : street;
+}
+function _lpHomeEstMsg(text){ var el=document.getElementById('lpHomeEstMsg'); if(!el) return; el.textContent=text||''; el.style.display=text?'block':'none'; }
+
+function lpHomeEstSyncBtn(){
+  var btn=document.getElementById('lpHomeEstBtn'); if(!btn) return;
+  if(_lpHomeEstBusy){ btn.textContent='Checking…'; btn.disabled=true; btn.style.opacity='0.7'; return; }
+  btn.disabled=false; btn.style.opacity='1';
+  if(!_lpHomeAddrVal()){ btn.textContent='Enter a home address first'; return; }
+  btn.textContent=_lpHomeEstHasData ? '↻ Refresh' : 'Get home estimate';
+}
+
+async function lpHomeEstFetch(){
+  if(_lpHomeEstBusy) return;
+  var addr=_lpHomeAddrVal();
+  if(!addr){ _lpHomeEstMsg('Enter a home address first'); lpHomeEstSyncBtn(); return; }
+  _lpHomeEstMsg('');
+  _lpHomeEstBusy=true; lpHomeEstSyncBtn();
+  try{
+    var headers=await _rnrAuthHeaders();
+    // No contact_id, save:false — see the note above about onConflict:'contact_id'.
+    var res=await fetch(lpPropEstEndpoint(),{ method:'POST', headers:headers, body:JSON.stringify({ address:addr, save:false }) });
+    var json=null; try{ json=await res.json(); }catch(_){}
+    if(!res.ok || !json || json.success===false){ throw new Error((json&&(json.error||json.message))||('Request failed ('+res.status+')')); }
+    _lpHomeEstHasData=true;
+    lpPropEstRender(_lpNormEst(json, false), 'home');
+  }catch(e){
+    _lpHomeEstMsg((e&&e.message)||'Could not fetch estimate');
+  }finally{
+    _lpHomeEstBusy=false; lpHomeEstSyncBtn();
+  }
+}
+
 function lpPropEstSyncBtn(){
   var btn=document.getElementById('lpPropEstBtn'); if(!btn) return;
   if(_lpPropEstBusy){ btn.textContent='Checking…'; btn.disabled=true; btn.style.opacity='0.7'; return; }
@@ -10099,9 +10218,14 @@ function _lpNormEst(src, fromSaved){
   };
 }
 
-function lpPropEstRender(est){
-  var body=document.getElementById('lpPropEstBody'); if(!body) return;
-  if(!est){ body.innerHTML=''; lpPropEstSyncBtn(); return; }
+/* scope: 'property' (default, the subject property) or 'home' (current residence).
+   Parameterised rather than duplicated — the two differ only in which element they
+   fill, which button they resync, and whether "use as purchase price" makes sense. */
+function lpPropEstRender(est, scope){
+  var isHome = scope === 'home';
+  var sync = isHome ? lpHomeEstSyncBtn : lpPropEstSyncBtn;
+  var body=document.getElementById(isHome ? 'lpHomeEstBody' : 'lpPropEstBody'); if(!body) return;
+  if(!est){ body.innerHTML=''; sync(); return; }
   var d=est.details||{};
   var html='';
   if(est.estimated_value!=null && est.estimated_value!==''){
@@ -10131,12 +10255,15 @@ function lpPropEstRender(est){
   if(est.rent_estimate!=null&&est.rent_estimate!==''){
     html+='<div style="font-size:12px;color:#aaa;margin-top:4px;">Est. rent: '+_lpPropMoney(est.rent_estimate)+'/mo</div>';
   }
-  if(est.estimated_value!=null&&est.estimated_value!==''){
+  /* "Use as purchase price" is meaningless for the home estimate — the house
+     they already own is not the one they are buying. Offering it there is how a
+     current-home value ends up in the purchase price of a loan file. */
+  if(!isHome && est.estimated_value!=null && est.estimated_value!==''){
     html+='<div style="margin-top:9px;"><a href="#" onclick="lpPropEstUsePrice('+Number(String(est.estimated_value).replace(/[^0-9.\-]/g,''))+');return false;" style="font-size:11px;color:#C9A84C;text-decoration:underline;cursor:pointer;">Use as purchase price</a></div>';
   }
-  html+='<div style="font-size:10px;color:#666;margin-top:10px;border-top:1px solid rgba(255,255,255,0.06);padding-top:6px;line-height:1.4;">As of '+(est.fetched_at?_lpPropDateMDY(est.fetched_at):'—')+' · Automated estimate (RentCast), not an appraisal.</div>';
+  html+='<div style="font-size:10px;color:#666;margin-top:10px;border-top:1px solid rgba(255,255,255,0.06);padding-top:6px;line-height:1.4;">As of '+(est.fetched_at?_lpPropDateMDY(est.fetched_at):'—')+' · Automated estimate (RentCast), not an appraisal.'+(isHome?' Not saved — re-run after a reload.':'')+'</div>';
   body.innerHTML=html;
-  lpPropEstSyncBtn();
+  sync();
 }
 
 // ON LOAD: free saved lookup only (no live API call).

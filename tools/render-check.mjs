@@ -69,7 +69,7 @@ function fail(msg) { console.error('\nREFUSED: ' + msg); process.exit(2); }
  * than throwing: the harness is asserting on RENDERING, and a stub that throws
  * would produce console errors that the harness then reports as page failures —
  * turning gaps in the stub into false alarms about the page. */
-function stubSource(role, email) {
+function stubSource(role, email, stubRow) {
   return `(() => {
     const RES = (data) => Promise.resolve({ data, error: null });
     const q = () => { const t = RES([]);
@@ -81,9 +81,10 @@ function stubSource(role, email) {
          out of rendering when their subject record is missing — which is correct
          behaviour, but it means a null here makes the harness assert against a
          page that deliberately stopped, and report a stub gap as a page defect. */
-      const row = () => ({ id: '${FIXTURE}', contact_id: '${FIXTURE}',
+      const row = () => Object.assign({ id: '${FIXTURE}', contact_id: '${FIXTURE}',
         first_name: 'ZZ-TEST', last_name: 'Fixture Borrower',
-        email: 'zz-test@example.com', pipeline_status: 'New Lead', created_at: new Date().toISOString() });
+        email: 'zz-test@example.com', pipeline_status: 'New Lead', created_at: new Date().toISOString() },
+        ${JSON.stringify(stubRow || {})});
       h.single = () => RES(row()); h.maybeSingle = () => RES(row()); h.csv = () => RES('');
       return h; };
     const session = { access_token: 'stub', token_type: 'bearer', expires_at: Math.floor(Date.now()/1000)+3600,
@@ -137,6 +138,29 @@ const SPECS = [
     present: ['#tab-inbox .gm-rail-scoped', '#tab-inbox .gm-scope', '#tab-inbox .gm-search input'],
     // The whole point: the controls that cleared q must not exist to be clicked.
     absent: ['#tab-inbox [data-fd]', '#tab-inbox [data-ct]', '#tab-inbox .gm-compose'],
+  },
+  {
+    /* Shelley Hurle's real stored values, fed through the stub. This proves the
+     * BINDING (contacts.address → #f-home-address) renders them; that the row
+     * exists is proven separately by SQL. The stub cannot prove both at once —
+     * see the boundary note. */
+    name: 'lead-detail home address field (Shelley Hurle values)',
+    url: `/admin/lead-detail?contact_id=68a22836-243b-443e-935d-29ba5bb7cbe1`,
+    role: 'admin',
+    stubRow: { address: '1742 West Avenue L', city: 'Lancaster', state: 'CA', zip: '93534',
+               first_name: 'Shelley', last_name: 'Hurle', property_address: '' },
+    present: ['#f-home-address', '#f-home-city', '#f-home-state', '#f-home-zip', '#lpHomeEstBtn'],
+    values: {
+      '#f-home-address': '1742 West Avenue L',
+      '#f-home-city': 'Lancaster',
+      '#f-home-state': 'CA',
+      '#f-home-zip': '93534',
+      // Address present → the button offers to price it.
+      '#lpHomeEstBtn': 'Get home estimate',
+      // property_address is an EMPTY STRING on this record. It must read as
+      // absent, or the estimate button offers to price nothing.
+      '#lpPropEstBtn': 'Enter a property address first',
+    },
   },
   {
     name: 'settings page renders',
@@ -223,7 +247,7 @@ async function runSpec(spec, opts) {
         }))});}catch(e){}` });
     } else {
       await b.send('Page.addScriptToEvaluateOnNewDocument', {
-        source: stubSource(spec.role || 'admin', 'render-check@local'),
+        source: stubSource(spec.role || 'admin', 'render-check@local', spec.stubRow),
       });
     }
 
@@ -264,6 +288,13 @@ async function runSpec(spec, opts) {
           absent:  ${JSON.stringify(spec.absent || [])}.map(s => [s, has(s)]),
           order:   Array.from(document.querySelectorAll(${JSON.stringify(spec.orderSel || 'nothing')}))
                         .map(e => (e.textContent || '').trim()),
+          values:  Object.entries(${JSON.stringify(spec.values || {})}).map(([sel, want]) => {
+                     const e = document.querySelector(sel);
+                     // <button> HAS a .value property (empty by default), so keying
+                     // on "value in e" reads buttons as blank. Gate on tag instead.
+                     const isField = e && /^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName);
+                     return [sel, want, e ? (isField ? e.value : (e.textContent || '')) : '(no element)'];
+                   }),
           textLen: (document.body ? (document.body.innerText || '').trim().length : 0),
           title:   document.title,
         };
@@ -273,6 +304,10 @@ async function runSpec(spec, opts) {
 
     for (const [sel, exists] of p.present) if (!exists) problems.push(`expected element ABSENT: ${sel}`);
     for (const [sel, exists] of p.absent) if (exists) problems.push(`element that must NOT exist is present: ${sel}`);
+    for (const [sel, want, got] of p.values || []) {
+      if (String(got).trim() !== String(want)) problems.push(`${sel} rendered "${got}", expected "${want}"`);
+      else notes.push(`${sel} = "${got}"`);
+    }
 
     if (spec.order) {
       const idx = spec.order.map((label) => p.order.findIndex((t) => t.includes(label)));
