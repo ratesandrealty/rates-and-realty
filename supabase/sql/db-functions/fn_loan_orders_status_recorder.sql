@@ -1,0 +1,8 @@
+-- AFTER UPDATE recorder on loan_orders: who changed a status, by what route.
+-- "Who marked this ordered" was unanswerable — Vincent Solis's VOE went to
+-- 'ordered' on 2026-08-07 16:50:33, a day after every send attempt and 87 seconds
+-- after a note: two separate actions, neither recorded.
+-- A RECORDER, NOT A GATE. Same shape as trg_contacts_delete_recorder: wrapped so
+-- a failure warns and the update proceeds, and a null actor is DIAGNOSTIC
+-- ("not through the app") rather than merely missing.
+-- Full definition lives in migration voe_delivery_evidence_error_capture_order_audit.

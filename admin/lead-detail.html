@@ -12709,8 +12709,13 @@ async function _voeComposerSend(st){
     return;
   }
   // Log FIRST so the reply_token exists BEFORE we send — HR replies route back to us via reply_to.
-  // voe_request_log → { reply_token, email_log_id, order_id }; it also stamps the order (status→ordered,
-  // HR fields, ordered_at, last_follow_up_at, reply_token) + writes email_log.
+  // voe_request_log → { reply_token, email_log_id, order_id }. It writes the HR
+  // fields and the reply_token onto the order and inserts an email_log row with
+  // status 'pending'. IT DOES NOT SET status='ordered' OR ordered_at — an earlier
+  // version of this comment said it did, which is wrong and would send a fix to
+  // the wrong function. The order is advanced only by voe_request_sent(p_ok=true)
+  // AFTER email-service returns, and its failure branch deliberately leaves the
+  // order untouched so nothing is marked ordered that HR never received.
   let reply_token=null, email_log_id=null;
   try{
     const lr=await _authClient().rpc('voe_request_log',{ p_order_id:st.orderId, p_contact_id:cid, p_hr_name:hrName||null, p_hr_email:to||null, p_hr_phone:hrPhone||null, p_employer:employer||null, p_subject:subject, p_body_html:bodyHtml });
@@ -12726,7 +12731,20 @@ async function _voeComposerSend(st){
     if(attachments) body.attachments=attachments;
     const resp=await _authClient().functions.invoke('email-service',{ body:body });
     const data=resp&&resp.data, error=resp&&resp.error;
-    if(error||!data||data.success!==true) throw new Error((data&&data.error)||(error&&error.message)||'send failed');
+    if(error||!data||data.success!==true){
+      /* READ THE SERVER'S BODY, not the client library's wrapper.
+         functions.invoke returns data:null on a non-2xx and puts the response in
+         error.context — so (data && data.error) is undefined and this used to
+         fall through to error.message, which is the literal string "Edge Function
+         returned a non-2xx status code". That is what got written against
+         Vincent Solis's failed VOE, and it explains nothing about why an
+         employment verification did not reach the employer. Same extraction
+         inbox.js already uses. */
+      let _srv='';
+      try{ if(error&&error.context&&typeof error.context.json==='function'){ const j=await error.context.json(); _srv=(j&&(j.error||j.message))||''; } }catch(_){}
+      if(!_srv){ try{ if(error&&error.context&&typeof error.context.text==='function') _srv=(await error.context.text()||'').slice(0,300); }catch(_){} }
+      throw new Error(_srv || (data&&data.error) || (error&&error.message) || 'send failed');
+    }
     /* ONLY NOW is the order ordered. voe_request_log no longer asserts it — it
        prepares the token and a 'pending' log row, and this is what records that
        the send actually happened. */
