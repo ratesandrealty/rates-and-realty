@@ -157,7 +157,12 @@ transferred; **no Drive folder created** on any of the four survivors.
 
 ---
 
-## THE READ FILTER IS NOT APPLIED — read this first
+## ~~THE READ FILTER IS NOT APPLIED~~ — SUPERSEDED 2026-08-10
+
+> **This section is history.** The filter was applied on 2026-08-10; see
+> "THE READ FILTER IS COMPLETE" below. The map and the rule in this section are
+> still the reference for WHICH surfaces filter and which do not — that is why it
+> is kept rather than deleted. Only the "not applied" status is out of date.
 
 Four merged-away contacts still appear everywhere:
 
@@ -228,10 +233,120 @@ and there are many.
 
 ---
 
+## THE READ FILTER IS COMPLETE — 2026-08-10
+
+Every surface on the map above is now either filtered or **deliberately excluded
+with a recorded reason**. Six batches, each run the same way: the surface's
+PREDICATE was evaluated against the four ghosts *before* any change, because
+every cap encountered turned out to be an unordered slice where observing results
+proved nothing.
+
+Two views carry most of it. `contacts_live` (raw) and `contacts_secure_live`
+(masked) are `contacts`/`contacts_secure` minus merged rows. Roster reads —
+counts, lists, audiences, dashboards, the people grid, its CSV export, the
+pipeline board — select from those. **Neither replaces the by-id path**:
+`contacts_secure` itself is unfiltered on purpose, because lead-detail loads a
+contact through it by id and a merged contact must stay reachable by direct link.
+
+### What was NOT filtered, and why
+
+- **`share_recipients`** — see the correction above. By-id lookup.
+- **`email_log`, `sms_log`, `calls_log`, `activity_events`, `signature_*`,
+  `pipeline_stage_history`, `audit_log`** — history. Those things really happened.
+- **The scheduled-send sweeps** (`send-scheduled-emails`, `send-scheduled-sms`) —
+  they read `email_log`/`sms_log` queues, and a scheduled row carries a
+  contact_id someone chose. There are zero scheduled rows of either kind today,
+  so this is a rule decision rather than a live one. If one ever exists for a
+  merged contact, fix it at the point of scheduling — filtering the sweep would
+  silently drop a message someone deliberately queued.
+- **By-id reads inside otherwise-filtered functions** — e.g. `lead-scorer`'s
+  single-contact scorer, `people-admin`'s bulk actions taking an explicit
+  `contact_ids` array. Dropping one of those silently would make the UI lie about
+  what it just did.
+
+### Surfaces that never leaked
+
+Recorded because "we filtered it" and "it was leaking" are different claims:
+`refi-watch` (no ghost is `deal_outcome='won'`), `loan-date-nudges` (no ghost has
+a `loan_key_dates` or `loan_orders` row), `surface_stale_leads`, the five VA
+functions (no ghost is shared with anyone), the three partner rollups (no ghost
+has a `referral_partner_id`), `pipeline_velocity_report`, and both dashboards'
+stage counts. Those got the filter defensively. The ones that genuinely leaked:
+the people list, the two recipient searches, the whole dialer, the campaign
+audience, `lead-scorer`, `proactive-followups`, `esign_people_search`,
+`insights-data`, and the two dashboard totals.
+
+### The visible proof
+
+`total_leads` 1046 → 1042 and `new_leads` 1005 → 1001. **Stage counts do not
+move** — all four ghosts are `New Lead`, so Active Pipeline, Pre-Approved,
+Follow Up and Closed are unchanged. Anyone watching those tiles for evidence will
+correctly see nothing.
+
+---
+
+## The one row the merge missed — and the blind spot it exposed
+
+`contact_merge` is catalogue-driven off `contact_fk_catalogue`, which is built
+from FOREIGN KEYS. **A table with a `contact_id` column and no FK constraint is
+invisible to it.** That is not a bug in the merge; it is the cost of the design,
+and it was assumed away.
+
+Surveyed 2026-08-10: 44 tables carry a contact-ish column with no FK, but only
+**two held rows still pointing at a ghost**, and only one mattered.
+
+- **`videos`** — one row, a screen recording made for Rene on 2026-08-05, sitting
+  on the id merged away three days later. **Repointed by hand to `ce753903` on
+  2026-08-10, in one transaction that wrote the `contact_merge_moves` row BEFORE
+  moving anything**, so a failed record aborts the move rather than leaving an
+  unrecorded hand-edit. An `audit_log` row records it as
+  `MANUAL_MERGE_REPOINT` with the reason.
+- **`contact_earnings`** — 4 rows, one per ghost, all zero/zero, and all four
+  survivors already have their own row. **Left alone.** Repointing would collide
+  on the PK and destroy a survivor's row to gain nothing.
+
+**`contact_merge_undo` replays from `contact_merge_moves`, NOT from the
+catalogue** — verified in the function body before that row was moved, not after:
+
+```sql
+for r in select * from contact_merge_moves where merge_id = p_merge_id and moved ...
+  execute format('update public.%I set %I = $1 where %I::text = $2', r.table_name, r.fk_column, r.pk_column)
+```
+
+So the hand-written record is replayed exactly like a catalogue-driven one, and
+undo is correct again. Had it read the catalogue at replay time, the record would
+have been decorative and the row should not have been moved.
+
+### THE BLIND SPOT IS STILL OPEN
+
+**The next merge will miss the same way.** Nothing has changed about how
+`contact_fk_catalogue` is built. Any table that gains a `contact_id` without an FK
+is invisible, and the survey above is a snapshot, not a guard.
+
+- **What closes it:** `supabase/sql/STAGED_contact_fk_hardening_20260804.sql`,
+  which adds the missing FKs so the catalogue sees those tables.
+- **What blocks the staged file:** 25 orphan rows — `loan_liabilities` (14),
+  `loan_scenarios` (7), `loan_income` (3), `lender_submissions` (1) — from 7
+  contacts deleted before 2026-06-19. `ADD CONSTRAINT` validates existing rows,
+  so they abort it. They carry **residual creditor account numbers**, which makes
+  their disposal a **retention/erasure decision for E Mortgage, not technical
+  work**. Deleting them so a constraint validates would resolve the question by
+  destroying the evidence of it. Same question as the 12 orphaned borrower Drive
+  files and the seven April–May deletions; one compliance answer unblocks all
+  three.
+- **What applying it would NOT do:** fix anything retroactively. The catalogue is
+  read at merge time and the four merges already ran.
+
+Until that answer arrives, merges must stay rare and hand-checked. **This is what
+blocks any bulk dedupe.**
+
+---
+
 ## Still open
 
 - Inventory `2133214747` Roberto Alvarez / Roberto Almaraz. Report only.
-- Apply the read filter, using the map above.
+- Retention decision on the 25 orphan rows — unblocks the staged FK file, which
+  closes the catalogue blind spot above. Compliance, not engineering.
 - Fix the preflight to consider composite unique indexes.
 - Decide whether unique-FK collisions (`contact_intelligence`,
   `processing_items`) should be resolved rather than skipped.
