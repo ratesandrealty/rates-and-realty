@@ -182,3 +182,43 @@ merges missed, are both in the clean 20.
 The two newly-found orphans need their own disposition. They are not covered by
 the retention decision above, because that decision named seven specific
 contacts and these are two others.
+
+
+---
+
+# APPLIED 2026-08-10 — 20 constraints in, 6 pending
+
+Approved by Rene on the corrected 20/6 split. Migration
+`contact_fk_hardening_clean_20`.
+
+**Result:** FKs to `contacts` went 80 → **100** (65 cascade, 30 set null), and
+`contact_fk_catalogue` now has **97 entries**. `videos` and
+`property_estimates` — the two tables whose rows the 2026-08-08 merges actually
+missed — are now in the catalogue, so a future merge repoints them automatically.
+
+`ON DELETE` semantics were taken verbatim from the staged file, which had
+reasoned about each: **cascade** where the row is part of the contact's working
+set, **set null** where the row records OUR activity and should outlive the
+contact.
+
+## The 6 still pending, and why
+
+**Covered by the retention decision (items 1–2 above) — do not apply until the
+disposition of the seven pre-2026-06-19 deletions is known:**
+
+| constraint | orphans |
+|---|---|
+| `loan_liabilities_contact_id_fkey` | 14 |
+| `loan_scenarios_contact_id_fkey` | 7 |
+| `loan_income_contact_id_fkey` | 3 |
+| `lender_submissions_contact_id_fkey` | 1 |
+
+**NOT covered by any decision — these need their own:**
+
+| constraint | orphans | dangling contact | row created |
+|---|---|---|---|
+| `app_notifications_contact_id_fkey` | 1 | `414506db…` | 2026-08-06 |
+| `esign_documents_contact_id_fkey` | 1 | `7d9c0291…` | 2026-06-19 |
+
+Different contact ids from the seven. The retention decision names seven specific
+contacts and these are two others, so it does not reach them.
