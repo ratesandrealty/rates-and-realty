@@ -525,6 +525,14 @@
        * smaller and lighter, with a dot instead of an icon. */
       '.gm-cats{display:flex;flex-direction:column;gap:1px;margin-top:2px}',
       '.gm-cats-l{font-size:9px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:rgba(255,255,255,.32);padding:6px 2px 3px 9px}',
+      /* Scoped rail: narrower, and the chip is deliberately styled as a LABEL —
+         no border-radius pill, no hover, no pointer — so it does not read as one
+         more filter button next to the ones that are gone. */
+      '.gm-rail-scoped{width:216px;gap:12px}',
+      '.gm-scope{padding:10px 11px;border-radius:9px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.07)}',
+      '.gm-scope-l{font-size:9px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:rgba(255,255,255,.32);margin-bottom:5px}',
+      '.gm-scope-v{font-size:11.5px;line-height:1.45;color:rgba(255,255,255,.82);word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}',
+      '.gm-scope-n{margin-top:7px;font-size:10.5px;line-height:1.45;color:rgba(255,255,255,.38)}',
       '.gm-cats button{display:flex;align-items:center;gap:7px;width:100%;text-align:left;padding:5px 9px 5px 20px;border-radius:6px;border:1px solid transparent;background:transparent;color:rgba(255,255,255,.5);font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit}',
       '.gm-cats button:hover{background:rgba(255,255,255,.04);color:#ccc}',
       '.gm-cats button.on{background:rgba(201,168,76,.09);color:var(--g);font-weight:700}',
@@ -596,6 +604,11 @@
       '  .gm-cats{flex-direction:row;gap:6px;flex-basis:100%;min-width:0;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:0}',
       '  .gm-cats-l{display:none}',
       '  .gm-cats button{width:auto;min-height:36px;padding:6px 12px;flex-shrink:0}',
+      /* Scoped rail on a phone: the strip holds only a switcher and a text chip,
+         so let the chip take the full row rather than being squeezed to nothing. */
+      '  .gm-rail-scoped{width:100%}',
+      '  .gm-scope{flex-basis:100%;min-width:0;padding:8px 10px}',
+      '  .gm-scope-n{display:none}',
       '  .gm-list{width:100%}',
       '  .gm-body .gm-pane{display:none}',
       '  .gm-inbox.gm-show-pane .gm-list{display:none}',
@@ -3183,6 +3196,37 @@
     if (!cl) { el.innerHTML = '<div class="gm-empty">Not signed in.</div>'; return; }
     var mailboxes = opts.mailboxes && opts.mailboxes.length ? opts.mailboxes : ['processing@ratesandrealty.com'];
     var showSwitcher = !!opts.showSwitcher && mailboxes.length > 1;
+
+    /* SCOPED MODE — `mount({ scoped: true, q: '…' })`.
+     *
+     * The per-lead Inbox tab shows ONE contact's mail inside a page about that
+     * contact. Everything below exists because "scoped" has to be a property of
+     * the component, not a habit of its caller.
+     *
+     * The bug this closes was not in the mount path — that always carried q.
+     * It was that the folder buttons (Inbox/Sent/Drafts/Trash) and the category
+     * buttons each did `state.q = ''` before re-listing, on purpose: in the
+     * standalone inbox a live search must not survive picking a folder, or the
+     * rail would highlight Sent while still listing search hits. Correct there.
+     * On a lead tab it means ONE CLICK on a control that looks like a view
+     * toggle silently widens the list to the entire mailbox — the va disclosure
+     * case, reachable without typing anything.
+     *
+     * The fix is structural, not defensive: in scoped mode those controls are
+     * never rendered, so there is nothing to click, and listParams() THROWS
+     * rather than returning label-scoped params if q is somehow empty. A guard
+     * that can be reached and returns the whole mailbox is not a guard. */
+    var scoped = !!opts.scoped;
+    var scopeQ = String(opts.q || '').trim();
+    var scopeLabel = String(opts.scopeLabel || '');
+    if (scoped && !scopeQ) {
+      /* Refuse to mount, exactly as lead-detail refuses for a contact with no
+         address. An empty q is not "no filter", it is the whole mailbox. */
+      el.innerHTML = '<div class="gm-empty">Nothing to show — this inbox was opened ' +
+        'scoped to a contact but no search was supplied, and listing the whole ' +
+        'mailbox here would show mail belonging to other people.</div>';
+      return;
+    }
     /* INITIAL QUERY. `mount({ q: 'from:x OR to:x' })` opens the component
      * already scoped — used by the per-lead Inbox tab so the same component
      * serves both the full mailbox and one contact's mail, rather than a fork.
@@ -3217,8 +3261,29 @@
 
     var HINT = 'Gmail · ' + mailboxes.join(' / ') + ' — tag a thread to file it on a lead';
 
-    root.innerHTML =
-      '<div class="gm-rail">' +
+    /* THE RAIL, and why scoped mode does not have one.
+     *
+     * Every control in it is wrong on a lead-scoped tab, and for three different
+     * reasons rather than one:
+     *   - folders and categories CLEAR q (see the scoped-mode note above), so
+     *     they are the disclosure bug itself;
+     *   - the counts come from Gmail's label_counts, which returns per-label
+     *     totals for the WHOLE mailbox and cannot be narrowed by a query. A
+     *     badge reading 999+ next to a list of four threads is a number about
+     *     mail this tab is deliberately not showing;
+     *   - Drafts has no contact scope at all — a draft carries no thread.
+     * So it is replaced wholesale, not trimmed. What survives is the mailbox
+     * switcher and a chip that states the scope and cannot be clicked. */
+    var railHtml = scoped
+      ? '<div class="gm-rail gm-rail-scoped">' + sw +
+          '<div class="gm-scope">' +
+            '<div class="gm-scope-l">Showing only mail to or from</div>' +
+            '<div class="gm-scope-v">' + esc(scopeLabel || scopeQ) + '</div>' +
+            '<div class="gm-scope-n">Everything else in this mailbox is hidden on this tab. ' +
+              'Edit the search box to look wider.</div>' +
+          '</div>' +
+        '</div>'
+      : '<div class="gm-rail">' +
         '<button class="gm-compose" data-gm="compose">✏️ Compose</button>' + sw +
         '<div class="gm-fold" data-gm="fold">' + FOLDERS.map(function (f) {
           return '<button data-fd="' + f.k + '"' + (f.k === 'INBOX' ? ' class="on"' : '') +
@@ -3235,7 +3300,10 @@
               '<span class="c" data-ccnt="' + c.k + '" style="display:none"></span></button>';
           }).join('') +
         '</div>' +
-      '</div>' +
+      '</div>';
+
+    root.innerHTML =
+      railHtml +
       '<div class="gm-main">' +
         // ONE row: search + refresh. The old page-title row and its hint are gone;
         // the hint survives as this tooltip and as the reading pane's empty state.
@@ -3284,6 +3352,15 @@
 
     /** Folder/category → Gmail list params. A search box query overrides folder scoping. */
     function listParams() {
+      /* Scoped mode has no unfiltered branch to fall into. This throw is not
+         expected to fire — the controls that used to clear q are not rendered —
+         which is exactly why it is a throw and not a fallback: if a future edit
+         reintroduces a path that empties q, this fails loudly here instead of
+         quietly listing someone else's mail under a borrower's name. */
+      if (scoped) {
+        if (!state.q) throw new Error('Refusing to list: this inbox is scoped to a contact and the search is empty.');
+        return { q: state.q };
+      }
       if (state.q) return { q: state.q };
       var f = folder();
       var p = {};
@@ -3383,6 +3460,9 @@
     /* Unread badges in the rail. Archived has none by design — it is a search
      * expression, not a Gmail label, so there is no count to read. */
     function loadCounts() {
+      // Scoped mode renders no folder rail to hold the badges, and label_counts
+      // is whole-mailbox regardless. Belt and braces with the call site.
+      if (scoped || !foldEl) return;
       invoke(cl, state.mailbox, 'label_counts', {}).then(function (r) {
         var counts = (r && r.counts) || {};
         FOLDERS.forEach(function (f) {
@@ -3456,7 +3536,9 @@
           }
         }
         renderList();
-        loadCounts();
+        // No rail in scoped mode, so nothing to count into — and label_counts is
+        // whole-mailbox anyway. Skipping it also drops a request per load.
+        if (!scoped) loadCounts();
       } catch (e) { listEl.innerHTML = '<div class="gm-empty">' + esc(e.message) + '</div>'; }
     }
 
@@ -3534,15 +3616,29 @@
       });
     });
 
-    // compose
-    root.querySelector('[data-gm="compose"]').addEventListener('click', function () {
+    /* Compose. Absent in scoped mode — the rail is gone, and the lead page has
+       its own compose button that prefills the contact, which a blank composer
+       here would not. Look it up rather than assuming it exists. */
+    var composeBtn = root.querySelector('[data-gm="compose"]');
+    if (composeBtn) composeBtn.addEventListener('click', function () {
       openCompose({ client: cl, mailbox: state.mailbox, onSent: function () { loadThreads(); } });
     });
 
     function doSearch() {
-      state.q = searchEl.value.trim();
+      var typed = searchEl.value.trim();
+      /* Editing the query in scoped mode is allowed — widening the search is a
+         deliberate act by someone who can already read this mailbox. CLEARING it
+         is not the same act: an empty box means "no filter", which here means the
+         whole mailbox under a contact's name. Restore the scope and say so
+         rather than refusing silently or listing everything. */
+      var restored = scoped && !typed;
+      if (restored) { searchEl.value = scopeQ; state.q = scopeQ; }
+      else { state.q = typed; }
       state.active = null;
+      // loadThreads() clears the hint on entry, so set it after the call — it
+      // runs synchronously up to its first await.
       loadThreads();
+      if (restored) setHint('An empty search would have listed the whole mailbox, so the contact scope was put back. Edit it if you want a wider search.');
     }
     root.querySelector('[data-gm="go"]').addEventListener('click', doSearch);
     root.querySelector('[data-gm="refresh"]').addEventListener('click', loadThreads);
