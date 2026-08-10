@@ -57,7 +57,11 @@ Deno.serve(async (req: Request) => {
 
     const { data: rows, error } = await sb.from("contacts")
       .select("id,first_name,last_name,email,phone,closed_date,closing_lender,closing_loan_type,loan_type,loan_amount,current_interest_rate,refi_alert_last_at,refi_alert_last_rate, mortgage_applications(closed_rate,locked_rate,current_interest_rate,loan_amount,closed_rate_date)")
-      .eq("deal_outcome", "won").not("closed_date", "is", null).limit(500);
+      .eq("deal_outcome", "won").not("closed_date", "is", null)
+      // READ FILTER. DEFENSIVE, not a fix: no ghost qualifies today because none
+      // is deal_outcome=won. A merged past client would, and this sends.
+      .is("merged_into_contact_id", null)
+      .limit(500);
     if (error) throw error;
 
     const now = Date.now();

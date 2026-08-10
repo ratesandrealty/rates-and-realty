@@ -74,6 +74,10 @@ async function getStaleLeads(sb: SbClient) {
     .select('id, first_name, last_name, last_contact_date, created_at, pipeline_status')
     .or(`last_contact_date.lt.${cutoffIso},and(last_contact_date.is.null,created_at.lt.${cutoffIso})`)
     .not('pipeline_status', 'in', '("Closed","Lost","Dead")')
+    // READ FILTER: a merged duplicate is not a lead to chase. 1020 contacts
+    // qualify and this takes 50 of them with no ORDER BY, so a ghost surfaced
+    // on some runs and not others — non-determinism, not safety.
+    .is('merged_into_contact_id', null)
     .limit(50)
   if (error) { console.error('[stale]', error.message); return [] }
   const now = Date.now()

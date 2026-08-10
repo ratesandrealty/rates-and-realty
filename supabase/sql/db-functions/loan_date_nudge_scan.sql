@@ -22,7 +22,8 @@ begin
 
   with active_contacts as (
     select id, first_name, last_name from public.contacts
-    where coalesce(pipeline_status,'') not in
+    where merged_into_contact_id is null   -- READ FILTER: current roster only
+      and coalesce(pipeline_status,'') not in
       ('Closed','Lost','Closed Won','Closed Lost','Funded','Dead','Denied')
   ),
   items as (

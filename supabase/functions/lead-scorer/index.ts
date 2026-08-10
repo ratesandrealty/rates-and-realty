@@ -356,7 +356,11 @@ Deno.serve(async (req) => {
       return ok({ success: true, ...fresh, history: (history || []).reverse() });
     }
     if (action === "score_all") {
-      const { data: ids } = await sb.from("contacts").select("id").limit(body.limit || 1000);
+            /* READ FILTER: score_all has NO predicate, so every merged-away duplicate
+         was being re-scored and re-written on every run. The limit is 1000
+         against 1046 rows with no ORDER BY, so which contacts were missed — and
+         whether a ghost was among them — varied per run. */
+      const { data: ids } = await sb.from("contacts").select("id").is("merged_into_contact_id", null).limit(body.limit || 1000);
       const results = [];
       for (const row of ids || []) {
         try {
