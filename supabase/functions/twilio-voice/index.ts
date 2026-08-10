@@ -228,6 +228,12 @@ async function noticeConfig(nameOverride?: string): Promise<string> {
 const CALL_WINDOW_START = 8;    // inclusive, local
 const CALL_WINDOW_END = 21;     // exclusive, local — 9pm
 
+/* Enforcement switch for the voicemail_drop hours check ONLY. The dial path and
+ * make_call have enforced hours for a long time and are NOT behind this — they
+ * are proven and must not become switchable by adding a flag around them.
+ * Off until both probes pass. Set VOICE_QUIET_HOURS=on to enable. */
+const VOICE_QUIET_HOURS = (Deno.env.get('VOICE_QUIET_HOURS') || '').toLowerCase() === 'on';
+
 type HoursVerdict = {
   allowed: boolean;
   areaCode: string | null;
@@ -957,6 +963,46 @@ Deno.serve(async (req) => {
 
     if (action === 'voicemail_drop') {
       if (!to || !voicemail_url) return err('Missing "to" or "voicemail_url"');
+
+      /* QUIET HOURS (TCPA) — STAGED, OFF UNTIL PROVEN.
+       *
+       * voicemail_drop posts straight to Twilio Calls.json and has NEVER had an
+       * hours check. make_call and the dial path both do; this one was missed,
+       * so the only thing that ever stopped an after-hours drop was a confirm()
+       * in power-dialer.html that a user can click past — and lead-detail's
+       * voicemail picker has no dialog at all.
+       *
+       * Reuses this file's own callingHours(), not a second copy: same
+       * area_code_timezones lookup, same 8am–9pm local window, same
+       * allow-and-log on an unknown area code. A missing timezone row is our
+       * gap, not the recipient's.
+       *
+       * The flag governs whether we ACT on the verdict, never whether we
+       * compute it — the check runs and records either way, so what it would
+       * have stopped is visible before it stops anything. Same contract as
+       * sms-service's SMS_QUIET_HOURS.
+       *
+       * No bypass parameter. See the note below: no voicemail drop qualifies. */
+      const vmHours = await callingHours(formatPhone(to));
+      if (!vmHours.allowed) {
+        try {
+          await sb.from('audit_log').insert({
+            table_name: 'quiet_hours', row_id: contact_id || null,
+            operation: VOICE_QUIET_HOURS ? 'VOICEMAIL_BLOCKED' : 'VOICEMAIL_WOULD_BLOCK',
+            new_data: {
+              channel: 'voicemail_drop', enforced: VOICE_QUIET_HOURS, to: formatPhone(to),
+              area_code: vmHours.areaCode, tz: vmHours.tz, local_time: vmHours.localTime,
+              reason: vmHours.reason,
+            },
+            changed_by: actorUid,
+          });
+        } catch (_) { /* never let the logbook stop the decision */ }
+        if (VOICE_QUIET_HOURS) {
+          console.error(`[twilio-voice] VOICEMAIL BLOCKED ${formatPhone(to)}: ${vmHours.reason}`);
+          return jsonRes({ success: false, blocked: 'calling_hours', ...vmHours }, 409);
+        }
+      }
+
       const auth = btoa(`${ACCOUNT_SID}:${AUTH_TOKEN}`);
       const twimlUrl = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice?action=play_voicemail&url=${encodeURIComponent(voicemail_url)}`;
       const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${ACCOUNT_SID}/Calls.json`, {
