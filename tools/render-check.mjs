@@ -69,7 +69,7 @@ function fail(msg) { console.error('\nREFUSED: ' + msg); process.exit(2); }
  * than throwing: the harness is asserting on RENDERING, and a stub that throws
  * would produce console errors that the harness then reports as page failures —
  * turning gaps in the stub into false alarms about the page. */
-function stubSource(role, email, stubRow) {
+function stubSource(role, email, stubRow, rpcMap) {
   return `(() => {
     const RES = (data) => Promise.resolve({ data, error: null });
     const q = () => { const t = RES([]);
@@ -96,7 +96,13 @@ function stubSource(role, email, stubRow) {
         signOut: () => RES(null), refreshSession: () => RES({ session }),
         onAuthStateChange: () => ({ data: { subscription: { unsubscribe(){} } } }),
       },
-      from: q, rpc: (n) => (n === 'current_app_role' ? RES(${JSON.stringify(role)}) : RES([])),
+      /* Named RPC responses, so a page whose whole content comes from one RPC can
+         be asserted on. Unnamed RPCs still return [] — a page must not depend on
+         the harness knowing every call it makes. */
+      from: q,
+      rpc: (n) => (n === 'current_app_role' ? RES(${JSON.stringify(role)})
+                 : (Object.prototype.hasOwnProperty.call(${JSON.stringify(rpcMap || {})}, n)
+                    ? RES(${JSON.stringify(rpcMap || {})}[n]) : RES([]))),
       functions: { invoke: () => RES({}) },
       storage: { from: () => ({ list: () => RES([]), createSignedUrl: () => RES({ signedUrl: '' }),
                                 upload: () => RES({}), remove: () => RES([]) }) },
@@ -161,6 +167,55 @@ const SPECS = [
       // absent, or the estimate button offers to price nothing.
       '#lpPropEstBtn': 'Enter a property address first',
     },
+  },
+  {
+    /* "Shared with me" as the VA. The stub returns the five shared leads with
+       the masks va_shared_leads() applies, so this proves the PAGE renders what
+       it is handed and never unmasks — it cannot prove the SQL masks, which is
+       verified separately against the live function. */
+    name: 'va-people renders five masked rows as VA',
+    url: '/admin/va-people',
+    role: 'va',
+    rpc: {
+      va_shared_leads: [
+        { contact_id: '11111111-1111-4111-8111-111111111111', name: 'Karina Bernal',
+          phone: '(562) ***-**94', email: 'lead-bdcf3712@masked.local', pipeline_status: 'Pre-Approved', open_tasks: 2, tasks: [] },
+        { contact_id: '22222222-2222-4222-8222-222222222222', name: 'Marlon Vasquez Ramos',
+          phone: '(714) ***-**12', email: 'lead-5608430c@masked.local', pipeline_status: 'Processing', open_tasks: 0, tasks: [] },
+        { contact_id: '33333333-3333-4333-8333-333333333333', name: 'Juan Davila',
+          phone: '(949) ***-**77', email: 'lead-6134fbe8@masked.local', pipeline_status: 'Processing', open_tasks: 1, tasks: [] },
+        { contact_id: '44444444-4444-4444-8444-444444444444', name: 'Vincent Solis',
+          phone: '(310) ***-**03', email: 'lead-54bb0987@masked.local', pipeline_status: 'Contacted', open_tasks: 0, tasks: [] },
+        { contact_id: '55555555-5555-4555-8555-555555555555', name: 'Rafael Hernandez Andrade',
+          phone: '(818) ***-**41', email: 'lead-07b1e13d@masked.local', pipeline_status: 'Closed', open_tasks: 0, tasks: [] },
+      ],
+    },
+    steps: [{ waitMs: 2500 }],
+    present: ['.rows .row', '.stage.done'],
+    rowCount: { selector: '.rows .row', expect: 5 },
+    // A raw email or an unmasked 10-digit phone on this page is the failure.
+    absentText: ['@gmail.com', '@yahoo.com', '@ratesandrealty.com'],
+    absent: ['#assigned_to', '[data-assigned-to]'],
+  },
+  {
+    /* NEGATIVE CASE. 'agent' is a real staff role that is NOT in va-people's
+       PAGE_ACCESS list, so auth-guard must cover the page with its denial
+       overlay. Asserting the overlay TEXT rather than absence of rows, because
+       an empty list and a denied page look identical from the outside — and
+       "renders nothing" is exactly the failure this whole harness exists for. */
+    name: 'va-people is denied to a role without access',
+    url: '/admin/va-people',
+    role: 'agent',
+    rpc: { va_shared_leads: [
+      { contact_id: '99999999-9999-4999-8999-999999999999', name: 'Should Not Appear',
+        phone: '(000) ***-**00', email: 'lead-99999999@masked.local',
+        pipeline_status: 'Processing', open_tasks: 0, tasks: [] } ] },
+    steps: [{ waitMs: 2500 }],
+    // The overlay is the proof the gate fired. The absent row is the proof it
+    // SUPPRESSED something — an overlay over a rendered list would still leak
+    // the names underneath it, and "an overlay exists" alone would pass that.
+    expectText: ['Access restricted'],
+    absentText: ['Should Not Appear'],
   },
   {
     name: 'settings page renders',
@@ -247,7 +302,7 @@ async function runSpec(spec, opts) {
         }))});}catch(e){}` });
     } else {
       await b.send('Page.addScriptToEvaluateOnNewDocument', {
-        source: stubSource(spec.role || 'admin', 'render-check@local', spec.stubRow),
+        source: stubSource(spec.role || 'admin', 'render-check@local', spec.stubRow, spec.rpc),
       });
     }
 
@@ -295,6 +350,11 @@ async function runSpec(spec, opts) {
                      const isField = e && /^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName);
                      return [sel, want, e ? (isField ? e.value : (e.textContent || '')) : '(no element)'];
                    }),
+          rowCount: ${spec.rowCount ? `document.querySelectorAll(${JSON.stringify(spec.rowCount.selector)}).length` : 'null'},
+          missingText: ${JSON.stringify(spec.expectText || [])}.filter((t) =>
+                        !(document.body ? (document.body.innerText || '') : '').includes(t)),
+          badText: ${JSON.stringify(spec.absentText || [])}.filter((t) =>
+                     (document.body ? (document.body.innerText || '') : '').includes(t)),
           textLen: (document.body ? (document.body.innerText || '').trim().length : 0),
           title:   document.title,
         };
@@ -321,6 +381,16 @@ async function runSpec(spec, opts) {
         } else notes.push(`order ok: ${spec.order.map((l, i) => `${idx[i] + 1}.${l}`).join('  ')}`);
       }
     }
+    if (spec.rowCount && p.rowCount !== spec.rowCount.expect) {
+      problems.push(`expected ${spec.rowCount.expect} rows matching ${spec.rowCount.selector}, rendered ${p.rowCount}`);
+    } else if (spec.rowCount) notes.push(`${spec.rowCount.selector} × ${p.rowCount}`);
+    /* Forbidden text is how a mask failure shows up: the page renders fine and
+       the wrong value is simply in it. Asserting on absence of the raw form is
+       the only check that fails when a mask is dropped. */
+    for (const t of p.badText || []) problems.push(`UNMASKED VALUE ON PAGE: visible text contains "${t}"`);
+    for (const t of p.missingText || []) problems.push(`expected text NOT on page: "${t}"`);
+    if (spec.expectText && !(p.missingText || []).length) notes.push(`found: ${spec.expectText.join(' | ')}`);
+    if (spec.absentText && !(p.badText || []).length) notes.push(`no forbidden text (${spec.absentText.length} pattern(s) checked)`);
     if (spec.minVisibleText && p.textLen < spec.minVisibleText) {
       problems.push(`page rendered only ${p.textLen} chars of visible text (need ≥ ${spec.minVisibleText}) — this is the blank-page signature`);
     }

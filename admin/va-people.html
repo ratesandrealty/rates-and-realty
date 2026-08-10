@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shared with me | Rates &amp; Realty</title>
+<link rel="icon" href="/favicon.ico">
+<script src="/api/env.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/admin/js/auth-guard.js"></script>
+<style>
+  :root { --gold:#C9A84C; --bg:#0d0d0d; --card:#151515; --border:rgba(255,255,255,.08); --text:#e0ddd4; --dim:#8a8475; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
+  header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:14px 20px;border-bottom:1px solid var(--border);}
+  .portal-nav{display:flex;gap:6px;}
+  .nav-link{padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;text-decoration:none;color:var(--dim);border:1px solid transparent;}
+  .nav-link:hover{color:#fff}
+  .nav-link.active{color:#000;background:var(--gold);border-color:var(--gold)}
+  h1{margin:0 0 0 4px;font-size:19px;font-weight:700}
+  .header-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+  .who{font-size:12px;color:var(--dim)}
+  .btn-back{background:transparent;border:1px solid var(--border);color:var(--dim);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;font-family:inherit}
+  main{padding:20px;max-width:1000px}
+  .lede{font-size:12.5px;color:var(--dim);line-height:1.55;margin:0 0 16px;max-width:70ch}
+  .rows{display:flex;flex-direction:column;gap:8px}
+  .row{display:grid;grid-template-columns:1fr auto;gap:10px 16px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:11px;padding:12px 14px}
+  .nm{font-size:14px;font-weight:600;color:var(--text)}
+  .meta{font-size:11.5px;color:var(--dim);margin-top:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-word}
+  .right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+  .stage{font-size:10.5px;font-weight:700;letter-spacing:.03em;padding:3px 9px;border-radius:20px;white-space:nowrap;
+         background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:var(--gold)}
+  /* A closed or lost lead must not read as live work — Rene asked for all
+     stages shown, so the row has to say plainly which ones are finished. */
+  .stage.done{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.13);color:var(--dim)}
+  .tasks{font-size:11px;color:var(--dim);white-space:nowrap}
+  .tasks b{color:var(--text)}
+  .open{background:transparent;border:1px solid rgba(201,168,76,.4);color:var(--gold);border-radius:8px;padding:5px 11px;font-size:11.5px;font-weight:600;cursor:pointer;text-decoration:none;font-family:inherit}
+  .empty{padding:34px;text-align:center;color:var(--dim);font-size:13px;line-height:1.6}
+  .empty b{display:block;font-size:15px;color:#c9c3b4;margin-bottom:6px}
+  @media(max-width:640px){ .row{grid-template-columns:1fr} .right{justify-content:space-between} }
+</style>
+</head>
+<body>
+<header>
+  <div class="portal-nav">
+    <a href="va-dashboard.html" class="nav-link">📊 Dashboard</a>
+    <a href="va-tasks.html" class="nav-link">✅ My Tasks</a>
+    <a href="va-people.html" class="nav-link active">👥 Shared with me</a>
+    <a href="va-inbox.html" class="nav-link">📥 Inbox</a>
+    <a href="/admin/chat.html" class="nav-link">💬 Chat</a>
+  </div>
+  <h1>Shared with me</h1>
+  <div class="header-right">
+    <span class="who" id="adminUserEmail"></span>
+    <button class="btn-back" onclick="window.adminLogout && window.adminLogout()">Log out</button>
+  </div>
+</header>
+
+<main>
+  <p class="lede">Leads Rene has shared with you. Everything else in the CRM stays
+     hidden — this is the same boundary the server enforces, not a filter on a
+     longer list.</p>
+  <div class="rows" id="rows"><div class="empty">Loading…</div></div>
+</main>
+
+<script>
+/* SHARED WITH ME — the VA's caseload.
+ *
+ * Reads va_shared_leads() and NOTHING else. Deliberately not lead_shares
+ * directly: that RPC already resolves the share join, already excludes merged
+ * contacts (it selects from contacts_live), and already applies the VA masks.
+ * A second query would be a second thing to drift out of step with RLS.
+ *
+ * WHAT IS NOT SHOWN, and why:
+ *   assigned_to — it is free text and says "Rene D." or his email on every
+ *   contact in the database, including all of these. Next to a page called
+ *   "Shared with me" that reads as a bug. If it is ever wanted here it needs
+ *   the label "Lead owner", never "Assigned". See the assigned_to trap note in
+ *   CLAUDE.md; contacts.assigned_to is display-only text, tasks.assigned_to is
+ *   a permission-bearing uuid, and they are not the same thing.
+ *
+ * MASKING is applied INSIDE va_shared_leads() — mask_phone(), and
+ * lead-<id8>@masked.local for email — on the same current_app_role()='va'
+ * condition contacts_secure uses. The page renders whatever it is handed and
+ * never unmasks. It requests no SSN or financial column, so there is nothing
+ * on this page for a mask to be forgotten on. */
+(function () {
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]; }); };
+
+  /* Stages that mean the work is finished. Rene asked for every shared lead
+     regardless of stage, so these still render — greyed and labelled, never
+     silently mixed in with live work. */
+  var DONE = ['closed','lost','dead','closed won','closed lost','funded','denied'];
+  var isDone = function (s) { return DONE.indexOf(String(s || '').toLowerCase()) > -1; };
+
+  function render(rows) {
+    var el = document.getElementById('rows');
+    if (!rows || !rows.length) {
+      el.innerHTML = '<div class="empty"><b>No leads shared with you yet</b>' +
+        'When Rene shares a lead, it appears here. Nothing is missing — the list ' +
+        'is empty because nothing has been shared, not because it failed to load.</div>';
+      return;
+    }
+    el.innerHTML = rows.map(function (r) {
+      var done = isDone(r.pipeline_status);
+      var n = Number(r.open_tasks || 0);
+      return '<div class="row">' +
+          '<div>' +
+            '<div class="nm">' + esc(r.name || '(no name)') + '</div>' +
+            '<div class="meta">' + esc(r.email || '—') + ' · ' + esc(r.phone || '—') + '</div>' +
+          '</div>' +
+          '<div class="right">' +
+            '<span class="stage' + (done ? ' done' : '') + '">' + esc(r.pipeline_status || 'No stage') + '</span>' +
+            '<span class="tasks"><b>' + n + '</b> open task' + (n === 1 ? '' : 's') + '</span>' +
+            '<a class="open" href="/admin/lead-detail.html?contact_id=' + encodeURIComponent(r.contact_id) + '">Open</a>' +
+          '</div>' +
+        '</div>';
+    }).join('');
+  }
+
+  async function load() {
+    var el = document.getElementById('rows');
+    var client = window._supabaseClient;
+    for (var i = 0; i < 120 && !client; i++) {           // auth-guard publishes it async
+      await new Promise(function (r) { setTimeout(r, 50); });
+      client = window._supabaseClient;
+    }
+    if (!client) { el.innerHTML = '<div class="empty"><b>Not signed in</b>Reload the page and sign in again.</div>'; return; }
+    /* WAIT for auth-guard's role gate before rendering anything.
+       Its overlay is a cover, not a gate: content painted before the gate runs
+       stays in the DOM underneath, readable via devtools or select-all. The
+       server is still the real control — va_shared_leads() returns nothing for
+       a role with no shares — but the page should not paint rows behind a lock
+       screen either. Bounded so a guard that never settles cannot hang the page. */
+    if (window._rrGateReady) {
+      await Promise.race([window._rrGateReady, new Promise(function (r) { setTimeout(r, 8000); })]);
+    }
+    if (window._rrAccessDenied) { el.innerHTML = ''; return; }
+    try {
+      var res = await client.rpc('va_shared_leads');
+      if (res.error) throw new Error(res.error.message);
+      render(res.data || []);
+    } catch (e) {
+      /* Say what failed. An empty list and a failed load must not look alike —
+         "no leads" is a real answer and this is not it. */
+      el.innerHTML = '<div class="empty"><b>Could not load your shared leads</b>' + esc(e.message || 'Unknown error') + '</div>';
+    }
+  }
+  load();
+})();
+</script>
+</body>
+</html>

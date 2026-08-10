@@ -83,7 +83,30 @@
   }
 
   // Full-screen overlay shown when a non-admin hits an admin-only page.
+  /* GATE PROMISE. Page gating is async — it awaits current_app_role() — so a
+     page that renders as soon as the client appears paints its content BEFORE
+     denyAccess() can run, and the overlay then merely covers it. Found by
+     render-check on va-people: the row data was in the DOM under the lock
+     screen. Any page rendering role-sensitive content should await
+     window._rrGateReady first. The server remains the real control. */
+  let _gateDone;
+  window._rrGateReady = new Promise(function (r) { _gateDone = r; });
+  function _settleGate() { window._rrGateSettled = true; if (_gateDone) _gateDone(); }
+
   function denyAccess() {
+    /* SIGNAL THE DENIAL, don't just cover the page.
+     *
+     * The overlay is position:fixed over whatever already rendered — it hides
+     * content visually and leaves it in the DOM, readable via devtools, the
+     * accessibility tree, or select-all. Found by render-check: a denied page
+     * still had the row data underneath the overlay.
+     *
+     * The real control is always server-side (RLS, or the RPC returning nothing
+     * for that role), and that has not changed. This flag lets a page ALSO
+     * decline to render, so a future page whose server-side scoping is wrong
+     * does not leak through a cosmetic cover. Set BEFORE the overlay mounts so
+     * a page checking it synchronously sees it. */
+    window._rrAccessDenied = true;
     const overlay = document.createElement('div');
     overlay.setAttribute('style', [
       'position:fixed', 'inset:0', 'z-index:999999',
@@ -192,6 +215,11 @@
         'va-dashboard.html':  ['va', 'admin'],
         'va-tasks':           ['va', 'admin'],
         'va-tasks.html':      ['va', 'admin'],
+        // "Shared with me" — the VA's caseload, from va_shared_leads(). Listed
+        // so a role that is not va/admin is denied at the page, not just served
+        // an empty list by RLS. Both URL forms, as above.
+        'va-people':          ['va', 'admin'],
+        'va-people.html':     ['va', 'admin'],
         // Gmail inbox surfaces. Admin inbox exposes the mailbox switcher (rene@ +
         // processing@); the VA inbox is processing@ only (also enforced server-side
         // by gmail-inbox, which 403s any mailbox a role may not touch).
@@ -210,9 +238,15 @@
       const allowed = PAGE_ACCESS[filename];
       if (allowed && allowed.indexOf(role) === -1) {
         denyAccess();
+        _settleGate();
         return;
       }
+      _settleGate();   // allowed: release any page waiting on the gate
     }
+    /* Admins skip the block above entirely, and so does a null role after a
+       transient current_app_role() failure. Settle here too, or a page awaiting
+       the gate would hang forever for exactly the users most likely to notice. */
+    _settleGate();
 
     // Fill #adminUserEmail when the DOM is ready.
     function fillEmail() {
