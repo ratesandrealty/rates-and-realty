@@ -37,6 +37,78 @@ Pins are source, not a deploy-time mutation.
 Unpinned URLs deliberately keep `must-revalidate` — caching `/admin/js/inbox.js`
 hard with no pin in the URL would strand a stale copy with no way to bust it.
 
+## `render-check` — does the page actually WORK, not just ship
+
+`verify-deploy.mjs` proves the right BYTES shipped. That is not the same claim as
+the page working. `admin/settings.html` once served byte-perfect HTML at the
+correct hash and rendered **nothing**: an inline script had a `SyntaxError`, so it
+never ran and the page stayed blank. Every byte-level check was green throughout.
+
+```
+node tools/render-check.mjs                  # all specs
+node tools/render-check.mjs lead-detail      # one spec, by name substring
+node tools/render-check.mjs --url file:///…/x.html --expect "#id" --min-text 200
+node tools/render-check.mjs --token tok.txt  # real session instead of the stub
+```
+
+It loads the page in headless Chromium and **fails** on: any uncaught exception,
+any `console.error`, an expected element being ABSENT, visible text below a floor,
+a click step whose target does not exist, `readyState` never reaching `complete`,
+and errors in the harness itself. Exit 1 = a page failed; exit 2 = refused to run.
+
+Console-error exclusions are per-spec (`allowConsole`), need a reason, and are
+PRINTED on the run. An exclusion nobody can see is how a harness goes quietly
+blind.
+
+By default there are **no credentials**: the Supabase client is stubbed before any
+page script runs. So it mints no `auth.sessions` row — nothing to clean up, and no
+chance of repeating the delete-every-session incident — and attributes nothing to
+a real user. When `--token` IS used it checks `exp` **first** and refuses before
+launching a browser: a token that had expired 90 minutes earlier was twice
+discovered at the verification step, after the change was already deployed.
+
+### What a green run does NOT prove
+
+**Rendering, not authorization.** With a stubbed client no role gate, RLS policy,
+column grant or mailbox refusal is exercised. A green run says *nothing* about
+whether a va can reach `rene@`, whether `calls_log` column grants hold, or whether
+`gmail-inbox` refuses the wrong mailbox. Those are proven by calling the edge
+function directly with a real role token, the way the va inbox actions were.
+
+The harness prints this boundary on **every** run, in its own output rather than
+only here, because a green result from a rendering harness starts being read as
+"verified" for things it never touched.
+
+### The stub bug, because anyone extending it will hit it
+
+The stub installs at document-start via `Page.addScriptToEvaluateOnNewDocument`.
+The page then loads the real supabase-js by `<script src>`, and the library's
+plain assignment to `window.supabase` **silently replaced the stub** — so pages
+went on to hit real PostgREST, and their genuine errors ("Cannot coerce the result
+to a single JSON object") were reported as page defects. Fixed by defining the
+property non-writable with a swallowing setter, not by assigning it.
+
+Second gap, same shape: `.single()` returned `null`, pages correctly bailed out of
+rendering a record that did not exist, and the harness blamed the page. It now
+returns a plausible row. **A stub that under-delivers reads as a broken page.**
+
+### Why the break test has the shape it does
+
+The fixture is a page whose inline script has a `SyntaxError`, so `#shell` is
+never populated. The assertion was that `#shell` is present — **and it was.** The
+element exists; it is empty. A harness asserting only "did the expected thing
+appear" passes this page, which is the exact failure the harness exists to catch.
+
+What caught it was the uncaught-error check and the visible-text floor. That is
+why presence-only assertions are not sufficient and why absent-assertions are
+paired with present-assertions in the same spec: if the pane never mounted, an
+`absent` check would pass vacuously. `/admin/inbox` asserts the folder rail
+PRESENT while the scoped lead tab asserts it ABSENT, so both know the selector is
+real.
+
+**A harness that has only ever passed proves nothing.** Break it before trusting
+it, and break it again whenever its failure modes change.
+
 ## Edge functions
 
 **Always deploy with `bash tools/deploy-function.sh <slug>`. Never a bare
