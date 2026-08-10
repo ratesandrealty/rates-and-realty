@@ -24,6 +24,7 @@ begin
     select nullif(trim(coalesce(first_name,'')||' '||coalesce(last_name,'')),'') as name,
            lower(email) as email, 'contact' as kind, 1 as pri
     from contacts where email is not null and email <> ''
+      and merged_into_contact_id is null   -- READ FILTER: current roster only
       and (lower(email) like v_q or lower(coalesce(first_name,'')||' '||coalesce(last_name,'')) like v_q)
     union all
     -- referral partners

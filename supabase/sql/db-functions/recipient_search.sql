@@ -25,6 +25,7 @@ begin
            (case when lower(coalesce(c.first_name,'')) like q||'%' or lower(coalesce(c.last_name,'')) like q||'%' or lower(c.email) like q||'%' then 0 else 1 end) as h_rnk
     from contacts c
     where c.email is not null and c.email <> ''
+      and c.merged_into_contact_id is null   -- READ FILTER: current roster only
       and (lower(c.first_name||' '||coalesce(c.last_name,'')) like '%'||q||'%' or lower(c.email) like '%'||q||'%')
       and (coalesce(current_app_role(),'') <> 'va' or is_lead_shared_with_me(c.id))
     union all
