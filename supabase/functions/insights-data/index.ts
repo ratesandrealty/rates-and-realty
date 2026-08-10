@@ -442,7 +442,13 @@ Deno.serve(async (req) => {
      added later is covered by default rather than by remembering.
      verify_jwt=true does NOT do this: the anon key is a project-signed JWT
      printed in every page's source. See docs/PINNED-NOT-GUARDED.md. */
-  const _auth = await requireStaff(req);
+  /* ADMIN ONLY, explicitly. requireStaff() with no roles option defaults to
+     STAFF_ROLES = admin/va/agent/loa, so this BI endpoint — which aggregates
+     contacts, pipeline and earnings across the whole CRM — was reachable by
+     every staff role while admin/insights.html was gated to admins alone. The
+     page said admin-only and its data said staff; the source wins. See the
+     curtain-not-a-lock note in CLAUDE.md. */
+  const _auth = await requireStaff(req, { roles: ['admin'], what: 'The insights API' });
   if (!_auth.ok) return new Response(JSON.stringify({ error: _auth.msg || 'not authorized' }),
     { status: _auth.status || 401, headers: { ...cors, 'Content-Type': 'application/json' } });
   if (req.method !== "GET") return j({ error: "GET only" }, 405);

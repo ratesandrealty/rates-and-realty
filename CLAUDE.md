@@ -466,6 +466,67 @@ file is ~2× on download; the billable quantity is identical.
 - The public `/v/<slug>` page must never read a Supabase session from
   localStorage. It is served to borrowers, so any token it finds may be theirs.
 
+## `auth-guard`'s `denyAccess()` is a CURTAIN, not a lock
+
+Adding a page to `PAGE_ACCESS` in `admin/js/auth-guard.js` does **not** stop that
+page loading data. It appends a fixed overlay over whatever already painted. The
+content stays in the DOM — readable via devtools, the accessibility tree, or
+select-all — and because page gating awaits `current_app_role()`, any page that
+renders on CLIENT-ready rather than GATE-ready paints first and gets covered
+second. Found by render-check on `va-people`: the row data sat under the lock
+screen.
+
+Three consequences. The first is not about rendering at all, and it is the one
+that has actually bitten.
+
+### 1. A page's DATA SOURCES must be at least as narrow as the page
+
+`PAGE_ACCESS` gates a URL. It does nothing to the RPCs and edge functions that
+URL calls, and those are reachable directly regardless. **When the gate and the
+source disagree, the source wins.**
+
+`admin/insights.html` is `['admin']`, but `insights-data` called
+`requireStaff(req)` with no roles option — which defaults to
+`STAFF_ROLES = ['admin','va','agent','loa']`, so a VA passed. The page said
+admin-only and its data said staff. `requireStaff` DEFAULTS OPEN relative to
+admin; pass `{ roles: ['admin'] }` explicitly on anything an admin-only page
+calls.
+
+Same shape, opposite verdict: `va_productivity_report` deliberately allows
+`('admin','va','agent')`. That is not a bug — a VA seeing her own productivity is
+reasonable. What was wrong is reaching it from an admin-only page. Narrow the
+source, or move the feature; do not assume the broader role is a mistake.
+
+### 2. Listing a page in `PAGE_ACCESS` does not stop it fetching
+
+It only decides whether an overlay appears afterwards. Every request the page
+makes still goes out, under the user's real session, and is answered on the
+server's terms. If the server answers, the data arrives and is painted.
+
+### 3. The fix is to NOT FETCH, not to hide
+
+Two working patterns in this repo:
+
+- `admin/settings.html` — checks the role and **returns before fetching**:
+  `if (role !== 'admin') { ...show notice...; return; }` with the comment
+  "Do not fetch any user data."
+- `admin/va-people.html` — awaits `window._rrGateReady` (settled on allow, on
+  deny, and on the admin/null-role paths that skip gating) before rendering,
+  bounded so a guard that never settles cannot hang the page.
+
+Either is a lock. The overlay alone is not. And neither replaces the server-side
+control: RLS, a column grant, or an in-function role check is what actually
+decides, and the page-level work only stops a denied page painting data it
+should never have been handed.
+
+**Known outstanding:** 12 pages in `PAGE_ACCESS` still render before the gate
+settles. Of the eight admin-only ones, `vault`, `referral-partners` and
+`partner-detail` are safe because every load-time RPC raises `admin only`, and
+`settings` is safe by its own early return. `insights` and `reports` were the
+leakers; `earnings-dashboard` and `emc-import` are unmeasured and need a real VA
+token to settle, because a stubbed run reports every page empty and that is an
+artefact of the stub, not a fact about RLS.
+
 ## `verify_jwt = true` is NOT an access control
 
 The gateway checks only that the bearer is a JWT **signed by this project** — not
