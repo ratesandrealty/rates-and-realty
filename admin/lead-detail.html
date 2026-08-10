@@ -2797,7 +2797,12 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
           <div id="lpDatesBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px;"></div></div>
         <div class="lp-card"><div class="lp-h" style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>🌅 VA Daily Tasks</span><!-- The separate "Assign to VA" button was removed. It sat beside a quick-add that created UNASSIGNED tasks, so two controls on one card looked equivalent and only one did what both appeared to do — 0 of 207 tasks ever got an assignee. Quick-add now assigns by default (_vaDefaultAssignee), which is what this button was for. openAssignVaModal() is retained for assigning to someone OTHER than the VA; nothing currently opens it. --></div><div id="lpVaTasksBody"></div></div>
         <div class="lp-card"><div class="lp-h">✅ Intake / Setup Checklist</div><div id="lpIntakeBody"></div></div>
-        <div class="lp-card"><div class="lp-h">📄 Borrower Document Checklist</div><div id="lpDocBody"></div></div>
+        <!-- Borrower Document Checklist REMOVED from the UI 2026-08-10 at Rene's
+             request. The DATA IS INTACT: processing_items kind='doc', 214 rows
+             across 33 contacts, deleted nothing. Restore by re-adding a
+             #lpDocBody container — lpLoadChecklist('doc', …) still exists and
+             will render them. -->
+
         <div class="lp-card"><div class="lp-h">📋 Conditions <a onclick="switchTab('conditions', document.querySelector('.ld-tab-btn[onclick*=conditions]'))">Manage →</a></div><div id="lpConditionsBody"></div></div>
         <div class="lp-card"><div class="lp-h">🗂️ Tasks <a onclick="switchTab('tasks', document.querySelector('.ld-tab-btn[onclick*=tasks]'))">Manage →</a></div><div id="lpTasksBody"></div></div>
         <div id="lpTrackerBar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px;"></div>
@@ -10048,19 +10053,25 @@ function togglePortalPanel() {
 // LP_DOC_TEMPLATE below. Categories (in render order): Setup, Docs, Disclosures,
 // Submit, Orders, Final, Closing. template_key is the stable identity used for
 // upsert/dedup — do not rename keys.
+/* Six steps were REMOVED from this template on 2026-08-10 at Rene's request:
+   welcome_call, drive_folder, send_needs_list, verify_docs,
+   clear_initial_conditions, appraisal_received.
+   They no longer seed onto new contacts. EXISTING ROWS WERE NOT DELETED and
+   still render — lpLoadChecklist selects every processing_items row for the
+   contact/kind and lpOrderItems only sorts, giving non-template rows
+   1000+sort_order so they fall to the end. ~145 not-yet-complete rows across 34
+   contacts stay visible, including completed work.
+   Two keys deliberately left in place: 'clear_conditions' and the older
+   drive_folder / send_needs_list labels are NOT template entries — they are
+   historical rows created under earlier labels, which is why removing the
+   template entry does not orphan them. */
 const LP_INTAKE_TEMPLATE = [
-  {key:'welcome_call',label:'Welcome call to borrower',category:'Setup',sort_order:10},
-  {key:'drive_folder',label:'Create loan file + Drive folder',category:'Setup',sort_order:11},
   {key:'order_credit',label:'Pull & review credit',category:'Setup',sort_order:12},
-  {key:'send_needs_list',label:'Send needs list',category:'Setup',sort_order:13},
-  {key:'verify_docs',label:'Verify income & assets',category:'Docs',sort_order:26},
   {key:'disclosures_sent',label:'Send initial disclosures',category:'Disclosures',sort_order:30},
   {key:'disclosures_signed',label:'Initial disclosures signed',category:'Disclosures',sort_order:31},
   {key:'submit_lender',label:'Submit file to lender',category:'Submit',sort_order:40},
   {key:'initial_conditions_in',label:'Initial conditions received',category:'Submit',sort_order:41},
-  {key:'clear_initial_conditions',label:'Clear initial conditions',category:'Submit',sort_order:42},
   {key:'order_appraisal',label:'Order appraisal',category:'Orders',sort_order:50},
-  {key:'appraisal_received',label:'Appraisal received / reviewed',category:'Orders',sort_order:51},
   {key:'order_title',label:'Order title',category:'Orders',sort_order:52},
   {key:'order_hoi',label:'Order HOI (declaration in)',category:'Orders',sort_order:53},
   {key:'request_escrow',label:'Request escrow / closing docs',category:'Orders',sort_order:54},
@@ -10632,7 +10643,7 @@ async function lpLoadProcessing(){
   await lpLoadSectionFolders();      // drive_section_folders map ready before order drop-zones render
   lpRenderSnapshot(cid);
   lpLoadChecklist('intake','lpIntakeBody',LP_INTAKE_TEMPLATE);
-  lpLoadChecklist('doc','lpDocBody',LP_DOC_TEMPLATE);
+  // lpLoadChecklist('doc','lpDocBody',LP_DOC_TEMPLATE);  // UI removed 2026-08-10; rows retained
   lpLoadConditions(cid);
   lpLoadTasks(cid);
   lpLoadKeyDates(cid);
@@ -13123,9 +13134,21 @@ async function lpLoadEmailThreads(cid){
 }
 function lpRenderEmailThreads(){
   const host=document.getElementById('lpEmailThreadsBody'); if(!host) return;
-  const rows=_lpEmailThreads||[];
+  /* FILTER BY MAILBOX BEFORE RENDERING, not after clicking.
+     lead_email_threads returns threads filed on this contact across BOTH
+     mailboxes. A va may only reach processing@, so offering her a rene@ thread
+     produced "forbidden: role 'va' may not access rene@ratesandrealty.com" only
+     once she clicked — the list was writing a cheque the server would not honour.
+     The server check stays; this stops the UI proposing something it knows will
+     be refused. */
+  const _allowed = (typeof lpMailboxesForRole==='function') ? lpMailboxesForRole() : null;
+  const _all = _lpEmailThreads||[];
+  const rows = _allowed ? _all.filter(function(t){ return !t.mailbox || _allowed.indexOf(t.mailbox)>-1; }) : _all;
+  const _hidden = _all.length - rows.length;
   if(!rows.length){ host.innerHTML='<div style="color:#888;font-size:12px;padding:6px 2px;">No email threads filed on this loan yet. Tag a thread from the Inbox to file it here.</div>'; return; }
-  host.innerHTML='<div style="display:flex;flex-direction:column;gap:6px;">'+rows.map(function(t){
+  /* Silent omission would read as "there are no other threads". Say it. */
+  const _note = _hidden>0 ? '<div style="font-size:11px;color:#8a8475;padding:4px 2px 8px;">'+_hidden+' thread'+(_hidden===1?'':'s')+' filed on this loan '+(_hidden===1?'is':'are')+' in a mailbox your role cannot open, so '+(_hidden===1?'it is':'they are')+' not listed.</div>' : '';
+  host.innerHTML=_note+'<div style="display:flex;flex-direction:column;gap:6px;">'+rows.map(function(t){
     const inbound=String(t.last_direction||'').toLowerCase()==='inbound';
     const dir='<span style="color:'+(inbound?'#50c878':'#C9A84C')+';font-weight:700;">'+(inbound?'↓':'↑')+'</span>';
     const cnt=(t.message_count>1)?'<span style="font-size:10px;color:#888;border:1px solid rgba(255,255,255,.14);border-radius:9px;padding:0 5px;margin-left:6px;">'+t.message_count+'</span>':'';
@@ -13303,15 +13326,43 @@ function lpMountInboxTab(){
     return;
   }
 
-  /* Masked placeholders are not addresses. A va sees lead-<id8>@masked.local
-     from contacts_secure; searching for it matches nothing and implies the lead
-     has no mail, which is worse than saying the address is hidden. */
-  var real = emails.filter(function(e){ return !/@masked\.local$/i.test(e); });
+  /* MASKED EMAIL -> MOUNT THE FULL processing@ MAILBOX, UNSCOPED.
+     Rene's decision, 2026-08-10. This branch used to say "hidden for your role"
+     and show nothing — accurate but useless: the va cannot see the address, so
+     no per-contact query can be built for her.
+
+     NOT a new disclosure. She reaches the same mailbox in one click from the VA
+     nav, and gmail-inbox re-checks the mailbox server-side either way. What
+     changes is only where she reaches it from.
+
+     THE LABEL IS THE CONTROL. Without it she would read unrelated threads as
+     being about this borrower, which is worse than showing nothing. It sits
+     above the mailbox, not in a tooltip. The scoped-mode chip is deliberately
+     NOT reused — this is the opposite of scoped and must not borrow its look. */
+  var real = emails.filter(function(e){ return !/@masked.local$/i.test(e); });
   if (!real.length) {
-    host.innerHTML = '<div style="padding:34px;text-align:center;color:#8a8475;font-size:13px;line-height:1.6;">'
-      + '<div style="font-size:15px;color:#c9c3b4;margin-bottom:6px;">This lead’s email is hidden for your role</div>'
-      + 'The mailbox cannot be searched without the real address. An admin can see it on this page.'
-      + '</div>';
+    host.innerHTML =
+      '<div style="margin:0 0 12px;padding:11px 13px;border:1px solid rgba(201,168,76,.33);'
+        + 'border-radius:10px;background:rgba(201,168,76,.06);">'
+        + '<div style="font-size:12.5px;font-weight:700;color:#C9A84C;margin-bottom:4px;">'
+          + 'Showing the whole processing@ mailbox — NOT this lead&rsquo;s mail</div>'
+        + '<div style="font-size:11.5px;color:#c9c3b4;line-height:1.5;">'
+          + 'This lead&rsquo;s email address is hidden for your role, so the mailbox cannot be '
+          + 'filtered to them. The threads below are the full inbox and are <b>not '
+          + 'necessarily about this borrower</b>. Use the search box to narrow it.</div>'
+      + '</div><div id="lpInboxHostFull"></div>';
+    var fullHost = document.getElementById('lpInboxHostFull');
+    if (fullHost && window.GmailInbox) {
+      /* No q and no scoped:true — deliberately the UNSCOPED product. mount()
+         refuses scoped mode without a query, which is the right guard for a
+         per-lead view and exactly why it must not be used here. */
+      window.GmailInbox.mount({
+        el: fullHost,
+        client: _authClient(),
+        mailboxes: lpMailboxesForRole(),
+        showSwitcher: false
+      });
+    }
     _lpInboxMounted = true;
     return;
   }
