@@ -1588,43 +1588,10 @@ function getPrevEmployers() {
   return emps;
 }
 
-// ── GOOGLE PLACES ADDRESS AUTOCOMPLETE ────────────────────────────
-// Wires every input[data-autocomplete="address"] with Google Places suggestions.
-// Loads the Maps JS via map-controls.js (fetches API key from /config).
-function initAddressAutocomplete() {
-  if (!window.google || !window.google.maps || !window.google.maps.places) return;
-  document.querySelectorAll('[data-autocomplete="address"]').forEach(function(input) {
-    if (input._acWired) return;
-    input._acWired = true;
-    var ac = new google.maps.places.Autocomplete(input, {
-      types: ['address'],
-      componentRestrictions: { country: 'us' },
-      fields: ['address_components', 'formatted_address']
-    });
-    ac.addListener('place_changed', function() {
-      var place = ac.getPlace();
-      if (!place || !place.address_components) return;
-      var streetNum = '', route = '', city = '', state = '', zip = '';
-      place.address_components.forEach(function(comp) {
-        var t = comp.types;
-        if (t.indexOf('street_number') >= 0) streetNum = comp.long_name;
-        if (t.indexOf('route') >= 0) route = comp.short_name;
-        if (t.indexOf('locality') >= 0) city = comp.long_name;
-        if (t.indexOf('administrative_area_level_1') >= 0) state = comp.short_name;
-        if (t.indexOf('postal_code') >= 0) zip = comp.long_name;
-      });
-      input.value = [streetNum, route].filter(Boolean).join(' ') || place.formatted_address;
-      var fill = function(attr, val) {
-        var id = input.dataset[attr];
-        if (id && val) { var el = document.getElementById(id); if (el) { el.value = val; el.dispatchEvent(new Event('input')); } }
-      };
-      fill('fillsCity', city);
-      fill('fillsState', state);
-      fill('fillsZip', zip);
-    });
-    input.addEventListener('keydown', function(e) { if (e.key === 'Enter') e.preventDefault(); });
-  });
-}
+/* The [data-autocomplete="address"] sweep that used to live here was SHADOWED by
+   the initAddressAutocomplete defined further down, so it never ran. Removed —
+   but note what it was covering: app_prop_street is now wired explicitly there,
+   because deleting this without that would have left the field with nothing. */
 // Load Maps + Places, then wire autocomplete on all marked inputs.
 if (typeof window.loadGoogleMaps === 'function') {
   window.loadGoogleMaps().then(initAddressAutocomplete).catch(function(e) {
@@ -2747,6 +2714,13 @@ function attachPlacesAutocomplete(streetId, cityId, stateId, zipId) {
 function initAddressAutocomplete() {
   attachPlacesAutocomplete('app_street', 'app_city', 'app_state', 'app_zip');
   attachPlacesAutocomplete('app_emp_street', 'app_emp_city', 'app_emp_state', 'app_emp_zip');
+  /* app_prop_street carries data-autocomplete="address" but was only ever wired
+     by the SHADOWED definition below, so the subject-property field in the
+     borrower application had no autocomplete at all. Combined, not split: the
+     app_prop_city/state/zip ids referenced in setVal() do not exist as elements. */
+  if (window.RRPlaces) window.RRPlaces.attachCombined("app_prop_street", {
+    onFill: function () { if (typeof updateAppProgress === "function") updateAppProgress(); },
+  });
 }
 
 function attachDynamicPlaces(type, idx) {
