@@ -60,10 +60,10 @@ async function reportOverview() {
   const d7 = daysAgo(7);
 
   const [contactsTotal, contactsNew30, contactsNew7, pipelineCount, closedDeals, lostDeals, showingBatches30, confirmedTours, apps, emails30, sms30, hotLeads] = await Promise.all([
-    sb.from("contacts").select("id", { count: "exact", head: true }),
-    sb.from("contacts").select("id", { count: "exact", head: true }).gte("created_at", d30),
-    sb.from("contacts").select("id", { count: "exact", head: true }).gte("created_at", d7),
-    sb.from("contacts").select("id", { count: "exact", head: true }).in("pipeline_status", ["New","Contacted","Qualified","Nurturing","Touring","PreApp","Application","Processing","CTC"]),
+    sb.from("contacts_live").select("id", { count: "exact", head: true }),
+    sb.from("contacts_live").select("id", { count: "exact", head: true }).gte("created_at", d30),
+    sb.from("contacts_live").select("id", { count: "exact", head: true }).gte("created_at", d7),
+    sb.from("contacts_live").select("id", { count: "exact", head: true }).in("pipeline_status", ["New","Contacted","Qualified","Nurturing","Touring","PreApp","Application","Processing","CTC"]),
     sb.from("closed_deals").select("loan_amount, commission_earned").eq("outcome", "won"),
     sb.from("closed_deals").select("loan_amount").eq("outcome", "lost"),
     sb.from("showing_batches").select("id", { count: "exact", head: true }).gte("created_at", d30),
@@ -71,7 +71,7 @@ async function reportOverview() {
     sb.from("mortgage_applications").select("id", { count: "exact", head: true }),
     sb.from("email_log").select("id", { count: "exact", head: true }).gte("created_at", d30),
     sb.from("sms_log").select("id", { count: "exact", head: true }).gte("created_at", d30),
-    sb.from("contacts").select("id", { count: "exact", head: true }).eq("lead_temperature", "Hot"),
+    sb.from("contacts_live").select("id", { count: "exact", head: true }).eq("lead_temperature", "Hot"),
   ]);
 
   const totalCommission = (closedDeals.data || []).reduce((s, r: any) => s + Number(r.commission_earned || 0), 0);
@@ -106,7 +106,7 @@ async function reportMoney(range: string | null) {
     sb.from("closed_deals").select("commission_earned").eq("outcome", "won").gte("close_date", ytd),
     sb.from("closed_deals").select("close_date, commission_earned, loan_amount").eq("outcome", "won").gte("close_date", daysAgo(365)),
     sb.from("closed_deals").select("lost_reason, loan_amount").eq("outcome", "lost").not("lost_reason", "is", null),
-    sb.from("contacts").select("pipeline_status, requested_loan_amount, loan_amount").not("pipeline_status", "is", null),
+    sb.from("contacts_live").select("pipeline_status, requested_loan_amount, loan_amount").not("pipeline_status", "is", null),
   ]);
 
   const sum = (rows: any[], field: string) => (rows || []).reduce((s, r) => s + Number(r[field] || 0), 0);
@@ -182,10 +182,10 @@ async function reportMoney(range: string | null) {
 async function reportFunnel(range: string | null) {
   const since = rangeToSince(range);
   const [allContacts, leadSources, temperatures, scoreVsClosed] = await Promise.all([
-    sb.from("contacts").select("pipeline_status, lead_source, source, lead_temperature, total_score, created_at, deal_outcome").gte("created_at", since),
-    sb.from("contacts").select("lead_source, source, deal_outcome"),
-    sb.from("contacts").select("lead_temperature").not("lead_temperature", "is", null),
-    sb.from("contacts").select("total_score, deal_outcome").not("total_score", "is", null),
+    sb.from("contacts_live").select("pipeline_status, lead_source, source, lead_temperature, total_score, created_at, deal_outcome").gte("created_at", since),
+    sb.from("contacts_live").select("lead_source, source, deal_outcome"),
+    sb.from("contacts_live").select("lead_temperature").not("lead_temperature", "is", null),
+    sb.from("contacts_live").select("total_score, deal_outcome").not("total_score", "is", null),
   ]);
 
   const stageOrder = ["New","Contacted","Qualified","Nurturing","Touring","PreApp","Application","Processing","Closed"];
@@ -316,7 +316,7 @@ async function reportMarketing(range: string | null) {
     sb.from("email_log").select("direction, opened_at, sent_at, open_count, click_count, template, created_at").gte("created_at", since),
     sb.from("sms_log").select("direction, status, trigger_type, created_at").gte("created_at", since),
     sb.from("page_views").select("page_url, page_title, created_at").gte("created_at", since),
-    sb.from("contacts").select("utm_source, utm_medium, utm_campaign, deal_outcome").not("utm_source", "is", null),
+    sb.from("contacts_live").select("utm_source, utm_medium, utm_campaign, deal_outcome").not("utm_source", "is", null),
   ]);
 
   const emailsSent = (emails.data || []).filter((e: any) => e.direction === "outbound" || !e.direction).length;

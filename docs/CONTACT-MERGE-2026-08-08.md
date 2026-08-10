@@ -186,10 +186,35 @@ code paths (52 edge functions, 15 frontend files).
 | campaign audience + `campaign-audience-resolve` | `pipeline_stage_history` — the historical stage of the old id is true |
 | `power_dialer_queue`, `power_dialer_counts`, `dialer_sources_list` | `signature_signers`, `signature_requests` — signed documents name the id that signed |
 | `va_dashboard`, `va_daily_tasks`, `va_processing_board`, `va_shared_leads`, `va_task_list` | anything reached *through* an explicit `contact_id` the user already chose |
-| `recipient_search`, `email_recipient_search`, `esign_people_search`, `share_recipients` | |
+| `recipient_search`, `email_recipient_search`, `esign_people_search` | `share_recipients` — CORRECTED 2026-08-10, see below |
 | `partner_leads`, `partners_overview_all`, `partner_overview` | |
 | `insights-data`, `production_report`, `pipeline_velocity_report`, `surface_stale_leads` | |
 | `lead-scorer`, `proactive-followups`, `refi-watch` and other cron sweeps | |
+
+### CORRECTION 2026-08-10 — the list above contradicted the rule below
+
+`share_recipients` was in the FILTER column. It should not be. It is
+`share_recipients(p_contact_id)` — a **by-id lookup**, returning the borrower and
+attached partner for one contact the user already opened. The rule says never
+filter those, and filtering it would blank the share panel on a merged contact's
+page: the "becomes unreachable" failure, not the "disappears from a list" one.
+
+**When the list and the rule disagree, the rule wins.** The list was written by
+scanning names; the rule was written by thinking about what each surface answers.
+
+Every other entry in the filter column was re-checked by signature on 2026-08-10.
+Two more take a uuid and are NOT the same shape, so they stay in the filter
+column: `partner_leads(p_partner_id)` and `partner_overview(p_partner_id)` take a
+**partner** id and then enumerate contacts. The caller chose a partner, not a
+contact, so the contact list is still a roster read. The distinction the rule
+draws is "an explicit **contact_id** the user chose", not "takes an id".
+
+Signatures as verified: `dashboard_snapshot()`, `dashboard_command_center()`,
+`va_dashboard()`, `va_daily_tasks()`, `va_processing_board()`, `va_shared_leads()`
+take no arguments; `va_task_list(p_include_completed)`,
+`production_report(p_from,p_to)`, `pipeline_velocity_report(p_from,p_to)` and
+`partners_overview_all()` take no contact. None is a by-id lookup. The list is
+correct for all of them.
 
 The rule of thumb: **filter anything that answers "who are my contacts now";
 never filter anything that answers "what happened".** A merged contact must
