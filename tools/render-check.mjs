@@ -231,6 +231,21 @@ const SPECS = [
     expectText: ['not necessarily about this borrower'],
   },
   {
+    /* ISOLATION REGRESSION TEST — must stay immediately after the toggle spec.
+     * The toggle persists the choice to localStorage, so this spec sees the
+     * scoped rail only if the previous spec's "full" did NOT survive into it.
+     * That is the whole promise of one-incognito-context-per-spec; without a
+     * spec that would FAIL on a leak, the promise is untested and a shared
+     * profile would quietly change what every later spec measures.
+     * If this starts failing, suspect the harness before the page. */
+    name: 'scope choice does NOT leak between specs (context isolation)',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    steps: [{ click: '.ld-tab-btn[onclick*="\'inbox\'"]', waitMs: 3000 }],
+    present: ['#tab-inbox .gm-rail-scoped'],
+    absent: ['#tab-inbox [data-fd]'],
+  },
+  {
     /* Shelley Hurle's real stored values, fed through the stub. This proves the
      * BINDING (contacts.address → #f-home-address) renders them; that the row
      * exists is proven separately by SQL. The stub cannot prove both at once —
@@ -337,48 +352,104 @@ function chromePath() {
   fail('no Chromium/Chrome/Edge binary found. Tried:\n  ' + CHROME_CANDIDATES.join('\n  '));
 }
 
-async function newBrowser(port, profileDir) {
+/* Wrap one WebSocket in the request/response + event-buffer shape runSpec wants. */
+function cdpChannel(url) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(url);
+    ws.onerror = () => reject(new Error('cdp connect failed: ' + url));
+    ws.onopen = () => {
+      let id = 0; const pending = new Map(); const events = [];
+      ws.onmessage = (e) => {
+        const m = JSON.parse(e.data);
+        if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); return; }
+        if (m.method) events.push(m);
+      };
+      const send = (method, params = {}) => {
+        const mid = ++id;
+        ws.send(JSON.stringify({ id: mid, method, params }));
+        return new Promise((res, rej) => {
+          pending.set(mid, res);
+          setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error(method + ' timed out')); } }, 30000);
+        });
+      };
+      resolve({ send, events, raw: ws });
+    };
+  });
+}
+
+/* ── ONE BROWSER FOR THE WHOLE RUN ─────────────────────────────────────────
+ * This used to spawn a Chrome per spec, each with its own --user-data-dir. On
+ * Windows that is the dominant cost — profile creation, not page load — and at
+ * eleven specs the suite ran past the 6m40s tool ceiling. A suite that can only
+ * be run one spec at a time stops being run.
+ *
+ * WHAT IS STILL ISOLATED, because this is the part worth being precise about.
+ * Each spec gets its own INCOGNITO BROWSER CONTEXT, not just its own tab. A
+ * context has its own cookie jar, localStorage, sessionStorage, IndexedDB,
+ * cache and service workers, and it is destroyed after the spec. That property
+ * is load-bearing now: the Inbox scope toggle persists the user's choice to
+ * localStorage, so a shared profile would let the toggle spec's "full" leak
+ * into the next spec and quietly change what it tested.
+ *
+ * WHAT IS NO LONGER ISOLATED, stated rather than discovered later:
+ *   · the browser PROCESS is shared, so a browser-level crash ends the run
+ *     instead of failing one spec. Renderer crashes stay per-tab.
+ *   · command-line flags and any browser-global state are common to all specs
+ *     (they were already identical, so nothing changes in practice).
+ *   · DNS and socket pools are shared, so specs are no longer independent for
+ *     network TIMING. Nothing here asserts on timing.
+ * Specs still run SEQUENTIALLY. Running them concurrently would be faster
+ * again, but eleven headless pages against one host is what produced the
+ * intermittent "Google Maps included multiple times" warning earlier, and a
+ * suite that fails randomly under its own load is worse than a slow one. */
+async function launchBrowser(port, profileDir) {
   const proc = spawn(chromePath(), [
     '--headless=new', `--remote-debugging-port=${port}`, '--no-sandbox', '--disable-gpu',
     '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check',
     `--user-data-dir=${profileDir}`, 'about:blank',
   ], { stdio: 'ignore' });
 
-  let target = null;
+  let wsUrl = null;
   for (let i = 0; i < 60; i++) {
     try {
-      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-      target = list.find((t) => t.type === 'page');
-      if (target) break;
+      const v = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
+      if (v && v.webSocketDebuggerUrl) { wsUrl = v.webSocketDebuggerUrl; break; }
     } catch (_) { /* not listening yet */ }
     await sleep(250);
   }
-  if (!target) { proc.kill(); fail('browser never exposed a debuggable page target'); }
+  if (!wsUrl) { proc.kill(); fail('browser never exposed a debuggable endpoint'); }
 
-  const ws = new WebSocket(target.webSocketDebuggerUrl);
-  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('cdp connect failed')); });
+  const chan = await cdpChannel(wsUrl);
+  return {
+    proc, port, send: chan.send,
+    close: () => { try { chan.raw.close(); } catch (_) {} proc.kill(); },
+  };
+}
 
-  let id = 0; const pending = new Map(); const events = [];
-  ws.onmessage = (e) => {
-    const m = JSON.parse(e.data);
-    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); return; }
-    if (m.method) events.push(m);
+/* A fresh context + page per spec. Returns the same {send, events, close}
+   shape the old per-browser object had, so runSpec is unchanged below. */
+async function newPage(browser) {
+  const ctx = await browser.send('Target.createBrowserContext', { disposeOnDetach: false });
+  const browserContextId = ctx.result.result ? ctx.result.result.browserContextId : ctx.result.browserContextId;
+  const tgt = await browser.send('Target.createTarget', { url: 'about:blank', browserContextId });
+  const targetId = tgt.result.result ? tgt.result.result.targetId : tgt.result.targetId;
+
+  const chan = await cdpChannel(`ws://127.0.0.1:${browser.port}/devtools/page/${targetId}`);
+  return {
+    send: chan.send, events: chan.events,
+    close: async () => {
+      try { chan.raw.close(); } catch (_) {}
+      /* Dispose BOTH. Closing only the target leaves the context — and its
+         storage — alive for the rest of the run, which is the isolation this
+         design depends on. */
+      try { await browser.send('Target.closeTarget', { targetId }); } catch (_) {}
+      try { await browser.send('Target.disposeBrowserContext', { browserContextId }); } catch (_) {}
+    },
   };
-  const send = (method, params = {}) => {
-    const mid = ++id;
-    ws.send(JSON.stringify({ id: mid, method, params }));
-    return new Promise((res, rej) => {
-      pending.set(mid, res);
-      setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error(method + ' timed out')); } }, 30000);
-    });
-  };
-  return { proc, send, events, close: () => { try { ws.close(); } catch (_) {} proc.kill(); } };
 }
 
 async function runSpec(spec, opts) {
-  const port = 9400 + opts.index;
-  const profile = `${opts.tmp}/rc-${opts.index}`;
-  const b = await newBrowser(port, profile);
+  const b = await newPage(opts.browser);
   const problems = [];
   const notes = [];
 
@@ -547,7 +618,7 @@ async function runSpec(spec, opts) {
   } catch (e) {
     problems.push('harness error: ' + e.message);
   } finally {
-    b.close();
+    await b.close();
   }
   return { problems, notes };
 }
@@ -576,11 +647,14 @@ const tmp = process.env.TEMP || process.env.TMPDIR || '.';
 console.log(`render-check — ${specs.length} page(s) against ${BASE}`);
 console.log(token ? 'mode: REAL SESSION\n' : 'mode: STUBBED CLIENT (no credentials, no session row)\n');
 
+const t0 = Date.now();
+const browser = await launchBrowser(9400, `${tmp}/rc-shared-${process.pid}`);
+
 let failed = 0;
 for (let i = 0; i < specs.length; i++) {
   const s = specs[i];
   process.stdout.write(`  ${s.name} … `);
-  const { problems, notes } = await runSpec(s, { index: i, tmp, token });
+  const { problems, notes } = await runSpec(s, { index: i, tmp, token, browser });
   if (problems.length) {
     failed++;
     console.log('FAIL');
@@ -591,6 +665,10 @@ for (let i = 0; i < specs.length; i++) {
   for (const n of notes) console.log(`      · ${n}`);
 }
 
+browser.close();
+
 console.log('\n' + (token ? BOUNDARY_REAL : BOUNDARY).join('\n'));
-console.log(`\n${specs.length - failed}/${specs.length} page(s) rendered clean.`);
+console.log(`\n${specs.length - failed}/${specs.length} page(s) rendered clean`
+  + ` in ${Math.round((Date.now() - t0) / 1000)}s`
+  + ` (one browser, one incognito context per spec).`);
 if (failed) { console.log(`${failed} FAILED.`); process.exit(1); }
