@@ -286,6 +286,12 @@ input,select,textarea{font-family:inherit}
 html,body{overflow-x:hidden}
 </style>
 <script src="/api/env.js"></script>
+  <!-- Shared address autocomplete. MUST load before initAddressAutocomplete runs:
+       attachPlacesAutocomplete below now delegates to RRPlaces, so without this
+       the application form silently loses address completion. Not deferred —
+       env.js above supplies the key it reads. The Maps bundle itself is still
+       fetched on demand, only when a field is attached. -->
+  <script src="/admin/js/places-autocomplete.js"></script>
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
@@ -2728,40 +2734,14 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 /* ===== GOOGLE PLACES AUTOCOMPLETE ===== */
+/* DELEGATES to /admin/js/places-autocomplete.js. The implementation used to live
+   here and nowhere else knew, which is how lead-detail ended up with a comment
+   claiming the Places key was retired. One copy, shared, on purpose. */
 function attachPlacesAutocomplete(streetId, cityId, stateId, zipId) {
-  var input = document.getElementById(streetId);
-  if (!input || !window.google || !window.google.maps || !window.google.maps.places) return;
-  var ac = new google.maps.places.Autocomplete(input, {
-    types: ['address'], componentRestrictions: { country: 'us' },
-    fields: ['address_components', 'formatted_address']
+  if (!window.RRPlaces) return null;
+  return window.RRPlaces.attachSplit(streetId, cityId, stateId, zipId, {
+    onFill: function () { if (typeof updateAppProgress === "function") updateAppProgress(); },
   });
-  if (!document.getElementById('placesStyle')) {
-    var st = document.createElement('style'); st.id = 'placesStyle';
-    st.textContent = '.pac-container{background:#1a1a1a!important;border:1px solid #C9A84C55!important;border-radius:0 0 10px 10px!important;box-shadow:0 8px 24px rgba(0,0,0,.6)!important;z-index:9999!important}.pac-item{background:#1a1a1a!important;border-top:1px solid #222!important;color:#ccc!important;padding:8px 14px!important;font-size:.82rem!important;cursor:pointer!important}.pac-item:hover,.pac-item-selected{background:#2a2a2a!important}.pac-item-query{color:#C9A84C!important;font-weight:600!important}.pac-matched{color:#C9A84C!important;font-weight:700!important}.pac-icon{display:none!important}';
-    document.head.appendChild(st);
-  }
-  ac.addListener('place_changed', function() {
-    var place = ac.getPlace();
-    if (!place || !place.address_components) return;
-    var num = '', route = '', city = '', state = '', zip = '';
-    place.address_components.forEach(function(c) {
-      var t = c.types;
-      if (t.indexOf('street_number') > -1) num = c.long_name;
-      if (t.indexOf('route') > -1) route = c.short_name;
-      if (t.indexOf('locality') > -1) city = c.long_name;
-      if (t.indexOf('sublocality_level_1') > -1 && !city) city = c.long_name;
-      if (t.indexOf('administrative_area_level_1') > -1) state = c.short_name;
-      if (t.indexOf('postal_code') > -1) zip = c.long_name;
-    });
-    input.value = num + (route ? ' ' + route : '');
-    var hl = function(el) { if (!el) return; el.style.borderColor = '#C9A84C'; el.style.background = 'rgba(201,168,76,.05)'; setTimeout(function() { el.style.borderColor = '#2a2a2a'; el.style.background = '#1a1a1a'; }, 2000); };
-    var ce = document.getElementById(cityId); if (ce && city) { ce.value = city; hl(ce); }
-    var se = document.getElementById(stateId); if (se && state) { se.value = state; hl(se); }
-    var ze = document.getElementById(zipId); if (ze && zip) { ze.value = zip; hl(ze); }
-    hl(input);
-    if (typeof updateAppProgress === 'function') updateAppProgress();
-  });
-  return ac;
 }
 
 function initAddressAutocomplete() {

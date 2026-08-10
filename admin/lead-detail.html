@@ -1464,7 +1464,10 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
     .call-outcome-btn:hover { border-color:#C9A84C; color:#C9A84C; }
     .call-outcome-btn.selected { background:rgba(201,168,76,0.15); border-color:#C9A84C; color:#C9A84C; }
   </style>
-  <!-- Google Maps Places autocomplete removed (API key retired); address input uses plain text -->
+  <!-- Address autocomplete: /admin/js/places-autocomplete.js (shared with the
+       borrower portal). The key was never retired — GOOGLE_MAPS_API_KEY is live
+       in APP_CONFIG; the comment that used to sit here said otherwise and cost a
+       full investigation down the wrong path. -->
 
   <link rel="stylesheet" href="/public/css/responsive-global.css">
   <style>
@@ -1785,6 +1788,9 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
           crossorigin="anonymous" defer></script>
     <script src="/admin/js/attachment-viewer.js?v=e8f2b14c9f"></script>
   <script src="/admin/js/inbox.js?v=8fd048b1ed" defer></script>
+  <!-- Places loads its own Maps bundle ON DEMAND, when a field is attached — not
+       on every lead-detail open. This tag is only the ~4KB helper. -->
+  <script src="/admin/js/places-autocomplete.js" defer></script>
 </head>
 <body class="admin-page">
 
@@ -6420,6 +6426,24 @@ async function populateUI() {
   setVal('f-home-state',   contactData.state   || '');
   setVal('f-home-zip',     contactData.zip     || '');
   if (typeof lpHomeEstSyncBtn === 'function') { try { lpHomeEstSyncBtn(); } catch (_) {} }
+
+  /* ADDRESS AUTOCOMPLETE — both fields, one shared helper.
+   * Bound here rather than at DOMContentLoaded because these inputs are
+   * populated just above: attaching first would let Google's widget see an empty
+   * box and the first keystroke would read as a fresh search.
+   * RRPlaces.attachSplit/attachCombined are idempotent, so a re-render is safe.
+   * If the key is missing both stay ordinary text inputs — typing a full address
+   * by hand keeps working, which is the point: autocomplete assists, never gates. */
+  if (window.RRPlaces) {
+    // Current Home Address — four inputs, so the parts go to their own fields.
+    window.RRPlaces.attachSplit('f-home-address', 'f-home-city', 'f-home-state', 'f-home-zip', {
+      onFill: function () { if (typeof lpHomeEstSyncBtn === 'function') lpHomeEstSyncBtn(); },
+    });
+    // Subject Property — ONE combined field, so formatted_address.
+    window.RRPlaces.attachCombined('f-property', {
+      onFill: function () { if (typeof lpPropEstSyncBtn === 'function') lpPropEstSyncBtn(); },
+    });
+  }
   if (typeof lpPropEstInit === 'function') { try { lpPropEstInit(); } catch (_) {} }
   if (typeof lpLoadAppLoanDetails === 'function') { try { lpLoadAppLoanDetails(); } catch (_) {} }
   setVal('f-first-name', contactData.first_name || '');
