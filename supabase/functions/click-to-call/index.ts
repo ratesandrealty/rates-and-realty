@@ -81,6 +81,38 @@ Deno.serve(async (req: Request) => {
       Timeout: '20',
     });
 
+    /* AUDIT BEFORE THE TWILIO POST, and refuse the call if it fails.
+     *
+     * Same ordering and the same reason as delete-contacts and people-admin's
+     * bulk_update: the POST below is irreversible and billable, so a post-hoc
+     * audit that fails would leave a placed call with no record of who asked.
+     * An unlogged call from a licensed line is worse than a call that did not
+     * happen.
+     *
+     * actorUid comes from the VERIFIED session (requireStaff), never from the
+     * body. For a service-key caller it is null — see the note on null below;
+     * click-to-call has no internal callers today, so a null here means the
+     * service key was used directly. */
+    const { error: auditErr } = await sb.from('audit_log').insert({
+      table_name: 'call_log',
+      row_id: contactId,
+      operation: 'click_to_call',
+      old_data: null,
+      new_data: {
+        via: 'click-to-call',
+        actor_role: staff.role || null,
+        rings: RENE_CELL,
+        dials_lead: leadE164,
+        from_number: BIZ_NUMBER,
+        contact_id: contactId,
+      },
+      changed_by: actorUid,
+    });
+    if (auditErr) {
+      console.error('[click-to-call] REFUSED — audit write failed:', auditErr.message);
+      return err('Refusing to place the call: the audit record could not be written (' + auditErr.message + ')', 500);
+    }
+
     const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Calls.json`, {
       method: 'POST',
       headers: { 'Authorization': 'Basic ' + btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`), 'Content-Type': 'application/x-www-form-urlencoded' },

@@ -345,10 +345,45 @@ async function executeTool(name: string, input: any, ctx: { conversation: any; p
   }
 }
 
-async function sendBotReply(phone: string, body: string, contactId: string | null, conversationId: string, triggerType = "ai_bot_reply") {
+/* actor: the verified human who asked, or null for an internal caller.
+ * NULL HERE IS NOT "UNKNOWN" — see the sms_log.actor_user_id note. */
+async function sendBotReply(phone: string, body: string, contactId: string | null, conversationId: string, triggerType = "ai_bot_reply", actor: string | null = null, actorRole: string | null = null) {
   const safe = body.trim().substring(0, 480);
   if (!safe) return { ok: false, error: "empty" };
   try {
+    /* AUDIT BEFORE THE SEND, and refuse the send if it fails.
+     *
+     * Same ordering as delete-contacts, bulk_update and click-to-call: the text
+     * goes out under Rene's NMLS and cannot be recalled, so a post-hoc audit
+     * that fails would leave a sent message with no record of what asked for it.
+     *
+     * actor is null for bot-process-queue and twilio-inbound, which reach this
+     * with the SERVICE KEY. That is correct and permanent: an inbound text
+     * triggering a bot reply is genuinely nobody's action, and inventing an
+     * actor would be worse than recording none. actor_role distinguishes the
+     * two cases — 'service' means internal, a role name means a human. */
+    const { error: auditErr } = await sb.from("audit_log").insert({
+      table_name: "sms_log",
+      row_id: contactId,
+      operation: "ai_bot_send",
+      old_data: null,
+      new_data: {
+        via: "ai-sms-bot",
+        actor_role: actorRole,
+        internal: actorRole === "service",
+        trigger_type: triggerType,
+        to_phone: phone,
+        contact_id: contactId,
+        conversation_id: conversationId,
+        body_preview: safe.slice(0, 160),
+      },
+      changed_by: actor,
+    });
+    if (auditErr) {
+      console.error("[ai-sms-bot] REFUSED — audit write failed:", auditErr.message);
+      return { ok: false, error: "Refusing to send: the audit record could not be written (" + auditErr.message + ")" };
+    }
+
     const res = await fetch(`${SUPABASE_URL}/functions/v1/sms-service`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SERVICE_KEY}` },
@@ -356,7 +391,9 @@ async function sendBotReply(phone: string, body: string, contactId: string | nul
     });
     const data = await res.json();
     if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
-    if (data.sid) await sb.from("sms_log").update({ trigger_type: triggerType }).eq("twilio_sid", data.sid).then(() => {}, () => {});
+    /* Stamp the actor onto the sms_log row itself, not only into audit_log, so
+       "what was sent" and "who asked" are ONE lookup rather than a join. */
+    if (data.sid) await sb.from("sms_log").update({ trigger_type: triggerType, actor_user_id: actor }).eq("twilio_sid", data.sid).then(() => {}, () => {});
     return { ok: true, sid: data.sid };
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e) };
@@ -629,7 +666,7 @@ Deno.serve(async (req) => {
         const sendOnce = settings.quiet_hours_autoreply_once_per_night;
         if (!sendOnce || hoursSince >= 12) {
           const autoreplyText = settings.quiet_hours_autoreply_text || "Got your message \u2014 Rene's system is offline overnight. I'll have an answer for you first thing in the morning. Reply STOP to opt out.";
-          const r = await sendBotReply(phone, autoreplyText, conversation.contact_id, conversation.id, "ai_bot_quiet_autoreply");
+          const r = await sendBotReply(phone, autoreplyText, conversation.contact_id, conversation.id, "ai_bot_quiet_autoreply", actorUid, actorRole);
           replyOk = r.ok; replySid = r.sid || null; replyBody = autoreplyText;
           if (r.ok) {
             await sb.from("bot_conversations").update({
@@ -699,7 +736,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === "ai_reply" && replyBody) {
-      const r = await sendBotReply(phone, replyBody, conversation.contact_id, conversation.id);
+      const r = await sendBotReply(phone, replyBody, conversation.contact_id, conversation.id, "ai_bot_reply", actorUid, actorRole);
       replyOk = r.ok; replySid = r.sid || null;
       if (r.ok) {
         await sb.from("bot_conversations").update({
