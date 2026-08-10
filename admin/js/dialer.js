@@ -243,6 +243,64 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
   }
   var msgIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
 
+  /* ── RECORDING TOGGLE ──────────────────────────────────────────────────────
+   * DEFAULT ON. The announcement is what makes recording lawful here, and it
+   * plays on every recorded call; the transcript and the AI summary are the
+   * product of the recording, so defaulting off would silently remove the
+   * feature people actually use. Off is a deliberate act, per call.
+   *
+   * The state is remembered per user for the NEXT call but always re-shown, so
+   * "on because I chose it" and "on because it defaults" look identical at the
+   * moment it matters — which is the moment before dialling.
+   *
+   * VISIBLE DURING THE CALL, not just before it. Once dialling starts the
+   * control becomes a read-only badge in the same place, so the answer to "is
+   * this being recorded?" is on screen for the whole call rather than being
+   * something you had to notice earlier. It stops being editable at that point
+   * because nothing here can start or stop a capture mid-call — Twilio supports
+   * it, we do not call it, and a switch that silently does nothing mid-call is
+   * worse than no switch. */
+  var _recOn = true;
+  try {
+    var _rk = 'rr_call_record:' + ((window._adminUser && (window._adminUser.id || window._adminUser.email)) || 'anon');
+    var _rv = localStorage.getItem(_rk);
+    if (_rv === 'off') _recOn = false;
+  } catch (_) { /* storage blocked — default ON */ }
+  function _recPersist() {
+    try {
+      localStorage.setItem('rr_call_record:' + ((window._adminUser && (window._adminUser.id || window._adminUser.email)) || 'anon'),
+        _recOn ? 'on' : 'off');
+    } catch (_) {}
+  }
+  function recToggleHtml(live) {
+    var on = _recOn;
+    var tip = on
+      ? 'This call is announced and recorded. The transcript and AI summary come from that recording.'
+      : 'No announcement will play and nothing is captured — and so there is NO transcript and NO AI summary for this call.';
+    if (live) {
+      return '<div class="cm-rec-badge" title="' + tip + '" style="display:flex;align-items:center;justify-content:center;gap:6px;'
+        + 'margin:8px auto 0;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:700;width:max-content;'
+        + (on ? 'background:rgba(224,82,82,.14);border:1px solid rgba(224,82,82,.4);color:#F07878;'
+              : 'background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);color:#9a948a;') + '">'
+        + (on ? '<span style="width:7px;height:7px;border-radius:50%;background:#E5484D;display:inline-block;"></span> Recording'
+              : 'Not recorded — no transcript') + '</div>';
+    }
+    return '<button type="button" id="cmRecToggle" title="' + tip + '" style="display:flex;align-items:center;gap:7px;'
+      + 'margin:10px auto 0;padding:5px 11px;border-radius:999px;font-size:11px;font-weight:700;cursor:pointer;width:max-content;'
+      + (on ? 'background:rgba(224,82,82,.12);border:1px solid rgba(224,82,82,.38);color:#F07878;'
+            : 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.16);color:#9a948a;') + '">'
+      + (on ? '<span style="width:7px;height:7px;border-radius:50%;background:#E5484D;display:inline-block;"></span> Record this call'
+            : 'Recording off') + '</button>'
+      + '<div style="text-align:center;font-size:10px;line-height:1.4;margin-top:5px;color:'
+      + (on ? '#7a746a' : '#C9A84C') + ';">'
+      + (on ? 'Announced at the start. Transcript + AI summary after.'
+            : 'No announcement, no transcript, no AI summary.') + '</div>';
+  }
+  function wireRecToggle() {
+    var b = document.getElementById('cmRecToggle');
+    if (b) b.addEventListener('click', function () { _recOn = !_recOn; _recPersist(); renderReady(); });
+  }
+
   function renderReady() {
     status.className = 'cm-status ready';
     statusText.textContent = 'Ready to call';
@@ -252,8 +310,9 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       '<div class="cm-action-group">' +
         '<button class="cm-btn call pulsing" id="cmStartBtn" aria-label="Start call">' + phoneIcon + '</button>' +
         '<span class="cm-btn-label">Call</span>' +
-      '</div>';
+      '</div>' + recToggleHtml(false);
     document.getElementById('cmStartBtn').addEventListener('click', startCall);
+    wireRecToggle();
     renderRecentMessages();
   }
 
@@ -297,7 +356,7 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       '<div class="cm-action-group">' +
         '<button class="cm-btn hangup" id="cmCancelBtn" aria-label="Cancel call">' + hangupIcon + '</button>' +
         '<span class="cm-btn-label">Cancel</span>' +
-      '</div>';
+      '</div>' + recToggleHtml(true);
     document.getElementById('cmCancelBtn').addEventListener('click', hangup);
     footer.innerHTML =
       '<div class="cm-divider"></div>' +
@@ -321,7 +380,7 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       '<div class="cm-action-group">' +
         '<button class="cm-btn secondary' + (speakerOn ? ' active' : '') + '" id="btnSpeaker" aria-label="Speaker">' + speakerIcon(speakerOn) + '</button>' +
         '<span class="cm-btn-label">Speaker</span>' +
-      '</div>';
+      '</div>' + recToggleHtml(true);
     document.getElementById('btnMute').addEventListener('click', toggleMute);
     document.getElementById('btnSpeaker').addEventListener('click', toggleSpeaker);
     document.getElementById('cmEndBtn').addEventListener('click', hangup);
@@ -336,7 +395,9 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
     statusText.textContent = 'Call ended · ' + fmtTime(callDuration);
     pulse1.classList.remove('ringing'); pulse2.classList.remove('ringing');
     timer.className = 'cm-timer';
-    actions.innerHTML = '';
+    /* The badge survives into the ended state: the question "was that call
+       recorded?" is asked most often just after hanging up. */
+    actions.innerHTML = recToggleHtml(true);
     var liveNotes = (document.getElementById('cmLiveNotes') && document.getElementById('cmLiveNotes').value) || '';
     footer.innerHTML =
       '<div class="cm-divider"></div>' +
@@ -446,7 +507,10 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
        * the browser is a value the server never verified. */
       currentCallRef = 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
       // v2 SDK: device.connect() returns a Promise that resolves to a Call
-      return dev.connect({ params: { To: toE164(currentContact.phone), Ref: currentCallRef } });
+      /* Record travels with the dial. The SERVER decides what that means:
+       twilio-voice gates canRecord() on it, which drops the record= attribute
+       AND the disclosure together. Anything but an explicit 'off' records. */
+      return dev.connect({ params: { To: toE164(currentContact.phone), Ref: currentCallRef, Record: _recOn ? 'on' : 'off' } });
     }).then(function(conn) {
       if (!conn) return;
       activeCall = conn;

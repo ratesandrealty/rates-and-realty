@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="/admin/js/supabase-client.js?v=5e7926468b"></script>
-  <script src="/admin/js/auth-guard.js?v=08ab2212e7"></script>
+  <script src="/admin/js/auth-guard.js?v=2ce0523f20"></script>
   <script src="https://sdk.twilio.com/js/voice/releases/2.11.0/twilio.min.js"></script>
   <style>
     :root{
@@ -175,6 +175,9 @@
     </section>
   </div>
 
+  <!-- Recording choice, shown before dialling. The live state during a call is
+       rendered inside #callBar, so it is on screen either way. -->
+  <div id="pdRecToggle" style="display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:4px;padding:0 0 10px;"></div>
   <div id="callBar"></div>
   <div id="bridgeBar"></div>
   <div id="callerIdModal" class="pd-modal" onclick="if(event.target===this)closeCallerIds()">
@@ -1041,6 +1044,38 @@
     if(_currentIdx>=0) renderFocus(); // surface the Call button (or keep tel: fallback)
     if(_voiceReady && _autoDial) autoDialTick(); // resume auto-dial once browser calling is ready
   }
+  /* ── RECORDING TOGGLE — see the long note in admin/js/dialer.js ────────────
+   * Same default (ON), same per-user persistence key, same contract: the server
+   * gates canRecord() on the Record param, which drops the disclosure and the
+   * capture together. Off means no announcement — announcing a recording that
+   * is not happening would be a false statement on a borrower's call. */
+  var _pdRecOn = true;
+  function _pdRecKey(){
+    return 'rr_call_record:' + ((window._adminUser && (window._adminUser.id || window._adminUser.email)) || 'anon');
+  }
+  try { if (localStorage.getItem(_pdRecKey()) === 'off') _pdRecOn = false; } catch(_){}
+  function pdToggleRecording(){
+    _pdRecOn = !_pdRecOn;
+    try { localStorage.setItem(_pdRecKey(), _pdRecOn ? 'on' : 'off'); } catch(_){}
+    pdRenderRecToggle();
+  }
+  function pdRenderRecToggle(){
+    var el=document.getElementById('pdRecToggle'); if(!el) return;
+    el.innerHTML = '<button type="button" onclick="pdToggleRecording()" style="display:inline-flex;align-items:center;gap:7px;'
+      + 'padding:5px 12px;border-radius:999px;font-size:11.5px;font-weight:700;cursor:pointer;'
+      + (_pdRecOn ? 'background:rgba(224,82,82,.12);border:1px solid rgba(224,82,82,.38);color:#F07878;'
+                  : 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.16);color:#9a948a;') + '">'
+      + (_pdRecOn ? '<span style="width:7px;height:7px;border-radius:50%;background:#E5484D;display:inline-block;"></span> Recording on'
+                  : 'Recording off') + '</button>'
+      + '<span style="margin-left:9px;font-size:10.5px;color:' + (_pdRecOn ? '#7a746a' : '#C9A84C') + ';">'
+      + (_pdRecOn ? 'Announced at the start · transcript + AI summary after'
+                  : 'No announcement, no transcript, no AI summary') + '</span>';
+  }
+  window.pdToggleRecording = pdToggleRecording;
+  // Paint it as soon as the DOM is up; the container is static markup.
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', pdRenderRecToggle);
+  else pdRenderRecToggle();
+
   async function startCall(){
     clearAutoTimer(); // a (manual or auto) call supersedes any pending countdown
     var lead=_queue[_currentIdx]; if(!lead||!lead.phone){ showToast('No phone on file'); return; }
@@ -1048,7 +1083,7 @@
     if(!_voiceReady||!_device){ showToast('Browser calling unavailable'); return; }
     try{
       showCallBar('Ringing…');
-      _call=await _device.connect({params:{To:lead.phone}});
+      _call=await _device.connect({params:{To:lead.phone, Record:(_pdRecOn?'on':'off')}});
       _call.on('accept', function(){ startCallTimer(); });
       _call.on('disconnect', function(){ endCall(); });
       _call.on('error', async function(err){
@@ -1065,6 +1100,14 @@
     var lead=_queue[_currentIdx]||{};
     bar.innerHTML='<span style="font-weight:700;">📞 '+esc(lead.name||'')+'</span>'
       +'<span id="callStatus" style="color:var(--gold);font-weight:700;">'+esc(status)+'</span>'
+      /* Read-only DURING the call: nothing here can start or stop a capture
+         mid-call, and a switch that silently does nothing is worse than none. */
+      +'<span title="'+(_pdRecOn?'This call is announced and recorded.':'Not recorded — no transcript and no AI summary for this call.')+'" '
+        +'style="display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;font-size:10.5px;font-weight:700;'
+        +(_pdRecOn?'background:rgba(224,82,82,.14);border:1px solid rgba(224,82,82,.4);color:#F07878;'
+                  :'background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);color:#9a948a;')+'">'
+        +(_pdRecOn?'<span style="width:6px;height:6px;border-radius:50%;background:#E5484D;display:inline-block;"></span> REC'
+                  :'NOT RECORDED')+'</span>'
       +'<button class="q-copy" onclick="toggleMute(this)">Mute</button>'
       +'<button onclick="hangUp()" style="background:var(--red);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;padding:7px 16px;font-family:inherit;">Hang Up</button>';
     bar.style.display='flex';

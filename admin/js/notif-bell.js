@@ -179,6 +179,15 @@
           + (unread ? '<span style="flex-shrink:0;width:7px;height:7px;border-radius:50%;background:#C9A84C;display:inline-block;"></span>' : '')
           + icon(n.kind)
           + '<span style="font-size:12px;color:#eee;font-weight:600;">' + esc(n.actor_display || 'Someone') + '</span>'
+          /* Chat notifications now FOLD: one row per conversation until it is
+             read, with msg_count messages behind it. Without this the row shows
+             only the latest preview and silently understates what is waiting —
+             the digest would be invisible and read as a lost message. */
+          + (n.msg_count > 1
+              ? '<span style="flex-shrink:0;font-size:9.5px;font-weight:800;border-radius:999px;padding:1px 7px;'
+                + 'background:rgba(201,168,76,.16);border:1px solid rgba(201,168,76,.34);color:#C9A84C;">'
+                + n.msg_count + ' new</span>'
+              : '')
           + '<span style="margin-left:auto;font-size:10px;color:#777;flex-shrink:0;">' + esc(relTime(n.created_at)) + '</span></div>'
           + '<div style="font-size:11px;color:#bbb;margin-top:2px;">' + renderMentions(n.preview || '') + '</div></div>';
       }).join('');

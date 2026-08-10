@@ -360,7 +360,25 @@ async function resolveContactByPhone(
  * ran anyway. The endpoint returns a fixed disclosure sentence — no caller data,
  * no side effects, nothing an attacker gains by reading it aloud to themselves.
  * Dropping the signature removes a failure mode and protects nothing less. */
-async function canRecord(noticeUrl: string, text: string, expectName?: string): Promise<{ ok: boolean; reason: string }> {
+/* ── THE TOGGLE GATES canRecord ITSELF, NOT THE record= ATTRIBUTE ────────────
+ *
+ * Both call paths derive TWO things from one boolean:
+ *     const recAttr = rec.ok ? ' record="record-from-answer-dual" …' : '';
+ *     const whisper = rec.ok ? ' url="…"' : '';
+ * …plus the parent-leg <Say>. So refusing here removes the disclosure and the
+ * capture TOGETHER, by construction rather than by a second check somebody
+ * could later forget to keep in step.
+ *
+ * That is the whole reason the toggle is applied at this function and not at
+ * the TwiML. "Recording is off" and "the announcement does not play" must be
+ * the same fact — a disclosure for a recording that is not happening is a false
+ * statement, spoken on a call, and it would be the one sentence on the
+ * transcript that nobody could explain afterwards.
+ *
+ * `wanted` false and canRecord failing are NOT the same outcome and are
+ * reported differently on the row — see recording_disposition. */
+async function canRecord(noticeUrl: string, text: string, expectName?: string, wanted = true): Promise<{ ok: boolean; reason: string }> {
+  if (!wanted) return { ok: false, reason: 'recording turned OFF by the caller — no disclosure played, by design' };
   if (!text) return { ok: false, reason: 'notice text is empty' };
   try {
     const ctl = new AbortController();
@@ -628,8 +646,21 @@ Deno.serve(async (req) => {
          * url= whisper reaches Rene when he answers. */
         const noticeText = await noticeConfig();
         const noticeUrl = `${statusCb}?action=record_notice`;
+        /* No toggle on the inbound path, deliberately: the borrower rings in
+           and there is nobody at a keyboard to have chosen. So inbound always
+           WANTS recording, and its disposition is only ever 'recorded' or
+           'unavailable' — never 'off', which would imply a decision no one made.
+           The row was inserted above, before this check could resolve, so it is
+           stamped here rather than guessed later. */
         const rec = await canRecord(noticeUrl, noticeText);
         if (!rec.ok) console.error(`[twilio-voice] INBOUND NOT RECORDED — ${rec.reason}`);
+        if (callSid) {
+          try {
+            await sb.from('calls_log')
+              .update({ recording_disposition: rec.ok ? 'recorded' : 'unavailable' })
+              .eq('twilio_call_sid', callSid);
+          } catch (e) { console.error('[twilio-voice] inbound disposition stamp failed:', String(e)); }
+        }
         /* DUAL. Same start trigger as record-from-answer — Twilio documents both
          * as starting "as soon as the call is answered" — so the disclosure
          * ordering is untouched. Only the channel count changes: parent leg on
@@ -737,6 +768,33 @@ Deno.serve(async (req) => {
          *
          * Mirrors what the inbound branch already does: log at call START, so a
          * call that ends before anyone presses Save still exists as a row. */
+        /* Disclosure to BOTH legs. The <Say> reaches the staff member on the
+         * browser client — which also makes it audible to them that it fired —
+         * and the url= whisper reaches the person being dialled on answer,
+         * before the bridge. */
+        /* The caller's identity comes from `from`, which Twilio sets to the
+           client identity the TOKEN was minted for — get_token derives that
+           from the verified session, so it cannot be spoofed by the browser.
+           Unknown identity yields '' and the company wording. */
+        const callerUid = uidFromClientIdentity(from);
+        const callerName = NOTICE_NAME_BY_UID[callerUid] || '';
+        const noticeText = await noticeConfig(callerName);
+        const variantTag = callerName ? await noticeVariantTag(callerUid) : '';
+        const noticeUrl = `${recordingCb}?action=record_notice${variantTag ? `&v=${variantTag}` : ''}`;
+        /* Record=off comes from the browser's Device.connect params, the same
+           channel as Ref and ContactId. Anything other than an explicit 'off'
+           means record: an unparseable or missing value must not silently
+           disable the disclosure, because silence is exactly what nobody would
+           notice. Default ON. */
+        const recWanted = (params.get('Record') || '').trim().toLowerCase() !== 'off';
+        const rec = await canRecord(noticeUrl, noticeText, callerName || undefined, recWanted);
+        const disposition = rec.ok ? 'recorded' : (recWanted ? 'unavailable' : 'off');
+        if (!rec.ok) console.error(`[twilio-voice] OUTBOUND NOT RECORDED (${disposition}) — ${rec.reason}`);
+        /* DUAL. Identical start trigger to record-from-answer, so the notice
+         * ordering below is unchanged. Here the parent leg is the staff
+         * member's browser client, so channel 1 is staff — which does match
+         * Conversational Intelligence's default. The mapping is still sent
+         * explicitly rather than relied upon. */
         const clientRef = (params.get('Ref') || '').trim() || null;
         /* An ad-hoc pad call to a number we already know should attach to that
          * contact — otherwise the call is invisible on the borrower's own
@@ -752,6 +810,11 @@ Deno.serve(async (req) => {
               status: 'ringing',
               twilio_call_sid: callSid,
               client_ref: clientRef,
+              /* Written at DIAL time, from the same boolean that built the TwiML
+                 — so the row cannot disagree with what the call actually did.
+                 Deriving it later from "is there a recording?" would report a
+                 deliberate 'off' and a failed capture identically. */
+              recording_disposition: disposition,
               notes: matched.note,          // only set when the number is ambiguous
               created_at: new Date().toISOString(),
             });
@@ -760,26 +823,6 @@ Deno.serve(async (req) => {
             console.error('[twilio-voice] outbound calls_log insert failed:', String(e));
           }
         }
-        /* Disclosure to BOTH legs. The <Say> reaches the staff member on the
-         * browser client — which also makes it audible to them that it fired —
-         * and the url= whisper reaches the person being dialled on answer,
-         * before the bridge. */
-        /* The caller's identity comes from `from`, which Twilio sets to the
-           client identity the TOKEN was minted for — get_token derives that
-           from the verified session, so it cannot be spoofed by the browser.
-           Unknown identity yields '' and the company wording. */
-        const callerUid = uidFromClientIdentity(from);
-        const callerName = NOTICE_NAME_BY_UID[callerUid] || '';
-        const noticeText = await noticeConfig(callerName);
-        const variantTag = callerName ? await noticeVariantTag(callerUid) : '';
-        const noticeUrl = `${recordingCb}?action=record_notice${variantTag ? `&v=${variantTag}` : ''}`;
-        const rec = await canRecord(noticeUrl, noticeText, callerName || undefined);
-        if (!rec.ok) console.error(`[twilio-voice] OUTBOUND NOT RECORDED — ${rec.reason}`);
-        /* DUAL. Identical start trigger to record-from-answer, so the notice
-         * ordering below is unchanged. Here the parent leg is the staff
-         * member's browser client, so channel 1 is staff — which does match
-         * Conversational Intelligence's default. The mapping is still sent
-         * explicitly rather than relied upon. */
         const recAttr = rec.ok ? ` record="record-from-answer-dual" recordingStatusCallback="${recordingCb}"` : '';
         const whisper = rec.ok ? ` url="${xmlEsc(noticeUrl)}"` : '';
         /* RINGBACK — ringTone, not answerOnBridge alone.
