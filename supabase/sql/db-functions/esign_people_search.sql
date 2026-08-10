@@ -35,6 +35,7 @@ begin
            false as loanflag, 1 as grp
     from contacts c
     where qlen >= 2
+      and c.merged_into_contact_id is null   -- READ FILTER: current roster only
       and coalesce(c.email,'') <> ''
       and (
         (coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')) ilike q

@@ -27,6 +27,7 @@ begin
                     (select max(ae.created_at) from activity_events ae where ae.contact_id = c.id)) as last_activity
     from contacts c
     where c.pipeline_status = any(v_active)
+      and c.merged_into_contact_id is null   -- READ FILTER: current roster only
   loop
     if r.last_activity is not null and r.last_activity >= now() - make_interval(days => p_quiet_days) then
       continue;
