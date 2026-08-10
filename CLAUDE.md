@@ -703,6 +703,45 @@ noticed" — there is no working baseline to regress from.
 
 For `sms-service`, step 1 is unnecessary. 141 sends is the baseline.
 
+### Testing an hours guard: the number and the clock both matter
+
+**NPA 555 CANNOT EXERCISE A REFUSAL.** `area_code_timezones` has no row for
+`555`, so `+1 555 555 XXXX` always takes the unknown-area-code branch — allowed
+and logged — and there is no local time to put in the reason. A probe with it
+proves the allow-and-log path and nothing about blocking. This is not a bug in
+the guard; allow-on-unknown is deliberate.
+
+**Use `+1 714 555 0142`.** Area code 714 maps to `America/Los_Angeles`, and the
+exchange range **555-0100 → 555-0199 is NANPA-reserved for fictional use in every
+area code**, so it is as unroutable as NPA 555 while having a real timezone. That
+is the canonical test number for anything hours-related, voice or SMS.
+
+Proven with it on 2026-08-10, flag OFF:
+
+```
+operation   SMS_WOULD_BLOCK        (SMS_BLOCKED once enforced)
+enforced    false
+to          +17145550142
+area_code   714      tz America/Los_Angeles      local_time 1:10 AM
+reason      It is 1:10 AM for the person you are texting (area code 714,
+            America/Los_Angeles). Texts are limited to 8:00 AM–9:00 PM in
+            their local time.
+```
+
+The send still went out, because the flag governs whether we ACT on the verdict,
+never whether we compute it. That is the staging contract working.
+
+**THE INSIDE-THE-WINDOW PROBE ONLY PASSES IN DAYLIGHT.** "Inside the window →
+still sends" requires the run to happen between 8am and 9pm **in the recipient's
+timezone**. At 01:00 Pacific every US area code is outside the window, so the
+probe cannot pass at night for any number — and a guard that refuses at 2am is
+CORRECT, not broken.
+
+Write that down because the failure mode is social, not technical: someone runs
+the suite late, sees the refusal, concludes the guard is over-firing, and
+"fixes" it. If a test can only pass during business hours, say so next to the
+test or it will eventually be repaired into uselessness.
+
 Get this backwards and it costs a day: flip the flag, a drop fails, and the day
 goes on debugging a guard that was working, on a feature that never did. The
 steps look identical for both paths and are not.
