@@ -8815,6 +8815,52 @@ function _ldDriveEsc(s) {
 // Open the in-app viewer for a Google Drive file object. Handles PDFs
 // (pdf.js canvas) and images (<img> with CSS transform). Other types
 // get a fallback link to Drive.
+/* Download a Drive file through gdrive-proxy WITH the user's session.
+ *
+ * Replaces two <a href> links (the doc-viewer Download button and the condition
+ * attachment chips). A navigation cannot send an Authorization header, and that
+ * was the sole reason ?action=download stayed open after every other
+ * gdrive-proxy action was guarded on 2026-08-11.
+ *
+ * fetch + blob, not a signed URL: this file already does an authenticated fetch
+ * of the same endpoint in three places, so it needs no new concept. A signed URL
+ * would be a second credential type with an expiry, a revocation story and a
+ * mid-download failure mode to get right — for a problem an existing pattern
+ * already solves.
+ *
+ * The whole file is buffered before the save prompt appears, so a large file
+ * looks slow rather than broken; the button says so while it works. */
+async function _gpDownloadFile(fileId, fileName) {
+  if (!fileId) return;
+  var cfg = window.APP_CONFIG || {};
+  var base = cfg.SUPABASE_URL || '';
+  var tok = '';
+  try { var s = await _authClient().auth.getSession(); tok = (s && s.data && s.data.session && s.data.session.access_token) || ''; } catch (_) {}
+  var url = null;
+  try {
+    var res = await fetch(base + '/functions/v1/gdrive-proxy?action=download&download=1&fileId=' + encodeURIComponent(fileId), {
+      headers: { 'Authorization': 'Bearer ' + tok, 'apikey': (cfg.SUPABASE_ANON_KEY || '') }
+    });
+    if (!res.ok) {
+      var msg = 'HTTP ' + res.status;
+      try { var j = await res.json(); if (j && j.error) msg = j.error; } catch (_) {}
+      throw new Error(msg);
+    }
+    var blob = await res.blob();
+    url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = fileName || 'document';
+    document.body.appendChild(a); a.click(); a.remove();
+  } catch (e) {
+    (window.showToast || window.toast || function () {})('Download failed: ' + ((e && e.message) || e), true);
+  } finally {
+    /* Revoke on a delay, not immediately: Chrome needs the object URL to still
+       resolve when it starts the save, and revoking in the same tick produces a
+       0-byte file. */
+    if (url) setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+  }
+}
+
 async function openDocViewerForFile(file, navList) {
   const modal = document.getElementById('doc-viewer-modal');
   const body  = document.getElementById('doc-viewer-body');
@@ -8850,14 +8896,21 @@ async function openDocViewerForFile(file, navList) {
     + (file.size ? ' · ' + _ldFormatSize(file.size) : '');
   const _cfg = window.APP_CONFIG || {};
   const _base = _cfg.SUPABASE_URL || '';
+  // (helper defined at _gpDownloadFile, below the viewer)
   const dlLink = document.getElementById('doc-viewer-download');
   const otLink = document.getElementById('doc-viewer-open-tab');
   if (dlLink) {
-    // Download → gdrive-proxy attachment stream (server-authed as the app's Drive account); the
-    // Content-Disposition carries the filename. No usercontent/authuser=0 link, no 403.
-    dlLink.href = _base + '/functions/v1/gdrive-proxy?action=download&download=1&fileId=' + encodeURIComponent(file.id);
-    dlLink.setAttribute('download', '');
-    dlLink.onclick = null;
+    /* Was `dlLink.href = …?action=download&download=1&fileId=…`. A plain <a>
+       navigation cannot carry an Authorization header, which is the ONLY reason
+       gdrive-proxy's download action stayed unguarded while every other action
+       was closed. Fetch the bytes with the session and save them from a blob —
+       the pattern this file already uses three times for the same problem
+       (:8895 viewer, :9241, :25208 scanner). No second credential type, no
+       expiry to get wrong. */
+    dlLink.removeAttribute('href');
+    dlLink.removeAttribute('download');
+    dlLink.style.cursor = 'pointer';
+    dlLink.onclick = function (ev) { if (ev) ev.preventDefault(); _gpDownloadFile(file.id, file.name || 'document'); };
   }
   // Open-in-Drive still needs the Drive web UI → pin the correct account by EMAIL (authuser=email).
   if (otLink) { const _ot = file.webViewLink || '#'; otLink.href = (window.pinGoogleUrl && _ot !== '#') ? window.pinGoogleUrl(_ot) : _ot; }
@@ -19263,7 +19316,12 @@ function renderCondAttachments(c) {
   var chips = atts.map(function(a) {
     var name = _ldDriveEsc(a.file_name || 'Document');
     var fid  = a.gdrive_file_id || '';
-    var dl   = fid ? (base + '/functions/v1/gdrive-proxy?action=download&download=1&fileId=' + encodeURIComponent(fid)) : (a.file_url || '#');
+    /* Drive-backed attachments download through _gpDownloadFile (authenticated
+       fetch + blob) rather than a bare href — see the note at the doc viewer.
+       A non-Drive attachment still has a plain file_url and is unaffected. */
+    var dlHtml = fid
+      ? '<a href="#" onclick="event.preventDefault();_gpDownloadFile(\'' + fid + '\',\'' + String(a.file_name || 'Document').replace(/'/g, "\\'") + '\');return false;" title="Download" style="color:#C9A84C;font-size:11px;text-decoration:none;">Download</a>'
+      : '<a href="' + _ldDriveEsc(a.file_url || '#') + '" download title="Download" style="color:#C9A84C;font-size:11px;text-decoration:none;">Download</a>';
     var viewBtn = fid
       ? '<span onclick="condViewAttachment(\'' + fid + '\',\'' + String(a.file_name||'Document').replace(/'/g,"\\'") + '\',\'' + String(a.file_url||'').replace(/'/g,"\\'") + '\')" title="View" style="cursor:pointer;color:#7BBCE8;font-size:11px;">View</span>'
       : (a.file_url ? '<a href="' + _ldDriveEsc(a.file_url) + '" target="_blank" rel="noopener" style="color:#7BBCE8;font-size:11px;text-decoration:none;">View</a>' : '');
@@ -19271,7 +19329,7 @@ function renderCondAttachments(c) {
       + '<span style="color:#6FD98F;">&#128206;</span>'
       + '<span style="color:var(--text);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + name + '</span>'
       + viewBtn
-      + '<a href="' + _ldDriveEsc(dl) + '" download title="Download" style="color:#C9A84C;font-size:11px;text-decoration:none;">Download</a>'
+      + dlHtml
       + '<span onclick="condDetach(\'' + a.id + '\')" title="Detach" style="cursor:pointer;color:#F07878;font-weight:700;line-height:1;">&times;</span>'
       + '</span>';
   }).join('');

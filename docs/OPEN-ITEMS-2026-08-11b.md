@@ -668,3 +668,63 @@ writeback), point the `lenders` INSERT trigger at it, and retire the workflow.
 - `15fS1PzNx4zM8Xfwt8mDbMBpNCjF8Yqw4` — Borrowers root, run 6689, now unreferenced
 - `1Anb0EiqwMTyIxsOzQMO4j49DJ4xySntN` — Lenders root, "ZZ-TEST Lender Folder Creator probe"
 - `1JUhxPPispvoAA5Q8rsuyzmF7g7xHNZl6` — Lenders root, "ZZ-TEST guard regression probe"
+
+---
+
+# download: fetch + blob shipped, guard PENDING Rene's confirmation
+
+## Chose fetch + blob, not a signed URL
+
+The pattern already exists in this file three times for the same problem —
+`:8895` (doc viewer), `:9241`, `:25208` (1003 scanner) all fetch
+`?action=download` with the session token and read `arrayBuffer()`. Reusing it
+needs no new concept.
+
+A signed URL would add a second credential type with an expiry, a revocation
+story, and a mid-download failure mode — a token that expires while the transfer
+is in flight either dies partway or has to be honoured past its expiry, and both
+answers are wrong in a different way. For a problem an existing pattern solves,
+that is complexity bought for nothing.
+
+## What changed
+
+New `_gpDownloadFile(fileId, fileName)`: authenticated fetch → `blob()` →
+temporary object URL → synthetic `<a download>` click → revoke after 60s.
+
+The delayed revoke is deliberate. Revoking in the same tick produces a 0-byte
+file in Chrome, because the save has not started resolving the URL yet.
+
+Two call sites converted from `<a href>`:
+
+| site | was | now |
+|---|---|---|
+| `lead-detail.html` doc-viewer Download button | `dlLink.href = …download=1&fileId=…` | `onclick → _gpDownloadFile` |
+| condition attachment chips | `<a href="…download=1…" download>` | `onclick → _gpDownloadFile`; non-Drive attachments keep their plain `file_url` |
+
+Verified on the LIVE page: 5 `_gpDownloadFile` references, **0** hrefs
+containing `action=download`, and the old `dlLink.href` assignment gone.
+
+## NOT YET GUARDED — this is the frontend-first half
+
+`?action=download` still answers without a credential. The guard lands only
+after Rene confirms the two converted paths work, because if the conversion is
+wrong the guard turns a working button into a 401 and there is no way to tell
+which change caused it.
+
+**What Rene should click, on a lead that has documents in Drive:**
+
+1. **Documents tab → open a document** → the viewer appears (this path was
+   already authenticated and should be unchanged) → click **Download** in the
+   viewer. The file should save with its real filename.
+2. **Conditions tab → a condition with an attachment** → click **Download** on
+   the chip. Same.
+3. Both should also work for a PDF *and* a non-PDF (image), since the viewer
+   branches on type.
+
+If either shows "Download failed: …", say so and do not guard — that message is
+the helper reporting the real error rather than failing silently.
+
+Once confirmed: add `download` to the guarded set in `gdrive-proxy` (remove the
+`action !== "download"` exemption), redeploy, prove by refusal, and **update the
+`[functions.gdrive-proxy]` note in config.toml, which currently records the
+exemption as deliberate.**
