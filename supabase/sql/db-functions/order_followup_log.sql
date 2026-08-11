@@ -1,6 +1,6 @@
 -- order_followup_log(p_order_id uuid, p_note_text text, p_author_display text)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -13,7 +13,7 @@ CREATE OR REPLACE FUNCTION public.order_followup_log(p_order_id uuid, p_note_tex
 AS $function$
 declare v_id uuid; v_lead uuid; v_text text;
 begin
-  if auth.role() = 'authenticated'
+  if coalesce(auth.role(),'') is distinct from 'service_role'
      and not (public.is_admin() or coalesce(public.current_app_role(),'') in ('va','loa','agent','lender','staff')) then
     raise exception 'staff only';
   end if;

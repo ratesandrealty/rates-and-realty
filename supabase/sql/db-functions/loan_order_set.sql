@@ -1,6 +1,6 @@
 -- loan_order_set(p_contact_id uuid, p_order_type text, p_status text, p_vendor_id uuid, p_reference text, p_notes text, p_employer_name text, p_hr_contact_name text, p_hr_contact_phone text, p_hr_contact_email text, p_order_id uuid, p_borrower_contact_id uuid, p_label text, p_follow_up_at timestamp with time zone, p_follow_up_owner text, p_hr_contact_first_name text, p_hr_contact_last_name text)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -15,7 +15,7 @@ declare
   v_id uuid; v_vendor_name text; v_lead_name text; v_old_status text;
   v_borrower_name text; v_task_id uuid; v_task_title text;
 begin
-  if auth.role() = 'authenticated'
+  if coalesce(auth.role(),'') is distinct from 'service_role'
      and not (public.is_admin() or coalesce(public.current_app_role(),'') in ('va','loa','agent','lender','staff')) then
     raise exception 'staff only';
   end if;

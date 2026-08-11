@@ -1,6 +1,6 @@
 -- production_report(p_from date, p_to date)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-06. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -17,7 +17,7 @@ declare
   v_can_earn boolean;
   v_res jsonb;
 begin
-  if auth.role() = 'authenticated' and not is_admin() then
+  if coalesce(auth.role(),'') is distinct from 'service_role' and not is_admin() then
     raise exception 'not authorized';
   end if;
   -- admin always sees earnings; otherwise honor toggle; service_role/MCP (non-authenticated) sees all
@@ -45,7 +45,7 @@ begin
               and coalesce(c.closed_date, c.created_at::date) between v_from and v_to) as funded_in_range,
            coalesce(e.act,0) as earn_act,
            coalesce(e.est,0) as earn_est
-    from contacts c
+    from public.contacts_live c
     left join earn e on e.contact_id = c.id
   )
   select jsonb_build_object(

@@ -1,6 +1,6 @@
 -- va_dashboard()
 -- language: plpgsql
--- Captured from production 2026-08-06. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -52,7 +52,7 @@ begin
                'name', nullif(trim(coalesce(c.first_name,'')||' '||coalesce(c.last_name,'')),''),
                'kind', 'Appointment', 'date', c.appointment_date)
              order by c.appointment_date), '[]'::jsonb)
-      from contacts c
+      from public.contacts_live c
       where is_lead_shared_with_me(c.id)
         and c.appointment_date is not null
         and c.appointment_date >= (now() - interval '1 day')

@@ -1,6 +1,6 @@
 -- send_stalled_deals_digest(p_dry_run boolean)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-07. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -25,7 +25,7 @@ declare
   v_age int; v_loan text; v_lc text; v_color text;
   r record; v_sent int := 0; v_results jsonb := '[]'::jsonb;
 begin
-  if auth.role() = 'authenticated' and not is_admin() then raise exception 'admin only'; end if;
+  if coalesce(auth.role(),'') is distinct from 'service_role' and not is_admin() then raise exception 'admin only'; end if;
 
   rpt := pipeline_velocity_report();
   stalled := rpt -> 'stalled_deals';

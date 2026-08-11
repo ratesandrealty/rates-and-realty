@@ -42,7 +42,7 @@ declare
   v_link text;
   v_body text;
 begin
-  if auth.role()='authenticated' and not (is_admin() or coalesce(current_app_role(),'') in ('va','agent')) then
+  if coalesce(auth.role(),'') is distinct from 'service_role' and not (is_admin() or coalesce(current_app_role(),'') in ('va','agent')) then
     raise exception 'not authorized';
   end if;
   if nullif(trim(coalesce(p_body,'')),'') is null then raise exception 'Note cannot be empty'; end if;

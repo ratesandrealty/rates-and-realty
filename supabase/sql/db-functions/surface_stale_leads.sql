@@ -1,6 +1,6 @@
 -- surface_stale_leads(p_dry_run boolean, p_quiet_days integer)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-06. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -15,7 +15,7 @@ declare
   v_active text[] := array['Contacted','Follow Up','Pre-Approved','Under Contract','Processing','Clear to Close'];
   r record; v_created int := 0; v_preview jsonb := '[]'::jsonb; v_days int;
 begin
-  if auth.role() = 'authenticated' and not is_admin() then
+  if coalesce(auth.role(),'') is distinct from 'service_role' and not is_admin() then
     raise exception 'admin only';
   end if;
 

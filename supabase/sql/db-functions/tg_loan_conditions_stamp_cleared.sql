@@ -51,7 +51,3 @@ begin
   end if;
   return NEW;
 end; $function$;
-
--- create trigger trg_loan_conditions_stamp_cleared
---   before insert or update on public.loan_conditions
---   for each row execute function public.tg_loan_conditions_stamp_cleared();

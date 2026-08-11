@@ -34,6 +34,3 @@ begin
   where r.user_id = any(coalesce(p_ids, '{}'::uuid[]));
 end;
 $function$;
-
--- revoke all on function public.staff_display_names(uuid[]) from public;
--- grant execute on function public.staff_display_names(uuid[]) to authenticated;

@@ -1,6 +1,6 @@
 -- dashboard_command_center()
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-06. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -17,19 +17,19 @@ declare
 begin
   -- Global command center is an ADMIN tool. VAs/agents get a shared-scoped pipeline elsewhere
   -- (va_shared_leads), so this no longer leaks global data to them.
-  if auth.role() = 'authenticated' and not is_admin() then
+  if coalesce(auth.role(),'') is distinct from 'service_role' and not is_admin() then
     raise exception 'not authorized';
   end if;
 
   select jsonb_build_object(
     'kpis', jsonb_build_object(
-      'total_leads',     (select count(*) from contacts),
-      'new_leads',       (select count(*) from contacts where pipeline_status = 'New Lead'),
-      'new_leads_7d',    (select count(*) from contacts where pipeline_status = 'New Lead' and created_at > now() - interval '7 days'),
-      'active_pipeline', (select count(*) from contacts where pipeline_status = any(v_active)),
-      'closed',          (select count(*) from contacts where pipeline_status = 'Closed' or deal_outcome = 'won'),
-      'hot_leads',       (select count(*) from contacts where lead_tier(lead_score) = 'hot'),
-      'warm_leads',      (select count(*) from contacts where lead_tier(lead_score) = 'warm'),
+      'total_leads',     (select count(*) from public.contacts_live),
+      'new_leads',       (select count(*) from public.contacts_live where pipeline_status = 'New Lead'),
+      'new_leads_7d',    (select count(*) from public.contacts_live where pipeline_status = 'New Lead' and created_at > now() - interval '7 days'),
+      'active_pipeline', (select count(*) from public.contacts_live where pipeline_status = any(v_active)),
+      'closed',          (select count(*) from public.contacts_live where pipeline_status = 'Closed' or deal_outcome = 'won'),
+      'hot_leads',       (select count(*) from public.contacts_live where lead_tier(lead_score) = 'hot'),
+      'warm_leads',      (select count(*) from public.contacts_live where lead_tier(lead_score) = 'warm'),
       'tasks_open',      (select count(*) from tasks where coalesce(status,'open') not in ('completed','cancelled','dismissed')),
       'tasks_due_today', (select count(*) from tasks where coalesce(status,'open') not in ('completed','cancelled','dismissed') and due_date is not null and due_date::date <= current_date),
       'activity_today',  (select count(*) from activity_events where created_at::date = current_date)
@@ -37,7 +37,7 @@ begin
     'pipeline_by_stage', (
       select coalesce(jsonb_agg(jsonb_build_object('stage', s.stage, 'count', coalesce(cnt.c,0)) order by s.ord), '[]'::jsonb)
       from (values ('New Lead',1),('Contacted',2),('Follow Up',3),('Pre-Approved',4),('Under Contract',5),('Processing',6),('Clear to Close',7),('Closed',8)) s(stage,ord)
-      left join (select pipeline_status, count(*) c from contacts group by 1) cnt on cnt.pipeline_status = s.stage
+      left join (select pipeline_status, count(*) c from public.contacts_live group by 1) cnt on cnt.pipeline_status = s.stage
     ),
     'todays_tasks', (
       select coalesce(jsonb_agg(obj order by ord, due_date asc nulls last), '[]'::jsonb) from (
@@ -60,7 +60,7 @@ begin
                  'last_activity', la.last_activity,
                  'days_quiet', case when la.last_activity is null then null else floor(extract(epoch from now()-la.last_activity)/86400)::int end) as obj,
                case when la.last_activity is null then 99999 else floor(extract(epoch from now()-la.last_activity)/86400)::int end as days_quiet
-        from contacts c
+        from public.contacts_live c
         cross join lateral (
           select greatest(c.last_contact_date, c.last_meaningful_activity_at,
                           (select max(ae.created_at) from activity_events ae where ae.contact_id = c.id)) as last_activity
@@ -77,7 +77,7 @@ begin
                  'temperature', initcap(lead_tier(c.lead_score)),
                  'score', c.lead_score, 'stage', c.pipeline_status, 'phone', c.phone) as obj,
                c.lead_score as score
-        from contacts c
+        from public.contacts_live c
         where lead_tier(c.lead_score) in ('hot','warm')
           and coalesce(c.pipeline_status,'') <> 'Closed'
           and coalesce(c.deal_outcome,'') not in ('won','lost')
@@ -101,7 +101,7 @@ begin
                  'name', nullif(trim(coalesce(c.first_name,'')||' '||coalesce(c.last_name,'')),''),
                  'source', coalesce(c.lead_source, c.source), 'phone', c.phone, 'created_at', c.created_at) as obj,
                c.created_at
-        from contacts c
+        from public.contacts_live c
         where c.pipeline_status = 'New Lead'
         order by c.created_at desc limit 12
       ) s

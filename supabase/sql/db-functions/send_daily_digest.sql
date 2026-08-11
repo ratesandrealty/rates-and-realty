@@ -1,6 +1,6 @@
 -- send_daily_digest(p_dry_run boolean)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-07. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -18,7 +18,7 @@ declare
   v_link text := 'https://admin.ratesandrealty.com/dashboard/admin.html';
   r record; v_sent int := 0; v_results jsonb := '[]'::jsonb;
 begin
-  if auth.role() = 'authenticated' and not is_admin() then raise exception 'admin only'; end if;
+  if coalesce(auth.role(),'') is distinct from 'service_role' and not is_admin() then raise exception 'admin only'; end if;
 
   d := dashboard_command_center();
   v_new    := coalesce((d->'kpis'->>'new_leads')::int,0);

@@ -29,7 +29,3 @@ begin
   end if;
   return NEW;
 end; $function$;
-
--- create trigger trg_borrower_documents_stamp_reviewed
---   before insert or update on public.borrower_documents
---   for each row execute function public.tg_borrower_documents_stamp_reviewed();

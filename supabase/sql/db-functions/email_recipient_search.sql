@@ -1,6 +1,6 @@
 -- email_recipient_search(p_q text, p_limit integer)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -38,7 +38,8 @@ begin
     from vendor_directory where email is not null and email <> ''
       and (lower(email) like v_q or lower(coalesce(name,'')) like v_q)
     union all
-    -- anyone previously emailed (from/to in email_log)
+    -- anyone previously emailed (from/to in email_log). NOT filtered on purpose:
+    -- this answers "what happened", not "who are my contacts now".
     select nullif(trim(coalesce(from_name,'')),''), lower(from_email), 'history', 3
     from email_log where from_email is not null and from_email <> '' and lower(from_email) like v_q
     union all

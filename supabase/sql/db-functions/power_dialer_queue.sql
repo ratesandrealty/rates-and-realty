@@ -1,6 +1,6 @@
 -- power_dialer_queue(p_filter text, p_stage text, p_partner_id uuid, p_limit integer, p_offset integer, p_source text, p_tag_ids uuid[], p_callable_only boolean, p_min_loan numeric, p_sort text)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -14,7 +14,7 @@ AS $function$
 declare v_filter text := lower(coalesce(p_filter,'all'));
         v_sort text := lower(coalesce(p_sort,'priority'));
 begin
-  if auth.role() = 'authenticated' and not public.is_admin() then raise exception 'admin only'; end if;
+  if coalesce(auth.role(),'') is distinct from 'service_role' and not public.is_admin() then raise exception 'admin only'; end if;
   return query
   with la as (
     select ae.contact_id, max(ae.created_at) last_act
@@ -38,7 +38,7 @@ begin
                   then substr(regexp_replace(coalesce(c.phone,''),'\D','','g'),2,3)
                 when length(regexp_replace(coalesce(c.phone,''),'\D','','g'))=10
                   then left(regexp_replace(coalesce(c.phone,''),'\D','','g'),3) else null end ac
-    from (select * from contacts where merged_into_contact_id is null) c   -- READ FILTER: never dial a merged-away duplicate
+    from (select * from contacts where merged_into_contact_id is null) c
     left join la on la.contact_id = c.id
     left join contact_earnings ce on ce.contact_id = c.id
     left join referral_partners rp on rp.id = c.referral_partner_id

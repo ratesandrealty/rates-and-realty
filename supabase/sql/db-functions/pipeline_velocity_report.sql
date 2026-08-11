@@ -1,6 +1,6 @@
 -- pipeline_velocity_report(p_from date, p_to date)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-06. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -18,7 +18,7 @@ declare
   result jsonb;
 begin
   -- admin-only (this exposes funded volume); service_role/MCP pass through
-  if auth.role() = 'authenticated' and not is_admin() then
+  if coalesce(auth.role(),'') is distinct from 'service_role' and not is_admin() then
     raise exception 'Not authorized to view pipeline velocity report';
   end if;
 
@@ -29,7 +29,7 @@ begin
       c.created_at::date as lead_created, c.closed_date,
       (c.closed_date - c.created_at::date) as days_to_fund,
       c.loan_amount, normalize_lead_source(c.source) as source
-    from contacts c
+    from public.contacts_live c
     where c.closed_date is not null
       and c.closed_date >= p_from and c.closed_date <= p_to
   ),
@@ -40,7 +40,7 @@ begin
   active as (
     select c.*,
            extract(epoch from (now() - c.created_at))/86400.0 as age_days
-    from contacts c
+    from public.contacts_live c
     where c.pipeline_status in ('Contacted','Follow Up','Pre-Approved','Under Contract','Processing','Clear to Close')
   ),
   time_to_fund as (

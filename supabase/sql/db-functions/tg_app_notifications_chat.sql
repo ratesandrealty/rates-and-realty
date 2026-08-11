@@ -9,41 +9,50 @@ CREATE OR REPLACE FUNCTION public.tg_app_notifications_chat()
  SET search_path TO 'public'
 AS $function$
 declare
-  v_email text; v_phone text; v_cuid bigint;
+  v_phone text; v_cuid bigint; v_req bigint;
   v_sender text := coalesce(nullif(trim(new.actor_display),''),'A teammate');
   v_prev   text := coalesce(nullif(trim(new.preview),''),'(new message)');
   v_url    text := 'https://admin.ratesandrealty.com/dashboard/admin#chat';
 begin
-  begin
-    select u.email::text into v_email from auth.users u where u.id = new.recipient_user_id;
-    if v_email is not null and v_email <> '' then
-      perform net.http_post(
-        url := 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/email-service',
-        headers := public.internal_call_headers(),
-        body := jsonb_build_object('action','send','to_email',v_email,
-          'subject','💬 New message from '||v_sender,
-          'html','<div style="font-family:Arial,sans-serif;max-width:560px;"><p style="font-size:15px;"><strong>'||v_sender||'</strong> sent you a message:</p><blockquote style="margin:0 0 18px;padding:12px 14px;border-left:3px solid #C9A84C;background:#faf7ef;border-radius:4px;white-space:pre-wrap;">'||v_prev||'</blockquote><p><a href="'||v_url||'" style="display:inline-block;padding:11px 20px;background:#C9A84C;color:#1a1a1a;text-decoration:none;border-radius:6px;font-weight:700;">Open chat →</a></p></div>'));
-    end if;
-  exception when others then null; end;
+  /* EMAIL ARM REMOVED 2026-08-10 — same reasoning as the SMS arm on 08-07,
+   * which is recorded a few lines below and applies unchanged with a higher
+   * volume. It duplicated what the bell already delivers; chat is a fast medium
+   * and an email per message is a slow copy of a fast thing, arriving after the
+   * conversation has moved on. It was also the loudest survivor: 21 emails for
+   * one conversation in 64 minutes.
+   *
+   * Combined with the upsert in staff_message_send, a conversation now produces
+   * 1 bell entry + 1 ClickUp task + 0 emails, down from 21 / 21 / 21.
+   *
+   * If an away-from-desk nudge is wanted, use send-push and the existing VAPID
+   * keys — which is what the SMS note below already recommended. */
 
   /* SMS half removed 2026-08-07 — see send_daily_digest for the full reasoning.
-   * It duplicated what the chat notification already delivers in-app and by
-   * email, reached only the one admin phone, and restoring it meant granting a
-   * Postgres function the ability to send from the business line. This path was
-   * also the riskiest of the four: it fired per app_notifications INSERT, and
-   * that table went from 22 rows all-time to 16 in a single week once the
-   * share-nudge and task-note work started writing to it. If a phone nudge is
-   * wanted, use send-push and the existing VAPID keys, not SMS. */
+   * It duplicated what the chat notification already delivers in-app, reached
+   * only the one admin phone, and restoring it meant granting a Postgres
+   * function the ability to send from the business line. */
 
   begin
     select clickup_user_id into v_cuid from public.auth_user_roles
       where user_id = new.recipient_user_id and clickup_user_id is not null limit 1;
     if v_cuid is not null then
-      perform net.http_post(
+      /* Capture the request id. pg_net is fire-and-forget, so the function's
+         returned clickup_task_id was previously discarded and the task became
+         unreachable — which is why clearing the backlog had to match on a title
+         string instead of a key. The id is recorded here and reconciled from
+         net._http_response by the sweep; retention there is ~6 hours, which is
+         far longer than the round trip. */
+      select net.http_post(
         url := 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/clickup-mention-ping',
         headers := public.internal_call_headers(),
         body := jsonb_build_object('title','💬 New message from '||v_sender,
-          'description',v_prev||E'\n\nOpen chat: '||v_url,'priority','normal','assignees',jsonb_build_array(v_cuid)));
+          'description',v_prev||E'\n\nOpen chat: '||v_url,'priority','normal',
+          'assignees',jsonb_build_array(v_cuid))) into v_req;
+      if v_req is not null then
+        update public.app_notifications
+           set external_task_id = 'pending:'||v_req::text
+         where id = new.id;
+      end if;
     end if;
   exception when others then null; end;
 

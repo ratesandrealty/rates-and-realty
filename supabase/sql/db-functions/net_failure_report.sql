@@ -1,6 +1,6 @@
 -- net_failure_report(p_days integer)
 -- language: sql
--- Captured from production 2026-08-07.
+-- Captured from production 2026-08-11.
 --
 -- Captured by hand — see the note in capture_net_failures.sql for why
 -- recapture-db-functions.mjs could not do it.
@@ -26,4 +26,4 @@ AS $function$
   where f.occurred_at > now() - make_interval(days => p_days)
   group by 1, 2
   order by occurrences desc, last_seen desc;
-$function$
+$function$;

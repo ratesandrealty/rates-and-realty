@@ -58,9 +58,3 @@ begin
   return NEW;
 end;
 $function$;
-
--- The trigger itself, which pg_get_functiondef does NOT emit:
--- drop trigger if exists trg_processing_items_stamp_completion on public.processing_items;
--- create trigger trg_processing_items_stamp_completion
---   before insert or update on public.processing_items
---   for each row execute function public.tg_processing_items_stamp_completion();

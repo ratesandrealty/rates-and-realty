@@ -1,6 +1,6 @@
 -- internal_call_headers()
 -- language: sql
--- Captured from production 2026-08-07.
+-- Captured from production 2026-08-11.
 --
 -- Headers for a net.http_post made BY POSTGRES, proving where it came from.
 --
@@ -31,4 +31,4 @@ AS $function$
       (select decrypted_secret from vault.decrypted_secrets
         where name = 'internal_db_caller_secret')
   );
-$function$
+$function$;

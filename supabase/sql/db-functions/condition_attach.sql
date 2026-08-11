@@ -1,6 +1,6 @@
 -- condition_attach(p_condition_id uuid, p_docs jsonb, p_clear boolean)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -20,7 +20,6 @@ begin
   end if;
   select contact_id into v_contact from public.loan_conditions where id = p_condition_id;
   if v_contact is null then raise exception 'condition not found'; end if;
-
   for d in select * from jsonb_array_elements(coalesce(p_docs, '[]'::jsonb)) loop
     insert into public.condition_attachments(
       condition_id, contact_id, uploaded_document_id, gdrive_file_id, file_name, file_url, attached_by)
@@ -32,14 +31,11 @@ begin
       auth.uid())
     on conflict do nothing;
   end loop;
-
   if p_clear then
     update public.loan_conditions
-       -- cleared_by dropped 2026-08-11; see condition_set_status.sql.
        set status='cleared', cleared_at=now(), updated_at=now()
      where id = p_condition_id;
   end if;
-
   select count(*) into v_total from public.condition_attachments where condition_id = p_condition_id;
   return jsonb_build_object('condition_id', p_condition_id, 'total_attachments', v_total, 'cleared', p_clear);
 end; $function$;

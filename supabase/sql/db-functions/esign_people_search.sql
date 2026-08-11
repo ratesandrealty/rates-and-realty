@@ -1,6 +1,6 @@
 -- esign_people_search(p_contact_id uuid, p_query text)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-06. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -15,12 +15,13 @@ declare
   q text := '%' || trim(coalesce(p_query,'')) || '%';
   qlen int := length(trim(coalesce(p_query,'')));
 begin
-  if auth.role() = 'authenticated' and not (public.is_admin() or coalesce(public.current_app_role(),'') in ('va','loa','agent','staff')) then
+  if coalesce(auth.role(),'') is distinct from 'service_role' and not (public.is_admin() or coalesce(public.current_app_role(),'') in ('va','loa','agent','staff')) then
     raise exception 'admin only';
   end if;
 
   return query
   with loan_people as (
+    -- NOT filtered: derived from the contact the caller opened.
     select s.name nm, s.email em, s.role rl, s.source src, s.person_contact_id pid
     from public.esign_signer_suggestions(p_contact_id) s
   ),

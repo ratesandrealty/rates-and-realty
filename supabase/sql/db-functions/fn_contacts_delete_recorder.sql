@@ -1,22 +1,21 @@
--- BEFORE DELETE recorder on public.contacts. A RECORDER, NOT A GATE.
--- delete-contacts holds the gate; this only ever writes. If the insert fails it
--- RAISES WARNING and the delete proceeds — a recorder that can refuse is one that
--- can lock you out of your own data.
---
--- Exists because 43 contact deletions left nothing but a cascade artifact on
--- contact_earnings with a null actor, and zero rows at table_name='contacts'.
--- The extra columns make a null actor DIAGNOSTIC rather than merely missing.
-create or replace function public.fn_contacts_delete_recorder()
-returns trigger
-language plpgsql
-security definer
-set search_path to 'public'
-as $fn$
+-- fn_contacts_delete_recorder()
+-- language: plpgsql
+-- Captured from production 2026-08-11.
+
+CREATE OR REPLACE FUNCTION public.fn_contacts_delete_recorder()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
 begin
   begin
     insert into public.audit_log (table_name, row_id, operation, old_data, new_data, changed_by)
     values (
-      'contacts', OLD.id::text, 'DELETE_OBSERVED', to_jsonb(OLD),
+      'contacts',
+      OLD.id::text,
+      'DELETE_OBSERVED',
+      to_jsonb(OLD),
       jsonb_build_object(
         'recorded_by',      'fn_contacts_delete_recorder',
         'auth_uid',         auth.uid(),
@@ -33,13 +32,11 @@ begin
       auth.uid()
     );
   exception when others then
+    -- Never let the logbook stop the delete. Same principle as recordRun() in
+    -- gdrive-health-monitor: a monitor that dies because it could not write its
+    -- own log is worse than a gap in the log.
     raise warning 'fn_contacts_delete_recorder: could not record delete of % (%)', OLD.id, sqlerrm;
   end;
   return OLD;
 end
-$fn$;
-
-drop trigger if exists trg_contacts_delete_recorder on public.contacts;
-create trigger trg_contacts_delete_recorder
-  before delete on public.contacts
-  for each row execute function public.fn_contacts_delete_recorder();
+$function$;

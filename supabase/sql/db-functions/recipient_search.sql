@@ -1,6 +1,6 @@
 -- recipient_search(p_query text, p_limit integer)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -13,7 +13,7 @@ CREATE OR REPLACE FUNCTION public.recipient_search(p_query text, p_limit integer
 AS $function$
 declare q text := lower(trim(coalesce(p_query,'')));
 begin
-  if auth.role() = 'authenticated'
+  if coalesce(auth.role(),'') is distinct from 'service_role'
      and not (public.is_admin() or coalesce(public.current_app_role(),'') in ('admin','va','loa','agent','lender','staff'))
   then raise exception 'not authorized'; end if;
   if length(q) < 2 then return; end if;

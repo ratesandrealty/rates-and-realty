@@ -1,6 +1,6 @@
 -- crm_health_check_rpc()
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -12,7 +12,7 @@ CREATE OR REPLACE FUNCTION public.crm_health_check_rpc()
  SET search_path TO 'public', 'pg_temp'
 AS $function$
 begin
-  if auth.role() = 'authenticated' and not coalesce(public.is_admin(), false) then
+  if coalesce(auth.role(),'') is distinct from 'service_role' and not coalesce(public.is_admin(), false) then
     raise exception 'crm_health_check is admin-only' using errcode = '42501';
   end if;
   return query

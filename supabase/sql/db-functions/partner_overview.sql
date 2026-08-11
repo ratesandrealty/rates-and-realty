@@ -1,6 +1,6 @@
 -- partner_overview(p_partner_id uuid)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-11. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -12,12 +12,12 @@ CREATE OR REPLACE FUNCTION public.partner_overview(p_partner_id uuid)
  SET search_path TO 'public', 'pg_temp'
 AS $function$
 begin
-  if auth.role() = 'authenticated' and not public.is_admin() then raise exception 'admin only'; end if;
+  if coalesce(auth.role(),'') is distinct from 'service_role' and not public.is_admin() then raise exception 'admin only'; end if;
   return query
   with c as (
     select co.id, co.deal_outcome, co.loan_amount, co.created_at,
            ce.actual_earnings, ce.estimated_earnings
-    from contacts co
+    from public.contacts_live co
     left join contact_earnings ce on ce.contact_id = co.id
     where co.referral_partner_id = p_partner_id
   ),

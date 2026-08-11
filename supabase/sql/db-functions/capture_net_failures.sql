@@ -1,6 +1,6 @@
 -- capture_net_failures()
 -- language: plpgsql
--- Captured from production 2026-08-07.
+-- Captured from production 2026-08-11.
 --
 -- Captured BY HAND, not by tools/recapture-db-functions.mjs: that tool shells out
 -- to `supabase projects api-keys`, which the installed CLI (v2.98.2) can no
@@ -46,4 +46,4 @@ begin
 
   return query select v_ins, v_seen - v_ins, v_lo, v_hi;
 end;
-$function$
+$function$;
