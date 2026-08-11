@@ -12362,11 +12362,33 @@ async function lpHoiSendAll(){
       try{ await _authClient().rpc('hoi_quote_log',{ p_contact_id:cid, p_vendor_id:r.vendor_id||null, p_company:r.company||null, p_agent_name:r.agent_name||null, p_agent_first:r.agent_first||null, p_agent_last:r.agent_last||null, p_agent_email:r.agent_email||null, p_agent_phone:r.agent_phone||null, p_subject:subject, p_body:bodyText }); }catch(le){ console.warn('[hoi_quote_log]', le&&le.message); }
       if(r.save && !r.vendor_id && (r.company||r.agent_name)){ try{ await _authClient().rpc('vendor_directory_upsert',{ p_id:null, p_role:'hoi_agent', p_name:r.agent_name||null, p_company:r.company||null, p_phone:r.agent_phone||null, p_email:r.agent_email||null, p_website:null, p_notes:null }); }catch(_){} }
       ok++;
-    }catch(e){ fail++; console.warn('[lpHoiSend]', r.agent_email, e&&e.message); }
+    }catch(e){
+      fail++;
+      console.warn('[lpHoiSend]', r.agent_email, e&&e.message);
+      /* A FAILED SEND NOW WRITES A ROW. hoi_quote_log used to be called only
+         AFTER the success check above, so a failure left nothing behind: the
+         toast was its only trace and it went away. The panel could not show a
+         failure because there was nothing to show — which is why "make failed
+         unmistakable" was only half finishable until now.
+         Best-effort and separately caught: if the logging itself fails, the
+         send loop must still continue to the other recipients. */
+      try{
+        await _authClient().rpc('hoi_quote_log', {
+          p_contact_id:cid, p_vendor_id:r.vendor_id||null, p_company:r.company||null,
+          p_agent_name:r.agent_name||null, p_agent_first:r.agent_first||null, p_agent_last:r.agent_last||null,
+          p_agent_email:r.agent_email||null, p_agent_phone:r.agent_phone||null,
+          p_subject:subject, p_body:bodyText,
+          p_status:'failed', p_error:String((e&&e.message)||e).slice(0,500)
+        });
+      }catch(le){ console.warn('[hoi_quote_log failed-send]', le&&le.message); }
+    }
   }
   if(btn){ btn.disabled=false; btn.textContent='Send to '+total; }
   _lpHoiToast(ok+' quote request'+(ok===1?'':'s')+' sent'+(fail?(' · '+fail+' failed'):' ✓'), fail>0);
-  if(ok>0){ _lpHoiRecipients=[]; lpHoiCloseModal(); lpHoiLoadList(); }
+  /* Reload whenever ANYTHING was written — a run where every send failed still
+     has rows to show now, and closing on ok>0 alone would hide them. */
+  if(ok>0){ _lpHoiRecipients=[]; lpHoiCloseModal(); }
+  if(ok>0 || fail>0) lpHoiLoadList();
 }
 async function lpHoiLoadList(){
   const box=document.getElementById('lpHoiQuotes'); if(!box) return;
@@ -12398,7 +12420,12 @@ function lpHoiRenderList(rows){
     const failed=(key==='failed');
     return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 8px;border:1px solid '+(seld?'rgba(80,200,120,.5)':(failed?'rgba(229,72,77,.45)':'rgba(255,255,255,.08)'))+';'+_lpActRowCss(key)+'border-radius:8px;margin-bottom:4px;">'
       +'<div style="flex:1;min-width:150px;"><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;"><span style="font-size:12px;font-weight:600;color:'+(failed?'#FFD9D9':'#e2e2e2')+';">'+lpEsc(r.company_name||r.agent_name||'(company)')+'</span>'+_lpActChip(key)+(seld?'<span style="color:#50c878;font-size:10px;font-weight:700;">✓ Selected</span>':'')+'</div><div style="font-size:10px;color:#888;">'+lpEsc([r.agent_name,r.agent_email].filter(Boolean).join(' · '))+(when?(' · '+when):'')+'</div>'
-      +(failed?'<div style="color:#FF8A8A;font-size:9.5px;font-weight:700;margin-top:2px;">This request was never delivered — resend it.</div>':'')+'</div>'
+      /* The reason, when the row carries one. "Never delivered" tells you to
+         act; send_error tells you what to fix — a bad address reads very
+         differently from the mail service being down. */
+      +(failed?('<div style="color:#FF8A8A;font-size:9.5px;font-weight:700;margin-top:2px;">This request was never delivered — resend it.'
+        +(r.send_error?('<span style="display:block;font-weight:500;color:#E5A0A0;margin-top:1px;">'+lpEsc(String(r.send_error).slice(0,160))+'</span>'):'')
+        +'</div>'):'')+'</div>'
       +'<select onchange="lpHoiStatusChange(\''+r.id+'\',this.value)" style="'+ctl+'">'+stOpts+'</select>'
       +'<input placeholder="$ quote" value="'+lpEsc(amt)+'" onchange="lpHoiQuoteAmount(\''+r.id+'\',this.value)" style="'+ctl+'width:88px;">'
       +(seld?'<span style="font-size:11px;color:#50c878;font-weight:700;">Winner</span>':'<button onclick="lpHoiSelect(\''+r.id+'\')" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;">Select ✓</button>')
