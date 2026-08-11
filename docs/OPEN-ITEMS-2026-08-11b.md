@@ -435,3 +435,82 @@ authentication and provide none.
 `gdrive-proxy?action=create-folder` with **no credential**. That is a different
 question from the inbound webhook and is already recorded above — guarding
 `gdrive-proxy` breaks both silently.
+
+---
+
+# Contact folder creation moved off n8n into gdrive-proxy (2026-08-11)
+
+## Read-only findings that decided the shape
+
+1. **`gdrive-proxy?action=create-folder` only creates.** It returns the Drive
+   file and does not touch `contacts`, so the writeback had to move with it.
+2. **No subfolder tree is lost.** Contact Folder Creator was three nodes —
+   webhook, create-folder, PATCH. The 10-subfolder borrower tree belongs to
+   *Borrower Stage Foldering* (18 nodes, fired by `pipeline_status`), which is
+   untouched.
+3. **`gdrive-proxy` was unpinned, `verify_jwt = false`, and had NO in-function
+   guard.** So moving the callers there would have moved them to another open
+   endpoint. See the split below.
+
+## What was built
+
+`POST gdrive-proxy?action=create-borrower-folder` with `{ contact_id }`:
+
+- `requireStaff(req)` — the caller presents a SESSION, which is why this could
+  not be solved with a header on the old webhook: both callers are browsers, so
+  any credential they can send is in page source.
+- **Guard 2 (new): does not create when a folder already exists.** The n8n draft
+  only prevented the bad RECORD — it still created a folder and then declined to
+  save it, so every re-click stranded one (execution 6690 made exactly that).
+  Checking first means the wasted folder never exists.
+- **Guard 1 (carried over): the `is.null` writeback.** Retained verbatim in
+  meaning — fill the id only while it is still empty — as the race backstop when
+  two callers pass guard 2 together. If it loses that race the response says
+  `raced: true` and names the now-unreferenced folder rather than reporting a
+  clean success.
+- The server writes back synchronously, so the response carries the id and the
+  10-second poll in both callers now exits on its first pass. That poll window
+  was the double-click race.
+
+Callers moved: `admin/lead-detail.html` `_ldCreateContactFolder`, and
+`components/admin-dashboard.js` `_fvCreateFolder`. Both send the session token.
+
+## Verified by execution
+
+```
+create-borrower-folder   no credential  401 missing authorization
+create-borrower-folder   anon key       401 invalid session
+create-folder (old)      no credential  400 parentId and name required   <- still open
+POST /webhook/contact-folder-create     404 not registered              <- retired
+```
+
+**NOT verified: the success path.** `requireStaff` needs a real session or the
+service key and I have neither, so the create, the folder-exists guard and the
+is.null writeback are proven by construction and refusal only. **Rene should
+click "Create Folder" on a lead with no folder, then click it again** — the
+second click must return the same folder and create nothing new.
+
+## n8n workflow retired, not deleted
+
+`Contact Folder Creator` `1ZhDyTy1gZP2g4qQ` is **unpublished**, and its webhook
+now 404s. Deactivating was safe to do immediately because both callers had
+already moved, so it had no caller left — and it closes an unauthenticated
+webhook that could create folders and PATCH `contacts` for any contact_id.
+
+## gdrive-proxy is PARTIALLY guarded — say so plainly
+
+Only `create-borrower-folder` checks anything. `create-folder`, `upload-file`,
+`rename`, `trash-file` and the read actions still answer anyone, using rene@'s
+user OAuth token for the write ones. Guarding the rest is blocked on one caller:
+the n8n **Lender Folder Creator** (`35OAO1zJqCZsKMsM`) POSTs `create-folder`
+with no credential. Give that node the existing "Supabase service_role (HTTP)"
+credential, publish, prove by execution — then guard the whole function.
+
+## Cleanups
+
+- Fixture `aa74cc5e…` folder id cleared, so the create path is testable again.
+- **For Rene, a Drive-UI job:** execution 6690 left an orphan folder
+  `ZZ-TEST Fixture GUARD TEST` under the Borrowers root, and run 6689 left
+  `15fS1PzNx4zM8Xfwt8mDbMBpNCjF8Yqw4` which nothing points at now that the
+  fixture is cleared. Both are rene@-owned via n8n's OAuth, so `gdrive-proxy`
+  (service account) cannot trash them.

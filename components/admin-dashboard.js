@@ -2637,19 +2637,23 @@ function _fvBindDropzone(_contact) { /* no-op — see _fvBindPanels() */ }
 async function _fvCreateFolder(contact, btn) {
   if (btn) { btn.disabled = true; btn.textContent = "…"; }
   try {
-    const res = await fetch("https://ratesandrealty.app.n8n.cloud/webhook/contact-folder-create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contact_id: contact.id,
-        first_name: contact.first_name || "",
-        last_name: contact.last_name || ""
-      })
-    });
-    if (!res.ok) throw new Error("Webhook failed: HTTP " + res.status);
-
-    // Poll for the writeback — n8n creates the folder and PATCHes contacts.
+    /* gdrive-proxy with the user's SESSION, not an unauthenticated n8n webhook.
+       The old Contact Folder Creator webhook took no credential and could not be
+       given one — this is a browser, so anything it sends is public. The n8n hop
+       is retired; the folder-exists and is.null guards are server-side now. */
     const { url, key, auth } = getSupabaseConfig();
+    const res = await fetch(url + "/functions/v1/gdrive-proxy?action=create-borrower-folder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + auth },
+      body: JSON.stringify({ contact_id: contact.id })
+    });
+    if (!res.ok) {
+      let msg = "HTTP " + res.status;
+      try { const j = await res.json(); if (j && j.error) msg = j.error; } catch (_) {}
+      throw new Error("Folder create failed: " + msg);
+    }
+
+    // The server writes back synchronously, so this exits on its first pass.
     let folderId = null, folderUrl = null;
     for (let i = 0; i < 10; i++) {
       await new Promise((r) => setTimeout(r, 1000));

@@ -6115,19 +6115,30 @@ async function handleDriveFolderBtn() {
   updateDriveFolderBtn();
 }
 
-// Create folder via n8n webhook, poll for writeback, then update state.
+/* Create the Drive folder through gdrive-proxy, with the user's SESSION.
+ *
+ * Was an unauthenticated n8n webhook (Contact Folder Creator, now retired). It
+ * could not be fixed with a header: this is a browser, so any credential it can
+ * send is in page source — the anon-key mistake. The n8n hop is gone rather
+ * than guarded, and the folder-exists and is.null guards now live server-side
+ * in gdrive-proxy?action=create-borrower-folder.
+ *
+ * The server also does the writeback, so the response carries the id. The poll
+ * below is left as a fallback and now exits on its first pass. */
 async function _ldCreateContactFolder() {
   if (!contactId || !contactData) throw new Error('No contact loaded');
-  const res = await fetch('https://ratesandrealty.app.n8n.cloud/webhook/contact-folder-create', {
+  const _tok = await _getUserAccessToken();
+  const res = await fetch(
+    (window.APP_CONFIG.SUPABASE_URL) + '/functions/v1/gdrive-proxy?action=create-borrower-folder', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contact_id: contactId,
-      first_name: contactData.first_name || '',
-      last_name: contactData.last_name || ''
-    })
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (_tok || '') },
+    body: JSON.stringify({ contact_id: contactId })
   });
-  if (!res.ok) throw new Error('Webhook HTTP ' + res.status);
+  if (!res.ok) {
+    let msg = 'HTTP ' + res.status;
+    try { const j = await res.json(); if (j && j.error) msg = j.error; } catch (_) {}
+    throw new Error(msg);
+  }
 
   // Poll Supabase for up to 10s waiting for n8n to write back.
   for (let i = 0; i < 10; i++) {

@@ -616,3 +616,22 @@ verify_jwt = false
 # Pinned at the value that is LIVE (false) — NOT a change. See
 # critical-date-reminders: same guard, same rotated vault secret.
 verify_jwt = false
+
+[functions.gdrive-proxy]
+# Pinned at the value that is LIVE (false) — NOT a change. It was never pinned,
+# so a routine deploy would have flipped it to true and broken every caller.
+#
+# ⚠️ PARTIALLY GUARDED, and the split is deliberate.
+#   create-borrower-folder  requireStaff() — added 2026-08-11, guarded from birth,
+#                           which is why it needed no frontend-first staging.
+#   everything else         UNGUARDED. create-folder, upload-file, rename,
+#                           trash-file and the read actions all still answer
+#                           anyone. It creates and renames Drive files with
+#                           rene@'s USER OAuth token, so this is a real hole.
+#
+# Guarding the rest is blocked on a caller, not on effort: the n8n workflow
+# "Lender Folder Creator" (35OAO1zJqCZsKMsM) POSTs create-folder with NO
+# credential, and "Contact Folder Creator" did too until it was retired. Fix
+# that node first — it can use the existing "Supabase service_role (HTTP)" n8n
+# credential — then guard the whole function. Frontend-first, in that order.
+verify_jwt = false

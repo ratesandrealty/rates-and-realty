@@ -12,6 +12,7 @@
 // token (google_calendar_tokens id='rene'). Deploy with --no-verify-jwt.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const CORS: HeadersInit = {
   "Access-Control-Allow-Origin": "*",
@@ -98,11 +99,99 @@ async function driveFetch(path: string, init?: RequestInit): Promise<Response> {
   return await fetch(`https://www.googleapis.com/drive/v3${withSharedDrives(path)}`, { ...init, headers });
 }
 
+/* Borrowers root in Drive. Was a literal in the n8n Contact Folder Creator
+ * workflow, which this action replaces. */
+const BORROWERS_ROOT = "11OLUA6Fu3tNrzWP8O1v_pFjl-UGbzos6";
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
   try {
     const url = new URL(req.url);
     const action = url.searchParams.get("action") || "";
+
+    /* ── create-borrower-folder ────────────────────────────────────────────
+     *
+     * Replaces the n8n "Contact Folder Creator" workflow, which was:
+     *   unauthenticated webhook -> gdrive-proxy create-folder -> PATCH contacts
+     *
+     * Removing the n8n hop removes the problem rather than guarding it. That
+     * webhook took no credentials, and it could not be fixed with a header
+     * because both callers are browsers — a header they can send is public.
+     * Here the caller presents its SESSION and the server does the rest.
+     *
+     * BOTH GUARDS LIVE HERE NOW, and the second is new:
+     *
+     * 1. The is.null guard, carried over from the workflow draft published
+     *    2026-08-11 (proven by execution 6690). The PATCH only fills a folder
+     *    id that is still empty, so a second call can never overwrite one and
+     *    strand the folder it replaced — with borrower documents in it.
+     *
+     * 2. DO NOT CREATE WHEN ONE ALREADY EXISTS. The workflow lacked this: it
+     *    created a folder and then declined to record it, so every re-click
+     *    left an orphan nobody points at (execution 6690 made one). Checking
+     *    first means the wasted folder never exists. Guard 1 stays anyway —
+     *    it is the race backstop when two callers pass the check together.
+     *
+     * verify_jwt is false on this function and the OTHER actions are still
+     * unguarded — see the note in config.toml. This action is guarded from
+     * birth, which is why it needs no frontend-first staging: it has no
+     * existing callers to break. */
+    if (req.method === "POST" && action === "create-borrower-folder") {
+      const auth = await requireStaff(req, { what: "Creating a borrower folder" });
+      if (!auth.ok) return err(auth.msg || "not authorized", auth.status || 401);
+
+      let body: { contact_id?: string };
+      try { body = await req.json(); } catch (_e) { return err("Invalid JSON body", 400); }
+      const contactId = String(body.contact_id || "").trim();
+      if (!contactId) return err("contact_id required", 400);
+
+      const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+      const { data: contact, error: cErr } = await db.from("contacts")
+        .select("id, first_name, last_name, gdrive_folder_id, gdrive_folder_url")
+        .eq("id", contactId).maybeSingle();
+      if (cErr) return err(`contact lookup failed: ${cErr.message}`, 500);
+      if (!contact) return err("contact not found", 404);
+
+      // GUARD 2 — already has one. Nothing is created, so nothing is stranded.
+      if (contact.gdrive_folder_id) {
+        return json({
+          ok: true, already_existed: true,
+          folder_id: contact.gdrive_folder_id, folder_url: contact.gdrive_folder_url,
+        }, 200);
+      }
+
+      const name = [contact.first_name, contact.last_name].filter(Boolean).join(" ").trim()
+        || `Contact ${contactId.slice(0, 8)}`;
+      const r = await driveFetch("/files?fields=id,name,webViewLink,parents", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder", parents: [BORROWERS_ROOT] }),
+      });
+      const created = await r.json();
+      if (!r.ok || !created?.id) return err(created?.error?.message || `create-folder HTTP ${r.status}`, 500);
+
+      const folderUrl = `https://drive.google.com/drive/folders/${created.id}`;
+      /* GUARD 1 — is.null. Survives the move from the n8n PATCH verbatim in
+       * meaning: fill it only while it is still empty. */
+      const { data: patched, error: pErr } = await db.from("contacts")
+        .update({ gdrive_folder_id: created.id, gdrive_folder_url: folderUrl })
+        .eq("id", contactId).is("gdrive_folder_id", null)
+        .select("id");
+      if (pErr) return err(`writeback failed: ${pErr.message}`, 500);
+
+      /* Lost the race: someone filled it between the check and the update. Say
+       * so rather than reporting success — the folder just created is now
+       * unreferenced, and silently claiming ok would hide it. */
+      if (!patched || !patched.length) {
+        const { data: now } = await db.from("contacts").select("gdrive_folder_id, gdrive_folder_url").eq("id", contactId).maybeSingle();
+        return json({
+          ok: true, already_existed: true, raced: true,
+          folder_id: now?.gdrive_folder_id, folder_url: now?.gdrive_folder_url,
+          unreferenced_folder_id: created.id,
+        }, 200);
+      }
+
+      return json({ ok: true, created: true, folder_id: created.id, folder_url: folderUrl }, 200);
+    }
 
     if (req.method === "GET") {
       if (action === "list-folders") {
