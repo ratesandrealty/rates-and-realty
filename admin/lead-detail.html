@@ -10931,7 +10931,16 @@ async function lpRenderSnapshot(cid){
     + '<div style="display:flex;align-items:center;gap:6px;font-size:14px;color:#fff;font-weight:600;">'
     + '<span onclick="lpSnapEdit(\'escrow_ref\',event)" title="Click to edit" style="cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.18);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+_escVal+'</span>'
     + '<span onclick="lpSnapEdit(\'escrow_ref\',event)" title="Edit escrow number" style="flex-shrink:0;cursor:pointer;color:rgba(255,255,255,.55);font-size:13px;">✎</span>'
-    + '</div></div>';
+    /* SEARCH MAIL FOR THIS NUMBER — the manual trigger for the escrow
+       suggester, which otherwise only ever runs when somebody happens to open
+       a thread. Shown only when there IS a reference to search for; an escrow
+       cell reading "—" has nothing to offer. */
+    + (_lpEscrowRef
+        ? '<button type="button" id="lpEscrowFindBtn" onclick="lpEscrowFindMail()" title="Search the mailbox for this escrow number and file what it finds"'
+          + ' style="flex-shrink:0;background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;'
+          + 'font-size:10px;font-weight:700;padding:2px 8px;cursor:pointer;font-family:inherit;">🔎 Find mail</button>'
+        : '')
+    + '</div><div id="lpEscrowFindBox" style="margin-top:6px;"></div></div>';
 
   el.innerHTML = cell('Borrower',lpEsc(name))
     + propCell
@@ -18033,6 +18042,145 @@ function lpEscrowUnmatchableReason(raw){
   if(/^[0-9]+$/.test(ref) && ref.length < LP_ESC_MIN_LEN_ALL_DIGITS) return 'is all digits and shorter than '+LP_ESC_MIN_LEN_ALL_DIGITS+' characters';
   return null;
 }
+/* ═══ ESCROW # → FIND MAIL — the MANUAL trigger for the escrow suggester ═════
+ *
+ * The suggester runs on get_thread, so it only ever fires for a thread somebody
+ * happens to open. A thread nobody opens is never suggested, which makes the
+ * feature depend on the exact behaviour it exists to replace. This is the same
+ * matching, started from the lead instead of from the mail.
+ *
+ * NO NEW EDGE-FUNCTION ACTION, deliberately. list_threads already takes a Gmail
+ * `q`, and `tag` already files — and filing through `tag` is what makes an
+ * accepted suggestion land as a HUMAN tag with tagged_by set, closes any open
+ * contradiction row, and backfills contact_id on every message in the thread.
+ * A bespoke "file these" endpoint would have to reproduce all of that, and
+ * would drift from the path the suggester's own accept button uses.
+ *
+ * THE FLOOR IS CHECKED BEFORE SEARCHING. lpEscrowUnmatchableReason() is the
+ * mirror of referenceIsMatchable(); a reference below it can never match
+ * server-side, so searching for it would return threads the suggester will
+ * silently refuse to act on — the feature looking broken rather than saying no.
+ *
+ * MAILBOX: whatever this role may ask for. The server re-checks and 403s, and
+ * GmailInbox.call unwraps the error body, so a refusal renders as its reason
+ * rather than as an empty list. */
+var _lpEscFindBusy = false;
+
+function _lpEscFindBox(){ return document.getElementById('lpEscrowFindBox'); }
+function _lpEscFindMsg(html){ var b=_lpEscFindBox(); if(b) b.innerHTML=html; }
+
+async function lpEscrowFindMail(){
+  if(_lpEscFindBusy) return;
+  var ref=(_lpEscrowRef||'').trim();
+  var cid=lpCid();
+  if(!ref || !cid) return;
+
+  var bad=lpEscrowUnmatchableReason(ref);
+  if(bad){
+    _lpEscFindMsg('<div style="font-size:10.5px;color:#E5A0A0;line-height:1.45;">'
+      + 'This escrow number ' + lpEsc(bad) + ', so it cannot be matched on. '
+      + 'Searching for it would find mail nothing will ever file automatically.</div>');
+    return;
+  }
+
+  var cl=(typeof _authClient==='function') ? _authClient() : null;
+  if(!cl || !window.GmailInbox || typeof window.GmailInbox.call!=='function'){
+    _lpEscFindMsg('<div style="font-size:10.5px;color:#E5A0A0;">Mail search is unavailable on this page.</div>');
+    return;
+  }
+
+  _lpEscFindBusy=true;
+  var btn=document.getElementById('lpEscrowFindBtn');
+  if(btn){ btn.disabled=true; btn.textContent='Searching…'; }
+  _lpEscFindMsg('<div style="font-size:10.5px;color:#888;">Searching mail for ' + lpEsc(ref) + '…</div>');
+
+  try{
+    var boxes=(typeof lpMailboxesForRole==='function') ? lpMailboxesForRole() : ['processing@ratesandrealty.com'];
+    /* QUOTED. An escrow number with hyphens or slashes is several tokens to
+       Gmail unquoted, which turns an exact-reference search into a broad OR and
+       fills the panel with mail that merely shares a digit run. */
+    var q='"'+ref.replace(/"/g,'')+'"';
+    var seen={}, hits=[];
+    for(var i=0;i<boxes.length;i++){
+      var mb=boxes[i];
+      /* PER-MAILBOX FAILURE IS REPORTED, NOT SWALLOWED. An admin searches two
+         mailboxes; if one 403s or errors, saying "no matches" would be a lie
+         about the half that did not run. */
+      try{
+        var res=await window.GmailInbox.call(cl, mb, 'list_threads', { q:q });
+        var arr=(res && (res.threads || res.items || res.data)) || [];
+        for(var j=0;j<arr.length;j++){
+          var t=arr[j]; if(!t || !t.id || seen[t.id]) continue;
+          seen[t.id]=1; t.__mailbox=mb; hits.push(t);
+        }
+      }catch(e){
+        hits.__errors=(hits.__errors||[]).concat([mb+': '+((e&&e.message)||'search failed')]);
+      }
+    }
+    _lpEscRenderFind(ref, hits, cid);
+  }catch(e){
+    _lpEscFindMsg('<div style="font-size:10.5px;color:#E5A0A0;">Search failed: '+lpEsc((e&&e.message)||'error')+'</div>');
+  }finally{
+    _lpEscFindBusy=false;
+    if(btn){ btn.disabled=false; btn.textContent='🔎 Find mail'; }
+  }
+}
+
+function _lpEscRenderFind(ref, hits, cid){
+  var errs=(hits && hits.__errors) || [];
+  var errHtml=errs.length
+    ? '<div style="font-size:10px;color:#E5A0A0;margin-bottom:4px;">Could not search: '+lpEsc(errs.join(' · '))+'</div>'
+    : '';
+  if(!hits.length){
+    _lpEscFindMsg(errHtml + '<div style="font-size:10.5px;color:#888;">No mail mentions '+lpEsc(ref)+'.</div>');
+    return;
+  }
+  var rows=hits.map(function(t){
+    var subj=lpEsc(t.subject||'(no subject)');
+    var from=lpEsc(t.from||'');
+    var when=t.date?lpEsc(String(t.date)):'';
+    return '<div style="display:flex;align-items:center;gap:7px;padding:5px 7px;border:1px solid rgba(255,255,255,.08);'
+      + 'background:rgba(255,255,255,.02);border-radius:7px;margin-bottom:4px;">'
+      + '<span style="flex:1;min-width:0;">'
+      +   '<span style="display:block;font-size:11.5px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+subj+'</span>'
+      +   '<span style="display:block;font-size:9.5px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+      +     from + (when?(' · '+when):'') + ' · ' + lpEsc(t.__mailbox||'') + '</span>'
+      + '</span>'
+      + '<button type="button" class="lpEscFileBtn" data-tid="'+lpEsc(t.id)+'" data-mb="'+lpEsc(t.__mailbox||'')+'"'
+      +   ' style="flex-shrink:0;background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;'
+      +   'border-radius:6px;font-size:10px;font-weight:700;padding:3px 9px;cursor:pointer;font-family:inherit;">File here</button>'
+      + '</div>';
+  }).join('');
+  /* OFFERS, never files. Same contract as the suggester: matching proposes, a
+     human decides, and the decision lands through `tag`. */
+  _lpEscFindMsg(errHtml
+    + '<div style="font-size:10px;color:#8f8f8f;margin-bottom:4px;">'
+    +   hits.length+' thread'+(hits.length===1?'':'s')+' mention '+lpEsc(ref)+' — file the ones that belong to this lead.</div>'
+    + rows);
+
+  Array.prototype.forEach.call(document.querySelectorAll('#lpEscrowFindBox .lpEscFileBtn'), function(b){
+    b.addEventListener('click', function(){ _lpEscFileThread(b, cid); });
+  });
+}
+
+async function _lpEscFileThread(btn, cid){
+  var tid=btn.getAttribute('data-tid'), mb=btn.getAttribute('data-mb');
+  if(!tid || !cid) return;
+  btn.disabled=true; btn.textContent='Filing…';
+  try{
+    await window.GmailInbox.call(_authClient(), mb, 'tag', { thread_id:tid, contact_id:cid });
+    btn.textContent='Filed ✓';
+    btn.style.background='rgba(80,200,120,.16)';
+    btn.style.borderColor='rgba(80,200,120,.5)';
+    btn.style.color='#7CE0A0';
+    /* The Email Threads panel on this lead is the place this now shows up. */
+    if(typeof lpLoadEmailThreads==='function') { try{ lpLoadEmailThreads(cid); }catch(_){} }
+  }catch(e){
+    btn.disabled=false; btn.textContent='File here';
+    if(typeof showToast==='function') showToast('Could not file: '+((e&&e.message)||'error'), true);
+  }
+}
+
 function lpSnapEdit(key, ev){
   if (LP_SNAP_STAFF_KEYS.indexOf(key) < 0 && typeof _ldNonAdmin === 'function' && _ldNonAdmin()) return;
   try{ ev&&ev.stopPropagation&&ev.stopPropagation(); }catch(_){}

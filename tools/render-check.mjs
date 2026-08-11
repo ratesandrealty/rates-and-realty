@@ -867,6 +867,67 @@ const SPECS = [
        'FAILED'],
     ],
   },
+  {
+    /* ESCROW # → FIND MAIL. The suggester only ever runs on get_thread, so it
+     * fires for threads somebody happens to open — the feature depended on the
+     * behaviour it exists to replace. This is the manual trigger.
+     *
+     * Drives lpEscrowFindMail() directly with GmailInbox.call replaced by a
+     * recorder, because the button lives in the Loan Snapshot, which CLAUDE.md
+     * already records as unreachable under the stub. So: this proves the search
+     * decision, the refusal, and the file contract — not the button's placement
+     * in a pane the harness cannot reach. Said plainly rather than implied.
+     *
+     * The two assertions that matter are the negatives. An unmatchable
+     * reference must not SEARCH (searching would surface mail nothing will ever
+     * file, so the feature looks broken instead of saying no), and rendering
+     * results must not FILE — matching proposes, a human decides, exactly as
+     * the suggester does. */
+    name: 'escrow Find-mail searches, refuses below the floor, and files only on click',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      // Recorder in place of the real call, and a box for the results.
+      ['(function(){ window.__gm=[];'
+        + ' if(!document.getElementById("lpEscrowFindBox")){ var d=document.createElement("div"); d.id="lpEscrowFindBox"; document.body.appendChild(d); }'
+        + ' window.GmailInbox = window.GmailInbox || {};'
+        + ' window.GmailInbox.call = function(cl, mb, action, params){ window.__gm.push({ mb:mb, action:action, params:params });'
+        + '   if(action==="list_threads") return Promise.resolve({ threads:['
+        + '     { id:"t1", subject:"Closing statement", from:"escrow@title.test", date:"Aug 6" },'
+        + '     { id:"t2", subject:"Wire instructions",  from:"escrow@title.test", date:"Aug 7" } ] });'
+        + '   return Promise.resolve({ ok:true }); };'
+        + ' return "installed"; })()', 'installed'],
+
+      // ── BELOW THE FLOOR: explains, and does NOT search ───────────────────
+      ['(async function(){ _lpEscrowRef = "12345";'   // all digits, < 7 → unmatchable
+        + ' await lpEscrowFindMail();'
+        + ' var t=document.getElementById("lpEscrowFindBox").textContent;'
+        + ' return (window.__gm.length===0 ? "no search" : "SEARCHED") + " | "'
+        + '   + (t.indexOf("cannot be matched on") >= 0 ? "explained" : "silent"); })()',
+       'no search | explained'],
+
+      // ── ABOVE THE FLOOR: searches, quoted, both admin mailboxes ──────────
+      ['(async function(){ window.__gm=[]; _lpEscrowRef = "ESC-1094772";'
+        + ' await lpEscrowFindMail();'
+        + ' var qs=window.__gm.filter(function(c){return c.action==="list_threads";});'
+        + ' return qs.length + "|" + (qs[0] ? qs[0].params.q : ""); })()',
+       '2|"ESC-1094772"'],
+
+      // Results are offered…
+      ['document.querySelectorAll("#lpEscrowFindBox .lpEscFileBtn").length', 2],
+      // …and NOTHING was filed by rendering them.
+      ['window.__gm.filter(function(c){return c.action==="tag";}).length', 0],
+
+      // ── Clicking one files THAT thread, through `tag`, to this lead ──────
+      ['(async function(){ document.querySelector("#lpEscrowFindBox .lpEscFileBtn").click();'
+        + ' await new Promise(function(r){ setTimeout(r, 400); });'
+        + ' var tags=window.__gm.filter(function(c){return c.action==="tag";});'
+        + ' return tags.length + "|" + (tags[0] ? tags[0].params.thread_id : "")'
+        + '   + "|" + (tags[0] ? tags[0].params.contact_id : ""); })()',
+       `1|t1|${FIXTURE}`],
+      ['document.querySelector("#lpEscrowFindBox .lpEscFileBtn").textContent', 'Filed ✓'],
+    ],
+  },
   /* ── EMPTY SEARCH TELLS THE TRUTH ─────────────────────────────────────────
    * The reported bug: searching SC-27335-BU in Full mailbox said "Nothing in
    * Inbox" while that thread was visible in the same lead's filed list. The
@@ -1352,9 +1413,25 @@ async function runSpec(spec, opts) {
     // ── assertions ──────────────────────────────────────────────────────────
     const probe = await b.send('Runtime.evaluate', {
       returnByValue: true,
-      expression: `(() => {
+      /* ASYNC, and awaitPromise with it. Some things worth asserting are
+         promises: "call this handler and see what it did" is the natural shape
+         for a click path, and a sync probe JSON.stringifies a pending Promise
+         as {} — which reads as a mismatch against every expected value and
+         tells you nothing about why. */
+      awaitPromise: true,
+      expression: `(async () => {
         const vis = (s) => { const e = document.querySelector(s); return !!e && (e.offsetParent !== null || e === document.body); };
         const has = (s) => !!document.querySelector(s);
+        /* Hoisted out of the object literal so each entry can be awaited in
+           order. Order matters: spec authors chain evals — install a double,
+           run the thing, then assert on what it recorded — and Promise.all
+           would run them concurrently and break that. */
+        const evalResults = [];
+        for (const [expr, want] of ${JSON.stringify(spec.evals || [])}) {
+          let got;
+          try { got = await eval(expr); } catch (e) { got = '(threw: ' + (e && e.message) + ')'; }
+          evalResults.push([expr, JSON.stringify(want) || 'undefined', JSON.stringify(got) || 'undefined']);
+        }
         return {
           present: ${JSON.stringify(spec.present || [])}.map(s => [s, has(s), vis(s)]),
           absent:  ${JSON.stringify(spec.absent || [])}.map(s => [s, has(s)]),
@@ -1386,18 +1463,15 @@ async function runSpec(spec, opts) {
                         + ' needs ' + e.scrollWidth + 'px in ' + e.clientWidth + 'px');
             return [sel, all.length, bad];
           }),
-          /* JS-EXPRESSION ASSERTIONS.
+          /* JS-EXPRESSION ASSERTIONS — computed above, in order, with await.
              Some things a role gate decides are not rendering at all. _smsDest()
              returning null for a VA is what stops an outbound text going to a
              real number the page should never have handed over — there is no
              element to select for that, and asserting on a proxy would be
              asserting on something else. Each entry is [expr, expected]; the
-             result is JSON-compared so null, false and '' stay distinct. */
-          evals: ${JSON.stringify(spec.evals || [])}.map(([expr, want]) => {
-            let got;
-            try { got = eval(expr); } catch (e) { got = '(threw: ' + (e && e.message) + ')'; }
-            return [expr, JSON.stringify(want) || 'undefined', JSON.stringify(got) || 'undefined'];
-          }),
+             result is JSON-compared so null, false and '' stay distinct, and an
+             expression may be async. */
+          evals: evalResults,
           /* Every edge-function call the page made, in order. */
           calls: (window.__RC_CALLS || []).map(c => c.fn),
           callBodies: (window.__RC_CALLS || []),
