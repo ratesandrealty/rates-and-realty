@@ -12091,7 +12091,65 @@ let _lpHoiPrefill = {};
 let _lpHoiList = [];         // last hoi_quote_list rows (winner lookup)
 let _lpHoiMeta = {};         // hoi_quote_meta(): { cc, signature{...} }
 let _lpHoiRecipTimer = null;
-const LP_HOI_STATUS = [{v:'sent',t:'Sent'},{v:'received',t:'Received'},{v:'quoted',t:'Quoted'},{v:'declined',t:'Declined'}];
+/* ═══ ONE STATE VOCABULARY FOR THE VOE AND HOI PANELS ════════════════════════
+ *
+ * Both panels answer the same question — what happened to this request — and
+ * both rendered it as a flat run of near-identical lines. In VOE the only
+ * difference between sent, received and FAILED was a small arrow; in HOI it was
+ * a dropdown that looked the same whatever it said. The 2026-08-06 send failure
+ * sat unnoticed for days because it looked like every other row.
+ *
+ * So state gets colour AND structure, from one table used by both. Two panels
+ * doing the same job should not look like two products, and a shared table is
+ * the only version of that which stays true — a second copy of these colours
+ * drifts the first time one panel is touched.
+ *
+ * FAILED IS DELIBERATELY LOUDER THAN EVERYTHING ELSE: filled chip rather than
+ * tinted, a 3px left border rather than 2px, and its own row background. Every
+ * other state is a shade of "this is progressing"; failed is the only one that
+ * needs someone to DO something, and it is the one that was invisible.
+ *
+ * VOE's status comes from email_log via voe_activity — which has ALWAYS carried
+ * it in the event payload and was simply never read. */
+const LP_ACT_STATE = {
+  failed:   { t:'Failed',   ic:'⚠',  fg:'#1a0b0b', chipBg:'#E5484D',                chipFg:'#fff',    bd:'#E5484D',                 rowBg:'rgba(229,72,77,.13)', w:3 },
+  received: { t:'Received', ic:'↓',  fg:'#50c878', chipBg:'rgba(80,200,120,.16)',   chipFg:'#7CE0A0', bd:'#50c878',                 rowBg:'rgba(80,200,120,.08)', w:2 },
+  quoted:   { t:'Quoted',   ic:'＄', fg:'#7BBCE8', chipBg:'rgba(90,160,224,.16)',   chipFg:'#8FC8F0', bd:'#5AA0E0',                 rowBg:'rgba(90,160,224,.08)', w:2 },
+  opened:   { t:'Opened',   ic:'◉',  fg:'#C9A84C', chipBg:'rgba(201,168,76,.16)',   chipFg:'#D9BC6A', bd:'rgba(201,168,76,.75)',    rowBg:'rgba(201,168,76,.05)', w:2 },
+  sent:     { t:'Sent',     ic:'↑',  fg:'#C9A84C', chipBg:'rgba(201,168,76,.10)',   chipFg:'#C9A84C', bd:'rgba(201,168,76,.5)',     rowBg:'rgba(255,255,255,.02)', w:2 },
+  declined: { t:'Declined', ic:'✕',  fg:'#8f8f8f', chipBg:'rgba(255,255,255,.06)',  chipFg:'#9a9488', bd:'rgba(255,255,255,.18)',   rowBg:'rgba(255,255,255,.015)', w:2 },
+  draft:    { t:'Draft',    ic:'✎',  fg:'#8f8f8f', chipBg:'rgba(255,255,255,.06)',  chipFg:'#9a9488', bd:'rgba(255,255,255,.18)',   rowBg:'rgba(255,255,255,.015)', w:2 },
+};
+/* Direction is the FALLBACK, never the answer. An outbound row with no status
+   is "sent"; an inbound one is "received". Reading direction first is what made
+   a failed outbound email render identically to a delivered one. */
+function _lpActState(status, direction){
+  const s = String(status || '').trim().toLowerCase();
+  if (LP_ACT_STATE[s]) return s;
+  return (String(direction || '').toLowerCase() === 'inbound') ? 'received' : 'sent';
+}
+function _lpActChip(key){
+  const d = LP_ACT_STATE[key] || LP_ACT_STATE.sent;
+  const failed = (key === 'failed');
+  return '<span style="flex-shrink:0;display:inline-flex;align-items:center;gap:4px;'
+    + 'padding:1px 7px;border-radius:999px;font-size:9.5px;font-weight:800;letter-spacing:.02em;'
+    + 'text-transform:uppercase;background:' + d.chipBg + ';color:' + d.chipFg + ';'
+    + (failed ? 'box-shadow:0 0 0 1px rgba(229,72,77,.55);' : '')
+    + '">' + d.ic + ' ' + d.t + '</span>';
+}
+function _lpActRowCss(key){
+  const d = LP_ACT_STATE[key] || LP_ACT_STATE.sent;
+  return 'background:' + d.rowBg + ';border-left:' + d.w + 'px solid ' + d.bd + ';';
+}
+
+/* 'failed' is selectable so a human can mark one, and so the chip has a state
+   to render. NOTE, and it is a real gap rather than an oversight: lpHoiSend()
+   calls hoi_quote_log ONLY after the success check, so a failed HOI send
+   currently writes no row at all — the toast is the only trace and it goes
+   away. Making failure unmistakable in this panel is finished only when the
+   send path records it. Flagged, not changed here: that is a behaviour change
+   to the send pipeline, not presentation. */
+const LP_HOI_STATUS = [{v:'sent',t:'Sent'},{v:'received',t:'Received'},{v:'quoted',t:'Quoted'},{v:'declined',t:'Declined'},{v:'failed',t:'Failed'}];
 function _lpHoiToast(m,e){ (window.showToast||window.toast||function(){})(m,!!e); }
 function _lpHoiVal(id){ const e=document.getElementById(id); return e?(e.value||''):''; }
 function _lpHoiFmtPrice(v){ if(v==null||v==='') return ''; const n=Number(String(v).replace(/[^0-9.]/g,'')); return isNaN(n)?String(v):('$'+n.toLocaleString('en-US')); }
@@ -12299,8 +12357,18 @@ function lpHoiRenderList(rows){
     const when=r.sent_at?_lpDD(r.sent_at):(r.created_at?_lpDD(r.created_at):'');
     const stOpts=LP_HOI_STATUS.map(s=>'<option value="'+s.v+'"'+(((r.status||'sent')===s.v)?' selected':'')+'>'+s.t+'</option>').join('');
     const amt=(r.quote_amount!=null&&r.quote_amount!=='')?('$'+Number(r.quote_amount).toLocaleString('en-US')):'';
-    return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 8px;border:1px solid '+(seld?'rgba(80,200,120,.5)':'rgba(255,255,255,.08)')+';background:'+(seld?'rgba(80,200,120,.08)':'rgba(255,255,255,.02)')+';border-radius:8px;margin-bottom:4px;">'
-      +'<div style="flex:1;min-width:150px;"><div style="font-size:12px;font-weight:600;color:#e2e2e2;">'+lpEsc(r.company_name||r.agent_name||'(company)')+(seld?' <span style="color:#50c878;font-size:10px;">✓ Selected</span>':'')+'</div><div style="font-size:10px;color:#888;">'+lpEsc([r.agent_name,r.agent_email].filter(Boolean).join(' · '))+(when?(' · '+when):'')+'</div></div>'
+    /* Same chip and same row treatment as the VOE panel. The status was only
+       ever readable by squinting at a <select>, which is a control rather than
+       an indicator — it looks identical whatever it says, and it is below the
+       fold of a glance. The select stays for CHANGING the state; the chip is
+       what reports it.
+       Selection (the winner) is a separate axis from state, so it keeps its own
+       outer border and is not folded into the state colours. */
+    const key=_lpActState(r.status, 'outbound');
+    const failed=(key==='failed');
+    return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 8px;border:1px solid '+(seld?'rgba(80,200,120,.5)':(failed?'rgba(229,72,77,.45)':'rgba(255,255,255,.08)'))+';'+_lpActRowCss(key)+'border-radius:8px;margin-bottom:4px;">'
+      +'<div style="flex:1;min-width:150px;"><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;"><span style="font-size:12px;font-weight:600;color:'+(failed?'#FFD9D9':'#e2e2e2')+';">'+lpEsc(r.company_name||r.agent_name||'(company)')+'</span>'+_lpActChip(key)+(seld?'<span style="color:#50c878;font-size:10px;font-weight:700;">✓ Selected</span>':'')+'</div><div style="font-size:10px;color:#888;">'+lpEsc([r.agent_name,r.agent_email].filter(Boolean).join(' · '))+(when?(' · '+when):'')+'</div>'
+      +(failed?'<div style="color:#FF8A8A;font-size:9.5px;font-weight:700;margin-top:2px;">This request was never delivered — resend it.</div>':'')+'</div>'
       +'<select onchange="lpHoiStatusChange(\''+r.id+'\',this.value)" style="'+ctl+'">'+stOpts+'</select>'
       +'<input placeholder="$ quote" value="'+lpEsc(amt)+'" onchange="lpHoiQuoteAmount(\''+r.id+'\',this.value)" style="'+ctl+'width:88px;">'
       +(seld?'<span style="font-size:11px;color:#50c878;font-weight:700;">Winner</span>':'<button onclick="lpHoiSelect(\''+r.id+'\')" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;">Select ✓</button>')
@@ -13090,17 +13158,28 @@ function lpVoeRenderActivity(box, a){
   if(!ev.length){ html+='<div style="font-size:10px;color:#777;">No emails yet.</div>'; }
   else {
     // Per-event row markup — unchanged (do NOT alter row markup or the click-to-open behavior).
+    /* STATE, NOT DIRECTION. This row used to read e.direction and nothing else,
+       so a FAILED outbound email rendered as "↑ Sent" in the same gold as a
+       delivered one — which is how the 2026-08-06 failure sat unnoticed.
+       voe_activity has always put email_log.status in the payload; it was
+       simply never read. Shared chip + row treatment, identical to the HOI
+       panel. */
     const rowHtml=function(e){
       const inbound=(String(e.direction||'').toLowerCase()==='inbound');
-      const ind=inbound?'↓ Received':'↑ Sent';
+      const key=_lpActState(e.status, e.direction);
+      const failed=(key==='failed');
       const party=inbound?('from '+lpEsc(e.from||'HR')):('to '+lpEsc(e.to||''));
       const when=e.at?_lpFmtDT(e.at):'';
       // Optional body glimpse — single truncated line under the subject/meta; omitted entirely when empty.
       const preview=(e.preview==null?'':String(e.preview)).trim();
       const previewHtml=preview?('<div style="color:#777;font-size:9px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+lpEsc(preview)+'</div>'):'';
-      return '<div class="lpVoeEvRow" data-email-id="'+lpEsc(String(e.id==null?'':e.id))+'" style="display:flex;gap:6px;align-items:flex-start;font-size:10px;padding:3px 6px;border-radius:6px;margin-bottom:2px;cursor:pointer;background:'+(inbound?'rgba(80,200,120,.08)':'rgba(255,255,255,.02)')+';border-left:2px solid '+(inbound?'#50c878':'rgba(201,168,76,.5)')+';">'
-        +'<span style="flex-shrink:0;font-weight:700;color:'+(inbound?'#50c878':'#C9A84C')+';">'+ind+'</span>'
-        +'<span style="flex:1;min-width:0;"><span style="color:#ddd;">'+lpEsc(e.subject||(inbound?'Reply':'VOE request'))+'</span><span style="color:#888;"> — '+party+(when?(' · '+when):'')+'</span>'+previewHtml+'</span></div>';
+      /* A failure says so in words as well as colour. Colour alone is not a
+         state anyone can be relied on to read, and it is the one row where
+         being missed has already cost days. */
+      const failNote=failed?('<div style="color:#FF8A8A;font-size:9px;font-weight:700;margin-top:1px;">This email was never delivered — resend it.</div>'):'';
+      return '<div class="lpVoeEvRow" data-email-id="'+lpEsc(String(e.id==null?'':e.id))+'" style="display:flex;gap:6px;align-items:flex-start;font-size:10px;padding:4px 6px;border-radius:6px;margin-bottom:2px;cursor:pointer;'+_lpActRowCss(key)+'">'
+        +_lpActChip(key)
+        +'<span style="flex:1;min-width:0;"><span style="color:'+(failed?'#FFD9D9':'#ddd')+';'+(failed?'font-weight:600;':'')+'">'+lpEsc(e.subject||(inbound?'Reply':'VOE request'))+'</span><span style="color:#888;"> — '+party+(when?(' · '+when):'')+'</span>'+previewHtml+failNote+'</span></div>';
     };
     // Group by thread_key (the HR email tying a send+reply trail). One distinct thread ⇒ render flat
     // (keep the common single-HR case clean); multiple threads ⇒ one labeled group each.

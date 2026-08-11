@@ -806,6 +806,67 @@ const SPECS = [
       ['getComputedStyle(document.getElementById("action-fab-badge")).display !== "none"', true],
     ],
   },
+  {
+    /* VOE AND HOI STATE READS AT A GLANCE, AND FAILED IS UNMISTAKABLE.
+     *
+     * Both panels rendered flat runs of near-identical lines — in VOE the only
+     * difference between sent, received and FAILED was a small arrow, and the
+     * 2026-08-06 send failure sat unnoticed for days because of it. VOE was
+     * reading e.direction and ignoring e.status, which voe_activity has always
+     * supplied.
+     *
+     * Drives the two REAL renderers with fixture data rather than reaching them
+     * through the processing tab, the VOE card and its order id. Stated plainly:
+     * this proves the rendering, not the data plumbing that reaches it.
+     *
+     * The comparative assertions are the point. "Contains the word Failed" would
+     * pass on a panel where every row looked the same and one of them happened
+     * to say so — the whole complaint. So each one contrasts failed against a
+     * sibling row in the same render: different background, thicker border. */
+    name: 'VOE and HOI panels make FAILED unmistakable',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      // ── VOE ──────────────────────────────────────────────────────────────
+      ['(function(){ var d=document.createElement("div"); document.body.appendChild(d);'
+        + ' lpVoeRenderActivity(d, { status:"ordered", events:['
+        + '   { id:"e1", direction:"outbound", status:"failed",   subject:"VOE request", to:"hr@acme.test", at:"2026-08-06T18:00:00Z" },'
+        + '   { id:"e2", direction:"outbound", status:"sent",     subject:"VOE request", to:"hr@acme.test", at:"2026-08-07T18:00:00Z" },'
+        + '   { id:"e3", direction:"inbound",  status:"received", subject:"Re: VOE",     from:"hr@acme.test", at:"2026-08-08T18:00:00Z" } ] });'
+        + ' window.__voeRows = d.querySelectorAll(".lpVoeEvRow"); return window.__voeRows.length; })()', 3],
+      // Failed is named in words, not only coloured.
+      ['window.__voeRows[0].textContent.indexOf("FAILED") >= 0 || window.__voeRows[0].textContent.toUpperCase().indexOf("FAILED") >= 0', true],
+      ['window.__voeRows[0].textContent.indexOf("never delivered") >= 0', true],
+      // …and it does NOT read as an ordinary send.
+      ['window.__voeRows[1].textContent.indexOf("never delivered") >= 0', false],
+      // Structurally distinct from its siblings in the same render.
+      ['getComputedStyle(window.__voeRows[0]).borderLeftWidth', '3px'],
+      ['getComputedStyle(window.__voeRows[1]).borderLeftWidth', '2px'],
+      ['getComputedStyle(window.__voeRows[0]).backgroundColor !== getComputedStyle(window.__voeRows[1]).backgroundColor', true],
+      // Sent vs received still differ — the fix must not flatten the old signal.
+      ['getComputedStyle(window.__voeRows[1]).borderLeftColor !== getComputedStyle(window.__voeRows[2]).borderLeftColor', true],
+
+      // ── HOI, same vocabulary ─────────────────────────────────────────────
+      ['(function(){ var b=document.getElementById("lpHoiQuotes");'
+        + ' if(!b){ b=document.createElement("div"); b.id="lpHoiQuotes"; document.body.appendChild(b); }'
+        + ' lpHoiRenderList([ { id:"h1", company_name:"Acme Insurance", agent_email:"a@acme.test", status:"failed" },'
+        + '                   { id:"h2", company_name:"Beta Insurance", agent_email:"b@beta.test", status:"sent" } ]);'
+        + ' window.__hoiRows = b.querySelectorAll("div[style*=\'border-left\']"); return window.__hoiRows.length >= 2; })()', true],
+      ['document.getElementById("lpHoiQuotes").textContent.indexOf("never delivered") >= 0', true],
+      /* THE SAME CHIP IN BOTH PANELS — one vocabulary, not two products.
+         textContent reads "Failed": the uppercasing is CSS (text-transform),
+         which is why the VOE assertion above allows either case. Compared
+         case-insensitively here, and as the LABEL rather than a substring of
+         the whole row, so it cannot be satisfied by the resend sentence. */
+      ['(function(){'
+        + ' var norm=function(s){ return String(s||"").replace(/[^A-Za-z]/g,"").toUpperCase(); };'
+        + ' var vChip=window.__voeRows[0].querySelector("span[style*=\'border-radius:999px\']");'
+        + ' var hChip=document.getElementById("lpHoiQuotes").querySelector("span[style*=\'border-radius:999px\']");'
+        + ' if(!vChip||!hChip) return "chip missing";'
+        + ' return norm(vChip.textContent)===norm(hChip.textContent) ? norm(vChip.textContent) : "differ"; })()',
+       'FAILED'],
+    ],
+  },
   /* ── EMPTY SEARCH TELLS THE TRUTH ─────────────────────────────────────────
    * The reported bug: searching SC-27335-BU in Full mailbox said "Nothing in
    * Inbox" while that thread was visible in the same lead's filed list. The
