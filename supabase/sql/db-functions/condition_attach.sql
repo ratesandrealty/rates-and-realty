@@ -35,7 +35,8 @@ begin
 
   if p_clear then
     update public.loan_conditions
-       set status='cleared', cleared_at=now(), cleared_by=auth.uid(), updated_at=now()
+       -- cleared_by dropped 2026-08-11; see condition_set_status.sql.
+       set status='cleared', cleared_at=now(), updated_at=now()
      where id = p_condition_id;
   end if;
 

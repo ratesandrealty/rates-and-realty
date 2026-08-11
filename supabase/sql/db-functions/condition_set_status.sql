@@ -24,7 +24,9 @@ begin
   update public.loan_conditions
      set status = p_status,
          cleared_at = case when p_status='cleared' then now() else null end,
-         cleared_by = case when p_status='cleared' then auth.uid() else null end,
+         -- cleared_by NOT set as of 2026-08-11: it is a TEXT column and this
+         -- wrote a uuid into it. tg_loan_conditions_stamp_cleared now stamps
+         -- cleared_by_user_id from auth.uid().
          updated_at = now()
    where id = p_condition_id;
   return jsonb_build_object('condition_id', p_condition_id, 'status', p_status);

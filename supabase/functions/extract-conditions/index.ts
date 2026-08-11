@@ -220,12 +220,27 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'update_condition') {
-      const { condition_id, status, notes, cleared_by } = body;
+      /* `cleared_by` is deliberately NOT read off the body any more.
+       *
+       * It used to be `update.cleared_by = cleared_by || 'Rene'` — a
+       * client-supplied string with a named human as the fallback. That produced
+       * all 9 populated rows, every one the literal 'Rene', on a column that
+       * records who signed off on a lender condition. Meanwhile
+       * condition_set_status and condition_attach were writing auth.uid() into
+       * the same text column, so what a row held depended on which path cleared
+       * it.
+       *
+       * tg_loan_conditions_stamp_cleared now stamps cleared_by_user_id from
+       * auth.uid(). THIS function runs with the service role, so auth.uid() is
+       * null here and the trigger records cleared_source='system' — correctly:
+       * a service-role clear names no person, and inventing one is what the
+       * whole change exists to stop. */
+      const { condition_id, status, notes } = body;
       if (!condition_id) return err('condition_id required');
       const update: any = { updated_at: new Date().toISOString() };
       if (status !== undefined) update.status = status;
       if (notes !== undefined) update.notes = notes;
-      if (status === 'cleared') { update.cleared_at = new Date().toISOString(); update.cleared_by = cleared_by || 'Rene'; }
+      if (status === 'cleared') { update.cleared_at = new Date().toISOString(); }
       else if (status && status !== 'cleared') { update.cleared_at = null; update.cleared_by = null; }
       const { error } = await sb.from('loan_conditions').update(update).eq('id', condition_id);
       if (error) return err(error.message, 500);

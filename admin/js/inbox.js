@@ -3447,6 +3447,117 @@
       hintEl.style.display = ''; hintEl.textContent = msg;
     }
 
+    /* THE FIX FOR THE ACTUAL COMPLAINT.
+     *
+     * A search only ever covers the mailbox you are standing in. Searching
+     * processing@ for a thread that lives in rene@ returns nothing, correctly,
+     * and the old empty state made that look like the mail did not exist.
+     *
+     * So when a search comes back empty and the caller can reach another
+     * mailbox, ask that one too and say what is there. Costs one extra
+     * list_threads ONLY on the empty-search path — never on a normal load.
+     *
+     * A va has exactly one mailbox, so this is a no-op for her: the server would
+     * refuse rene@ anyway (403 with the reason), and asking would be inviting a
+     * refusal we already know the answer to. */
+    async function searchOtherMailboxes() {
+      var others = mailboxes.filter(function (m) { return m !== state.mailbox; });
+      var slot = listEl.querySelector('[data-gm="elsewhere"]');
+      if (!slot || !others.length || !state.q) return;
+      var q = state.q, box = state.mailbox;
+      slot.textContent = 'Checking ' + others.join(', ') + '…';
+      var found = [];
+      for (var i = 0; i < others.length; i++) {
+        try {
+          var r = await invoke(cl, others[i], 'list_threads', { q: gmailQuery(q) });
+          var n = (r.threads || []).length;
+          if (n) found.push({ mailbox: others[i], n: n });
+        } catch (e) { /* a refusal here is not the user's problem — stay quiet */ }
+      }
+      // The result may have arrived after the user moved on. Do not overwrite
+      // whatever is on screen now with an answer to a question they left behind.
+      if (state.q !== q || state.mailbox !== box) return;
+      if (!listEl.querySelector('[data-gm="elsewhere"]')) return;
+      slot = listEl.querySelector('[data-gm="elsewhere"]');
+      if (!found.length) { slot.textContent = 'No matches in ' + others.join(' or ') + ' either.'; return; }
+      slot.innerHTML = found.map(function (f) {
+        return '<button class="gm-btn" data-gm="gomb" data-mb="' + esc(f.mailbox) + '">' +
+          f.n + ' match' + (f.n === 1 ? '' : 'es') + ' in ' + esc(f.mailbox) + ' — switch</button>';
+      }).join(' ');
+      Array.prototype.forEach.call(slot.querySelectorAll('[data-gm="gomb"]'), function (b) {
+        b.addEventListener('click', function () {
+          switchMailbox(b.getAttribute('data-mb'));
+        });
+      });
+    }
+
+    /* One place that changes mailbox, so the switcher and the "switch" button in
+       an empty result cannot drift apart. Deliberately KEEPS state.q: the whole
+       point of arriving here is to run the same search somewhere else. */
+    function switchMailbox(mb) {
+      state.mailbox = mb;
+      state.active = null;
+      state.threads = [];
+      state.drafts = [];
+      // Category availability is per-mailbox, so re-test the Primary fallback.
+      state.primaryFellBack = false;
+      // Thread ids and their filings are per-mailbox; carrying the cache across
+      // would paint one mailbox's lead names onto the other's rows.
+      state.filed = {};
+      Array.prototype.forEach.call(root.querySelectorAll('.gm-sw button'), function (x) {
+        x.classList.toggle('active', x.getAttribute('data-mb') === mb);
+      });
+      paneEl.innerHTML = '<div class="gm-empty">Select a thread to read.</div>';
+      root.classList.remove('gm-show-pane');
+      loadThreads();
+    }
+
+    /* Tells the HOST what is actually on screen, after every load.
+       lead-detail's banner used to be written once at mount time from the toggle
+       state, so it went on saying "Showing the whole processing@ mailbox" while a
+       search was active and returning nothing — describing which button was lit
+       rather than what was displayed. */
+    function publishStatus() {
+      if (typeof opts.onStatus !== 'function') return;
+      try {
+        opts.onStatus({
+          mailbox: state.mailbox,
+          q: state.q || '',
+          searching: !!state.q,
+          scoped: scoped,
+          scopeQ: scopeQ,
+          folder: folder().label,
+          category: state.folder === 'INBOX' && !state.q ? catLabel(state.category) : null,
+          count: state.threads.length,
+        });
+      } catch (_) {}
+    }
+
+    /* A bare identifier is sent to Gmail QUOTED.
+     *
+     * In Gmail syntax a leading '-' negates a term, so an order number like
+     * SC-27335-BU risks being read as "SC and NOT 27335 and NOT BU" — which
+     * would exclude the very thread being looked for. Quoting a single
+     * whitespace-free token cannot lose results (a one-token phrase is that
+     * token) and removes the ambiguity.
+     *
+     * DELIBERATELY NARROW. Anything with a space, a ':' operator or a '(' is a
+     * query the user is writing on purpose — from:x OR to:y, the scoped-mode
+     * query, is:unread — and quoting those would turn an expression into a
+     * literal string, which is a real regression. So only a lone token that
+     * contains a hyphen or slash is touched.
+     *
+     * NOT VERIFIED against live Gmail: this is defensive. The PROVEN cause of
+     * the SC-27335-BU miss was the mailbox — every thread carrying it is in
+     * rene@ and the panel was searching processing@. */
+    function gmailQuery(raw) {
+      var q = String(raw || '').trim();
+      if (!q) return q;
+      if (/[\s:()"]/.test(q)) return q;          // an expression, not a bare term
+      if (!/[-\/]/.test(q)) return q;            // nothing that could parse as an operator
+      return '"' + q + '"';
+    }
+
     /** Folder/category → Gmail list params. A search box query overrides folder scoping. */
     function listParams() {
       /* Scoped mode has no unfiltered branch to fall into. This throw is not
@@ -3456,9 +3567,9 @@
          quietly listing someone else's mail under a borrower's name. */
       if (scoped) {
         if (!state.q) throw new Error('Refusing to list: this inbox is scoped to a contact and the search is empty.');
-        return { q: state.q };
+        return { q: gmailQuery(state.q) };
       }
-      if (state.q) return { q: state.q };
+      if (state.q) return { q: gmailQuery(state.q) };
       var f = folder();
       var p = {};
       if (f.k === 'INBOX') p.labels = state.primaryFellBack && state.category === 'CATEGORY_PERSONAL'
@@ -3472,8 +3583,29 @@
     function renderList() {
       if (folder().drafts) return renderDrafts();
       if (!state.threads.length) {
-        listEl.innerHTML = '<div class="gm-empty">Nothing in ' + esc(folder().label) +
-          (state.folder === 'INBOX' && !state.q ? ' · ' + esc(catLabel(state.category)) : '') + '.</div>';
+        /* AN EMPTY SEARCH RESULT IS NOT AN EMPTY FOLDER.
+         *
+         * This used to say "Nothing in Inbox · Primary" whatever had been asked
+         * for, which was wrong twice over during a search: listParams() drops the
+         * folder and category entirely when state.q is set, so a search covers the
+         * WHOLE mailbox, not the Inbox — and the message named neither the query
+         * nor the mailbox it had searched.
+         *
+         * That is how "SC-27335-BU" read as "this mail does not exist". The search
+         * ran correctly against processing@; every thread carrying that number is
+         * in rene@. "Nothing found" and "nothing here to find" are different
+         * claims and the UI made the stronger one. */
+        if (state.q) {
+          listEl.innerHTML = '<div class="gm-empty">No matches for <b>' + esc(state.q) + '</b> in ' +
+            esc(state.mailbox) + ' <span style="opacity:.7">(whole mailbox, not just Inbox)</span>.' +
+            '<div data-gm="elsewhere" style="margin-top:10px;font-size:12px;opacity:.85"></div></div>';
+          searchOtherMailboxes();
+        } else {
+          listEl.innerHTML = '<div class="gm-empty">Nothing in ' + esc(folder().label) +
+            (state.folder === 'INBOX' ? ' · ' + esc(catLabel(state.category)) : '') +
+            ' <span style="opacity:.7">· ' + esc(state.mailbox) + '</span>.</div>';
+        }
+        publishStatus();
         return;
       }
       listEl.innerHTML = state.threads.map(function (t) {
@@ -3633,6 +3765,7 @@
           }
         }
         renderList();
+        publishStatus();
         // No rail in scoped mode, so nothing to count into — and label_counts is
         // whole-mailbox anyway. Skipping it also drops a request per load.
         if (!scoped) loadCounts();
@@ -3669,16 +3802,10 @@
 
     // wire toolbar
     if (showSwitcher) Array.prototype.forEach.call(root.querySelectorAll('.gm-sw button'), function (b) {
-      b.addEventListener('click', function () {
-        Array.prototype.forEach.call(root.querySelectorAll('.gm-sw button'), function (x) { x.classList.remove('active'); });
-        b.classList.add('active'); state.mailbox = b.getAttribute('data-mb'); state.active = null;
-        // Category availability is per-mailbox, so re-test the Primary fallback.
-        state.primaryFellBack = false;
-        // Thread ids and their filings are per-mailbox; carrying the cache across
-        // would paint one mailbox's lead names onto the other's rows.
-        state.filed = {};
-        paneEl.innerHTML = '<div class="gm-empty">Select a thread to read.</div>'; loadThreads();
-      });
+      // Routed through switchMailbox so this and the "switch" button offered on an
+      // empty search cannot drift apart — one of them clearing state the other
+      // keeps is exactly how a stale filed-cache or category fallback survives.
+      b.addEventListener('click', function () { switchMailbox(b.getAttribute('data-mb')); });
     });
 
     // folder switcher

@@ -1787,7 +1787,7 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
           integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
           crossorigin="anonymous" defer></script>
     <script src="/admin/js/attachment-viewer.js?v=e8f2b14c9f"></script>
-  <script src="/admin/js/inbox.js?v=c093251355" defer></script>
+  <script src="/admin/js/inbox.js?v=10a206227a" defer></script>
   <!-- Places loads its own Maps bundle ON DEMAND, when a field is attached — not
        on every lead-detail open. This tag is only the ~4KB helper. -->
   <script src="/admin/js/places-autocomplete.js" defer></script>
@@ -13593,17 +13593,51 @@ function lpMountInboxTab(){
   var boxes = lpMailboxesForRole();
 
   if (want === 'full') {
+    /* Banner copy for the Full-mailbox tab, derived from the panel's reported
+       state. Two distinct sentences, because they are two different claims:
+
+         browsing — "these threads are not necessarily about this borrower",
+                    which is the warning this tab exists for; and
+         searching — what was searched, and where. A search covers the WHOLE
+                    mailbox and only the CURRENT one, and saying "showing the
+                    whole processing@ mailbox" during one is wrong on both
+                    counts: the list is a filtered result, and any other mailbox
+                    was never looked at. */
+    var _lpInboxNoteHtml = function (st) {
+      var wrap = function (border, bg, inner) {
+        return '<div style="margin:0 0 12px;padding:10px 13px;border:1px solid ' + border
+          + ';border-radius:10px;background:' + bg + ';">'
+          + '<div style="font-size:12px;color:#c9c3b4;line-height:1.5;">' + inner + '</div></div>';
+      };
+      if (st && st.searching) {
+        var n = (st.count == null) ? null : st.count;
+        return wrap('rgba(201,168,76,.33)', 'rgba(201,168,76,.06)',
+          'Showing <b>' + (n === null ? 'search results' : (n + ' result' + (n === 1 ? '' : 's'))) + '</b> for '
+          + '<b>' + lpEsc(st.q) + '</b> in <b>' + lpEsc(st.mailbox) + '</b> — the whole mailbox, not just the Inbox.'
+          + (boxes.length > 1
+              ? '<br><span style="opacity:.8">A search covers only the mailbox you are in; '
+                + lpEsc(boxes.filter(function (b) { return b !== st.mailbox; }).join(', '))
+                + ' is not included.</span>'
+              : '')
+          + '<br><span style="opacity:.8">Results are <b>not necessarily about this borrower</b>.</span>');
+      }
+      return wrap('rgba(201,168,76,.33)', 'rgba(201,168,76,.06)',
+        'Showing the <b>whole ' + lpEsc((st && st.mailbox) || boxes.join(' and ')) + ' mailbox</b> — these threads are '
+        + '<b>not necessarily about this borrower</b>. Switch to “This borrower” to narrow it.');
+    };
     /* The whole mailbox, by explicit choice. The label still matters: without it
        unrelated threads read as being about this borrower, which is the failure
        this tab existed to prevent. */
-    if (note) note.innerHTML =
-      '<div style="margin:0 0 12px;padding:10px 13px;border:1px solid rgba(201,168,76,.33);border-radius:10px;background:rgba(201,168,76,.06);">'
-      + '<div style="font-size:12px;color:#c9c3b4;line-height:1.5;">'
-      + 'Showing the <b>whole ' + lpEsc(boxes.join(' and ')) + ' mailbox</b> — these threads are '
-      + '<b>not necessarily about this borrower</b>. Switch to “This borrower” to narrow it.</div></div>';
+    if (note) note.innerHTML = _lpInboxNoteHtml({ mailbox: boxes[0], q: '', searching: false, count: null });
     if (window.GmailInbox) {
       window.GmailInbox.mount({
-        el: host, client: _authClient(), mailboxes: boxes, showSwitcher: boxes.length > 1
+        el: host, client: _authClient(), mailboxes: boxes, showSwitcher: boxes.length > 1,
+        /* THE BANNER NOW DESCRIBES WHAT IS ON SCREEN, NOT WHICH BUTTON IS LIT.
+           It used to be written once, here, from the toggle state — so it went on
+           announcing "Showing the whole processing@ mailbox" while a search was
+           active and returning nothing. The panel reports after every load and
+           this rewrites the banner from that. */
+        onStatus: function (st) { if (note) note.innerHTML = _lpInboxNoteHtml(st); }
       });
     }
     _lpInboxMode = 'full';

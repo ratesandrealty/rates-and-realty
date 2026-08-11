@@ -280,6 +280,38 @@ const SPECS = [
     absent: ['#tab-inbox .gm-rail-scoped'],
     expectText: ['not necessarily about this borrower'],
   },
+  /* ── EMPTY SEARCH TELLS THE TRUTH ─────────────────────────────────────────
+   * The reported bug: searching SC-27335-BU in Full mailbox said "Nothing in
+   * Inbox" while that thread was visible in the same lead's filed list. The
+   * search was not broken — every thread carrying that number is in rene@ and
+   * the panel was searching processing@. Two separate lies made it unreadable:
+   * the empty state named neither the query nor the mailbox, and the banner
+   * went on describing the toggle rather than the search.
+   *
+   * The stub returns no threads for any list_threads, so every search is empty
+   * here — which is exactly the state under test. Run for BOTH roles: an admin
+   * has two mailboxes and must be told the other was not searched; a va has one
+   * and must not be offered a mailbox the server would refuse her. */
+  ...['admin', 'va'].map((r) => ({
+    name: `empty search names the query and the mailbox (${r})`,
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: r,
+    steps: [
+      { click: '.ld-tab-btn[onclick*="\'inbox\'"]', waitMs: 3000 },
+      { click: '#lpInboxScopeBar button[onclick*="\'full\'"]', waitMs: 3000 },
+      { fill: '#tab-inbox .gm-search input', value: 'SC-27335-BU' },
+      { click: '#tab-inbox [data-gm="go"]', waitMs: 3500 },
+    ],
+    // The query and the searched mailbox both named, and the Inbox-only claim gone.
+    expectText: ['No matches for', 'SC-27335-BU', 'whole mailbox'],
+    absentText: ['Nothing in Inbox'],
+    evals: [
+      // The banner describes the SEARCH, not the toggle. This is the exact
+      // sentence Rene saw while a query was active and returning nothing.
+      ["!/Showing the whole/.test(document.getElementById('lpInboxNote').innerText)", true],
+      ["/Showing .*result/.test(document.getElementById('lpInboxNote').innerText)", true],
+    ],
+  })),
   {
     /* ISOLATION REGRESSION TEST — must stay immediately after the toggle spec.
      * The toggle persists the choice to localStorage, so this spec sees the
