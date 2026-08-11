@@ -10808,7 +10808,52 @@ async function lpRenderSnapshot(cid){
     + ecell('Credit Pulled','credit_report_pulled_date',dd(app.credit_report_pulled_date))
     + ecell('Pre-Approval Exp','preapproval_expiry',dd(app.preapproval_expiry));
 }
+/* ⚠️ ROLE labels, for the ASSIGNED-TO picker only.
+   processing_items.assigned_to is still a role string (a known instance of the
+   same shape — see processing_items.completed_by's column comment). Do NOT use
+   this to render who COMPLETED something: mapping 'admin' → a named human is
+   exactly the bug that made a VA's completion read as "Rene Duarte (Admin)",
+   and it is wrong the moment a second admin exists. */
 const LP_PERSON_LABEL = { admin:'Rene Duarte (Admin)', va:'Virtual Assistant' };
+
+/* uid → display name, for completed_by_user_id. Resolved through
+   staff_display_names(), which unlike staff_assignees() includes admins — the
+   whole point, since Rene's own completions would otherwise resolve to nothing
+   and tempt another hardcoded "Rene". */
+const _lpUserName = {};
+async function _lpResolveUserNames(ids){
+  const want = [...new Set((ids||[]).filter(id => id && !(id in _lpUserName)))];
+  if(!want.length) return;
+  try{
+    const { data, error } = await _authClient().rpc('staff_display_names', { p_ids: want });
+    if(error) throw error;
+    (data||[]).forEach(u => {
+      const local = String(u.email||'').split('@')[0];
+      _lpUserName[u.user_id] = (local||u.user_id) + (u.role ? ' ('+u.role+')' : '');
+    });
+  }catch(e){ console.warn('[lp] staff_display_names failed:', e && e.message); }
+  /* Anything unresolved is marked so, never guessed. A uid we cannot name is a
+     deleted or non-staff user, and "someone" is the honest rendering. */
+  want.forEach(id => { if(!(id in _lpUserName)) _lpUserName[id] = null; });
+}
+
+/* What to show under a completed checklist item.
+   Three cases, and only the first names a person. */
+function lpCompletedByHtml(it){
+  if(it.completed_source === 'system')
+    return '<span style="color:rgba(255,255,255,.45);font-weight:400;">· auto-detected</span>';
+  if(it.completed_by_user_id){
+    const nm = _lpUserName[it.completed_by_user_id];
+    return '<span style="color:rgba(255,255,255,.45);font-weight:400;">· by</span> '
+      + lpEsc(nm || 'a user no longer on staff');
+  }
+  /* Legacy: a ROLE was recorded, not a person, and the 39 rows carrying it
+     cannot be resolved to one. Say what was actually stored. */
+  if(it.completed_by)
+    return '<span style="color:rgba(255,255,255,.45);font-weight:400;">· by</span> '
+      + lpEsc(it.completed_by) + ' <span style="color:rgba(255,255,255,.35);font-weight:400;" title="Recorded before completions identified a person. The role was stored, not who did it.">(legacy)</span>';
+  return '';
+}
 function lpPersonSel(cur, blank){
   return '<option value="">'+(blank||'Unassigned')+'</option>' + Object.keys(LP_PERSON_LABEL).map(k=>'<option value="'+k+'"'+(k===cur?' selected':'')+'>'+LP_PERSON_LABEL[k]+'</option>').join('');
 }
@@ -10839,13 +10884,21 @@ async function lpLoadChecklist(kind, bodyId, template){
         const _df = items.find(i=>i.template_key==='drive_folder');
         if(_gd && _df && !_df.completed){
           const _now = new Date().toISOString();
-          _df.completed=true; _df.status='done'; _df.completed_at=_now; _df.completed_by=null;
+          /* completed_source:'system' is REQUIRED here, not decoration. This runs
+             in the browser under the signed-in user's session, so auth.uid() is
+             set — without the declaration the completion trigger would stamp
+             whoever happened to OPEN the lead as having done the work. A machine
+             detecting a folder must name no person. */
+          _df.completed=true; _df.status='done'; _df.completed_at=_now;
+          _df.completed_by=null; _df.completed_by_user_id=null; _df.completed_source='system';
           if(!_df.notes) _df.notes='✓ Auto-detected — Google Drive folder already exists';
-          _authClient().from('processing_items').update({ completed:true, status:'done', completed_at:_now, completed_by:null, notes:_df.notes, updated_at:_now }).eq('id', _df.id);
+          _authClient().from('processing_items').update({ completed:true, status:'done', completed_at:_now, completed_by:null, completed_source:'system', notes:_df.notes, updated_at:_now }).eq('id', _df.id);
         }
       }catch(_e){ console.warn('[lp drive auto]', _e && _e.message); }
     }
     items = lpOrderItems(items, template);
+    // Names for the completer line, resolved once per load rather than per row.
+    await _lpResolveUserNames(items.map(i => i.completed_by_user_id));
     lpRenderItems(kind, body, items);
     if(kind==='intake') lpRenderTimeline(items);
   }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load checklist.</div>'; console.warn('[lp '+kind+']', e.message); }
@@ -10860,7 +10913,11 @@ function lpRenderItems(kind, body, items){
     const lockDone = nonAdmin && done; // non-admins can't reopen a completed item
     const cdate = lpFmtDate(it.completed_at);
     const completedLine = done
-      ? '<div style="display:flex;align-items:center;gap:6px;margin-top:5px;font-size:11px;color:#27AE60;font-weight:600;">✓ Completed'+(cdate?' '+cdate:'')+' <span style="color:rgba(255,255,255,.45);font-weight:400;">· by</span> <select onchange="lpEdit(\''+it.id+'\',\'completed_by\',this.value)" style="background:rgba(39,174,96,.08);border:1px solid rgba(39,174,96,.3);border-radius:5px;color:#27AE60;font-size:10px;padding:1px 4px;">'+lpPersonSel(it.completed_by||'', '—')+'</select></div>'
+      /* Was an editable <select> of ROLES writing completed_by. Now read-only
+         text: the completer is stamped from the verified session and must not be
+         re-assignable from the browser — a field anyone can retype is not a
+         record of who did the work. */
+      ? '<div style="display:flex;align-items:center;gap:6px;margin-top:5px;font-size:11px;color:#27AE60;font-weight:600;">✓ Completed'+(cdate?' '+cdate:'')+' '+lpCompletedByHtml(it)+'</div>'
       : '';
     return '<div class="lp-item" data-id="'+it.id+'" style="padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.05);">'
       +'<div style="display:grid;grid-template-columns:24px 1.6fr 1fr 130px 1.1fr 22px;gap:8px;align-items:start;">'
@@ -10888,7 +10945,12 @@ async function lpToggle(id, checked){
   // Non-admins may mark work done but cannot reopen a completed item.
   if(!checked && _ldNonAdmin()){ toast('Only an admin can remove or reopen checklist items'); lpLoadProcessing(); return; }
   const patch = {completed:checked, status:checked?'done':'not_started', updated_at:new Date().toISOString()};
-  if(checked){ patch.completed_at = new Date().toISOString(); patch.completed_by = 'admin'; }
+  /* WHO completed it is NOT sent from here. It used to be `completed_by='admin'`
+     — a hardcoded role string that never consulted the session, which is how a
+     VA session recorded 'admin' and the UI rendered it as "Rene Duarte (Admin)".
+     trg_processing_items_stamp_completion stamps completed_by_user_id from
+     auth.uid() server-side, so the browser cannot name the completer at all. */
+  if(checked){ patch.completed_at = new Date().toISOString(); }
   else { patch.completed_at = null; patch.completed_by = null; }
   await _authClient().from('processing_items').update(patch).eq('id',id);
   lpLoadProcessing();
@@ -10896,7 +10958,8 @@ async function lpToggle(id, checked){
 async function lpStatus(id, value){
   // Status dropdown mirrors completion: 'Done' auto-stamps date + completer; anything else clears it.
   const patch = { status:value, updated_at:new Date().toISOString() };
-  if(value==='done'){ patch.completed = true; patch.completed_at = new Date().toISOString(); patch.completed_by = 'admin'; }
+  // Completer stamped server-side from auth.uid() — see lpToggle.
+  if(value==='done'){ patch.completed = true; patch.completed_at = new Date().toISOString(); }
   else { patch.completed = false; patch.completed_at = null; patch.completed_by = null; }
   await _authClient().from('processing_items').update(patch).eq('id',id);
   lpLoadProcessing();
