@@ -3,8 +3,38 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
-const CRON_KEY = "rnr-cron-9b1f7a3e8c2d460a85f4e6172c0d9b3e";
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
+
+/* The shared task-runner secret. NOT a literal any more.
+ *
+ * It used to be `const CRON_KEY = "rnr-cron-…"` written into the source of this
+ * function and two others, identical in all three. That put it in the repo, in
+ * every commit that ever touched these files, and in any clone — a secret you
+ * cannot rotate without editing and redeploying three functions, and one that
+ * anyone with repo access has had all along.
+ *
+ * Now: minted server-side by gen_random_bytes straight into the vault as
+ * `cron_task_key` and never printed, then confirmed by verify_cron_secret(),
+ * which answers only true or false. Same shape as internal_db_caller_secret.
+ * The value exists in exactly one place.
+ *
+ * The old literal is dead and must not be accepted as a fallback — it is public
+ * forever, so honouring it would make the rotation cosmetic. */
+async function cronKeyOk(req: Request): Promise<boolean> {
+  const supplied = (req.headers.get("x-cron-key") || "").trim();
+  if (!supplied) return false;
+  try {
+    const { data, error } = await sb.rpc("verify_cron_secret", {
+      p_name: "cron_task_key",
+      p_secret: supplied,
+    });
+    return !error && data === true;
+  } catch (_e) {
+    /* A lookup failure is a NO. Returning true when the check cannot run is how
+     * a guard evaporates exactly when something is already wrong. */
+    return false;
+  }
+}
 const TODO_LIST = "901708416155";
 const THRESHOLD = 0.5;
 
@@ -44,7 +74,7 @@ async function aiNote(name: string, their: string, market: string, amt: number |
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.headers.get("x-cron-key") !== CRON_KEY) {
+  if (!(await cronKeyOk(req))) {
     return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
   }
   try {

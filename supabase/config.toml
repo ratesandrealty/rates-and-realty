@@ -552,6 +552,10 @@ verify_jwt = false
 # pg_cron, which cannot hold a JWT; the control is the x-cron-key compare
 # in-function (one of the three the guard detector does not recognise — see §3 of
 # docs/OPEN-FINDINGS-2026-08-07.md). Pinning is stability only.
+# As of 2026-08-11 the x-cron-key it checks is `cron_task_key` in the vault,
+# verified by verify_cron_secret(). It was a literal hardcoded here and in
+# critical-date-reminders and post-close-followups, identical in all three and
+# public in git history; the old value is dead and is NOT accepted as a fallback.
 verify_jwt = false
 
 [functions.extract-conditions]
@@ -582,4 +586,19 @@ verify_jwt = false
 # No allowInternal: this function has NO caller at all — not a browser, not a
 # cron job, not another function (searched the repo and all 45 cron jobs; see
 # docs/OPEN-FINDINGS-2026-08-07.md §5). Nothing to stage, nothing to break.
+verify_jwt = false
+
+[functions.critical-date-reminders]
+# Pinned at the value that is LIVE (false) — NOT a change. The caller presents a
+# cron key, not a JWT, so true would refuse it. Stability only.
+#
+# THE ACCESS CONTROL is the x-cron-key check in index.ts, first statement in the
+# handler. As of 2026-08-11 that key is `cron_task_key` in the vault, verified by
+# verify_cron_secret(); it was previously a literal hardcoded in this file and
+# two others, and is therefore public in git history forever.
+verify_jwt = false
+
+[functions.post-close-followups]
+# Pinned at the value that is LIVE (false) — NOT a change. See
+# critical-date-reminders: same guard, same rotated vault secret.
 verify_jwt = false
