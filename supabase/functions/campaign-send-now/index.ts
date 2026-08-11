@@ -3,6 +3,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -121,6 +122,28 @@ Deno.serve(async (req) => {
   const ok = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, "Content-Type": "application/json" } });
   const err = (m: string, s = 400) => new Response(JSON.stringify({ error: m }), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
   if (req.method !== "POST") return err("Method not allowed", 405);
+
+  /* ── GUARD ────────────────────────────────────────────────────────────────
+   *
+   * Was open to the internet: verify_jwt = false and no in-function check, over
+   * a SUPABASE_SERVICE_ROLE_KEY client that fans a campaign out to up to 200
+   * recipients per run — email via email_log, and SMS through sms-service on
+   * the business line. That is the TCPA surface the quiet-hours work exists to
+   * protect, and quiet hours is worthless if anyone can invoke the sender.
+   *
+   * NO STAGING NEEDED, uniquely: this function has NO caller. Not a browser
+   * one, not a cron job, not another function — searched the whole repo and
+   * cron.job, and docs/OPEN-FINDINGS-2026-08-07.md §5 recorded the same. So
+   * there is no frontend to ship first and nothing that can break; the guard
+   * lands in one step.
+   *
+   * NO allowInternal: nothing internal calls this. Granting the internal path
+   * "just in case" is how a check meant for one caller ends up covering a
+   * destructive action — see the opt-in note in _shared/require-staff.ts.
+   *
+   * BEFORE req.json(). */
+  const _auth = await requireStaff(req, { what: "Sending a campaign" });
+  if (!_auth.ok) return err(_auth.msg || "not authorized", _auth.status || 401);
 
   const t0 = Date.now();
   try {

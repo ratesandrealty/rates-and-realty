@@ -4,6 +4,7 @@
 // verify_jwt=false (cron). Body: { dry_run?: bool }
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { requireStaff } from '../_shared/require-staff.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -39,6 +40,33 @@ async function sendSMS(to: string, body: string, mediaUrl?: string | null) {
 }
 
 serve(async (req) => {
+  /* ── GUARD ────────────────────────────────────────────────────────────────
+   *
+   * Was open to the internet: verify_jwt = false, no in-function check, service
+   * role, and it SENDS SMS from the business line to whatever is due. Anyone who
+   * knew the URL could fire the queue. Quiet hours is worthless if the sender
+   * itself can be invoked directly — this is the surface that work protects.
+   *
+   * allowInternal, and ONLY that path matters here: the sole caller is pg_cron
+   * job 39 (every minute), which has no user, no session, and cannot hold the
+   * service key. It now sends x-internal-secret via internal_call_headers(),
+   * verified in-DB by verify_cron_secret(). requireStaff alone would have
+   * 401'd every run — which is exactly how this function returned
+   * UNAUTHORIZED_NO_AUTH_HEADER for days with nothing alerting, because
+   * net.http_post never looks at the response.
+   *
+   * CALLER FIRST, and it was: job 39 was re-headered before this shipped and
+   * observed returning 200 in net._http_response (id 382735, 06:14:00Z) while
+   * the function still accepted anything. So a wrong header would have shown up
+   * as a job that still worked, not a silent stop.
+   *
+   * BEFORE req.json(). */
+  const _auth = await requireStaff(req, { allowInternal: true, what: "Sending scheduled SMS" })
+  if (!_auth.ok) {
+    return new Response(JSON.stringify({ error: _auth.msg || "not authorized" }),
+      { status: _auth.status || 401, headers: { 'Content-Type': 'application/json' } })
+  }
+
   let body: any = {}
   try { body = await req.json() } catch {}
   const dryRun = !!body.dry_run
