@@ -429,7 +429,7 @@
     function mountDialer() {
       if (window._rrDialerLoaded || document.querySelector('script[src*="/admin/js/dialer.js"]')) return;
       const dl = document.createElement('script');
-      dl.src = '/admin/js/dialer.js?v=acf4c0a587';
+      dl.src = '/admin/js/dialer.js?v=523ca7eead';
       document.head.appendChild(dl);
     }
     function mountActionFab() {

@@ -296,10 +296,21 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       + (on ? 'Announced at the start. Transcript + AI summary after.'
             : 'No announcement, no transcript, no AI summary.') + '</div>';
   }
-  function wireRecToggle() {
+  /* rerender is a parameter because the DIAL PAD reuses this control and must
+     NOT call renderReady() — that repaints the whole action area and would
+     destroy the pad, the typed number with it. Defaults to renderReady() so
+     the contact modal is unchanged. */
+  function wireRecToggle(rerender) {
     var b = document.getElementById('cmRecToggle');
-    if (b) b.addEventListener('click', function () { _recOn = !_recOn; _recPersist(); renderReady(); });
+    if (b) b.addEventListener('click', function () {
+      _recOn = !_recOn; _recPersist(); (rerender || renderReady)();
+    });
   }
+  /* Shared with the ad-hoc dial pad, which lives in its own IIFE below.
+     Exposed rather than duplicated: the wording here states the consequence of
+     OFF ("no announcement, no transcript, no AI summary"), and a second copy of
+     that sentence is a second chance for the two to drift apart. */
+  window._rrRecControl = { html: recToggleHtml, wire: wireRecToggle };
 
   function renderReady() {
     status.className = 'cm-status ready';
@@ -809,11 +820,31 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       if (footerEl) footerEl.innerHTML = '';
       if (!actions) return;
 
+      /* THE RECORDING CHOICE BELONGS HERE, BEFORE THE DIAL.
+         go() below reopens the modal and immediately clicks Call, so
+         renderReady()'s copy of this control was mounted and replaced by the
+         read-only live badge inside the same tick — it existed, and nobody
+         could ever reach it. Rene dialled from the pad, recording started on
+         its own, and the only control he saw was the badge that cannot be
+         changed. Read-only DURING the call is correct: nothing here can stop a
+         capture mid-call. The gap was that there was no PRE-call choice on this
+         surface at all. The contact modal always had one. */
       actions.innerHTML = padHtml()
         + '<div class="cm-action-group" style="margin-top:14px;">'
         +   '<button class="cm-btn call" id="cmPadDial" aria-label="Call">'
         +     '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.37 1.9.72 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0122 16.92z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-        +   '</button><span class="cm-btn-label">Call</span></div>';
+        +   '</button><span class="cm-btn-label">Call</span></div>'
+        + '<div id="cmPadRec"></div>';
+
+      /* Repaints ONLY the toggle's own container. Passing renderReady here — the
+         default — would wipe the pad and the number typed into it. */
+      function paintPadRec() {
+        var box = document.getElementById('cmPadRec');
+        if (!box || !window._rrRecControl) return;
+        box.innerHTML = window._rrRecControl.html(false);
+        window._rrRecControl.wire(paintPadRec);
+      }
+      paintPadRec();
 
       var input = document.getElementById('cmPadNum');
       var note = document.getElementById('cmPadNote');

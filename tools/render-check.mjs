@@ -476,6 +476,34 @@ const SPECS = [
     // A send that reached the network closes the workspace.
     absent: ['#esignSendOverlay'],
   },
+  {
+    /* THE RECORDING CHOICE IS REACHABLE FROM THE DIAL PAD.
+     * Rene dialled from the pad, recording started on its own, and the only
+     * control on screen was the read-only live badge. The toggle was not
+     * missing — renderReady() has always rendered it — but the pad's go()
+     * reopens the modal and clicks Call in the same tick, so it was mounted and
+     * replaced by the badge before anyone could touch it.
+     *
+     * The second assertion is the one that would catch a lazy fix. The obvious
+     * way to add the toggle here is to reuse wireRecToggle() as-is, whose click
+     * handler calls renderReady() — which repaints the whole action area and
+     * takes the pad, and the number typed into it, with it. So the spec types a
+     * number, toggles recording, and requires the number to still be there. */
+    name: 'dial pad offers the recording choice BEFORE dialling',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    steps: [
+      { click: '#rr-dial-fab', waitMs: 1200 },
+      // 714-555-0142: real timezone, NANPA-reserved fictional exchange.
+      { fill: '#cmPadNum', value: '7145550142', waitMs: 200 },
+      { click: '#cmRecToggle', waitMs: 800 },
+    ],
+    present: ['#cmPadNum', '#cmPadDial', '#cmRecToggle'],
+    // Toggled OFF, and the consequence is spelled out rather than implied.
+    expectText: ['Recording off', 'No announcement, no transcript, no AI summary.'],
+    // The pad survived the toggle. Without the rerender parameter this is ''.
+    values: { '#cmPadNum': '7145550142' },
+  },
   /* ── EMPTY SEARCH TELLS THE TRUTH ─────────────────────────────────────────
    * The reported bug: searching SC-27335-BU in Full mailbox said "Nothing in
    * Inbox" while that thread was visible in the same lead's filed list. The
