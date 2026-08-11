@@ -943,14 +943,14 @@ const SPECS = [
     role: 'va',
     evals: [
       // The mask is recognised as a mask, not as a number.
-      ['RRPhone.isMasked("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u202228")', true],
+      ['RRPhone.isMasked("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u2022\\u202228")', true],
       ['RRPhone.isMasked("(714) 555-0142")', false],
       // REFUSED, with a reason a VA can act on.
-      ['RRPhone.dialable("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u202228").ok', false],
-      ['RRPhone.dialable("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u202228").reason', 'masked'],
-      ['RRPhone.dialable("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u202228").message.indexOf("hidden for your role") >= 0', true],
+      ['RRPhone.dialable("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u2022\\u202228").ok', false],
+      ['RRPhone.dialable("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u2022\\u202228").reason', 'masked'],
+      ['RRPhone.dialable("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u2022\\u202228").message.indexOf("hidden for your role") >= 0', true],
       // THE ORIGINAL BUG, asserted directly: never '+28'.
-      ['RRPhone.toE164("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u202228")', null],
+      ['RRPhone.toE164("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u2022\\u202228")', null],
       // Real numbers are untouched, in every shape the CRM stores.
       ['RRPhone.toE164("7145550142")', '+17145550142'],
       ['RRPhone.toE164("(714) 555-0142")', '+17145550142'],
@@ -964,7 +964,7 @@ const SPECS = [
          a masked contact and presses Call; the refusal must be on screen and
          the Twilio device must never be reached. */
       ['(async function(){'
-        + ' window.openCallModal({ id:"'+FIXTURE+'", first_name:"ZZ-TEST", last_name:"Masked", phone:"(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u202228" });'
+        + ' window.openCallModal({ id:"'+FIXTURE+'", first_name:"ZZ-TEST", last_name:"Masked", phone:"(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u2022\\u202228" });'
         + ' document.getElementById("cmStartBtn").click();'
         + ' await new Promise(function(r){ setTimeout(r,500); });'
         + ' var n=document.getElementById("cmDialRefusal");'
@@ -973,6 +973,52 @@ const SPECS = [
       // The SDK was never even fetched — refusal happens before getDevice().
       ['!!window._rrTwilioSdkP', false],
     ],
+  },
+  {
+    /* ONE PHONE FORMAT, APP-WIDE. One card showed "818 272 7418",
+     * "8185548206" and "818 408 2101" — three shapes on one screen, from four
+     * per-page formatters that had drifted. */
+    name: 'phone formatting is one shared rule, and a mask survives it',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      ['RRPhone.format("8182727418")', '(818) 272-7418'],
+      ['RRPhone.format("818 272 7418")', '(818) 272-7418'],
+      ['RRPhone.format("18182727418")', '(818) 272-7418'],
+      ['RRPhone.format("+18182727418")', '(818) 272-7418'],
+      ['RRPhone.format("(818) 272-7418")', '(818) 272-7418'],
+      /* THE MASK SURVIVES. Formatting it would either mangle it or tidy it into
+         something that reads like a real number — and the value it carries is
+         two digits of a borrower's phone. */
+      ['RRPhone.format("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u2022\\u202228")', '(•••) •••-••28'],
+      // NOT GUESSED. An extension, a partial mid-entry, an international number.
+      ['RRPhone.format("818 272 7418 x22")', '818 272 7418 x22'],
+      ['RRPhone.format("8182")', '8182'],
+      ['RRPhone.format("+44 20 7946 0958")', '+44 20 7946 0958'],
+      ['RRPhone.format("")', ''],
+      // DISPLAY ONLY — digits() is what a save path uses, and it never formats.
+      ['RRPhone.digits("(818) 272-7418")', '8182727418'],
+      // Surface 1: the dialer's own formatter now delegates.
+      ['(function(){ window.openCallModal({ id:null, first_name:"Fmt", last_name:"Probe", phone:"8182727418" });'
+        + ' return document.getElementById("cmPhone").textContent; })()', '(818) 272-7418'],
+    ],
+  },
+  {
+    /* Surface 2, and the one that matters most for the mask: va-people renders
+     * mask_phone() output for every row. Asserts the mask is STILL a mask after
+     * the formatter ran — the negative that a "format everything" change breaks. */
+    name: 'va-people renders masked phones unchanged',
+    url: '/admin/va-people',
+    role: 'va',
+    rpc: {
+      va_shared_leads: [
+        { contact_id: '11111111-1111-4111-8111-111111111111', name: 'Karina Bernal',
+          email: 'lead-1111@masked.local', phone: '(•••) •••-••28', pipeline_status: 'New Lead' },
+      ],
+    },
+    expectText: ['(•••) •••-••28'],
+    // The two surviving digits must not have been reformatted into a number.
+    absentText: ['(•••) •••-28', '+28'],
   },
   /* ── EMPTY SEARCH TELLS THE TRUTH ─────────────────────────────────────────
    * The reported bug: searching SC-27335-BU in Full mailbox said "Nothing in

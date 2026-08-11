@@ -2933,7 +2933,7 @@ function _rrD(v) { return (window.RRTime && window.RRTime.parse) ? window.RRTime
   <script src="/dashboard/utils/calendar.js?v=1862dd25c5"></script>
   <script src="/dashboard/utils/clickup-widget.js?v=35b310978f"></script>
   <script src="/dashboard/utils/clickup-tasks.js?v=98c6a7e7e2"></script>
-  <script src="/dashboard/utils/clickup-automations.js?v=ffe5eb6f2f"></script>
+  <script src="/dashboard/utils/clickup-automations.js?v=ec3a978f25"></script>
   <script type="module">
     import { supabase } from "/api/supabase-client.js";
     window._dashSupabase = supabase;
@@ -4160,11 +4160,13 @@ function timeAgo(dateStr) {
   return new Date(dateStr).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' });
 }
 
+/* Shared formatter (admin/js/rr-phone.js). Behaviour change worth naming: this
+   copy stripped non-digits FIRST, so a masked '(•••) •••-••28' became '28' and
+   was returned as the original string only by accident of length. RRPhone
+   passes a mask through explicitly — reformatting a redaction is how it stops
+   reading as one. */
 function formatPhone(p) {
-  const d = (p || '').replace(/\D/g, '');
-  if (d.length === 11 && d.startsWith('1')) return `(${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7)}`;
-  if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
-  return p || '';
+  return (window.RRPhone && window.RRPhone.format) ? window.RRPhone.format(p) : (p || '');
 }
 
 window.openContactPage = function(contactId) {

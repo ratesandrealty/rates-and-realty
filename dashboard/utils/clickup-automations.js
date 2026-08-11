@@ -411,7 +411,7 @@
     if (c && (c.phone || c.email || c.stage)) {
       var bits = [];
       if (c.stage) bits.push(esc(c.stage));
-      if (c.phone) bits.push(esc(c.phone));
+      if (c.phone) bits.push(esc(window.RRPhone ? window.RRPhone.format(c.phone) : c.phone));
       if (c.email) bits.push(esc(c.email));
       contactSub = '<div class="aap-sub">' + bits.join(' · ') + '</div>';
     }
