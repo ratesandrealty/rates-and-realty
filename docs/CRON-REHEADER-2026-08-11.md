@@ -73,10 +73,59 @@ The two `proactive-followups` jobs hold the snapshot command byte-for-byte, so
 what runs next is what ran successfully at 18:00Z and 15:00Z before the change.
 Neither has run since the rollback; that is the last outstanding confirmation.
 
-Making them consistent would mean either teaching `require-staff` to accept
-`x-cron-secret` as well, or migrating those functions to `x-internal-secret` —
-a change to a *working* guard, which is not worth doing as a side effect of
-tidying headers.
+## Migration onto `x-internal-secret` (decided 2026-08-11)
+
+One secret convention beats two. This project has three — `x-cron-secret`,
+`x-cron-key`, `x-internal-secret` — and that is how the `CRON_KEY` rotation
+missed three workflows. So the three secret-guarded jobs move onto
+`x-internal-secret` rather than `require-staff` learning a second convention.
+
+**`market-rate` (job 24) is explicitly excluded and stays as it is.** Its
+refusal comes from the GATEWAY — `verify_jwt = true` rejects before the function
+runs — so unifying its header would mean changing a pin, not a guard. It works.
+Changing a `verify_jwt` pin to tidy a header convention is the trade this
+codebase has already lost twice: `sms-service` became an open SMS relay from a
+verify_jwt change, and `send-scheduled-sms` returned
+`UNAUTHORIZED_NO_AUTH_HEADER` for days from the same class of edit. Not worth it.
+
+| function | status |
+|---|---|
+| `voe-inbound-poll` (job 37) | **done and proven** — it turned out to be open, not guarded; see the correction above |
+| `proactive-followups` (jobs 20, 21) | **step 3 of 5** — dual-accept deployed and proven; jobs re-headered; awaiting a natural run |
+| `market-rate` (job 24) | **excluded by decision.** Working; gateway-level; leave alone |
+
+### Why `proactive-followups` needed a dual-accept step
+
+`voe-inbound-poll` could be done in two moves — re-header the job, then guard —
+because the function accepted anything in between.
+
+`proactive-followups` fails closed, so there is no such slack. A deploy takes
+~30s and pg_cron lives in the database; the two cannot change together. Guard
+first and jobs 20/21 are refused until re-headered; re-header first and they are
+refused until the deploy lands. Either order breaks the only caller of a
+function that texts Rene's handset.
+
+So the function was first taught to accept **both**, which is behaviour-neutral,
+and the migration proceeds with no window where nothing works:
+
+1. deploy dual-accept ✅
+2. prove the legacy path still works ✅ — 386489, 200 `dry_run`
+3. re-header jobs 20 and 21 ✅ — url/schedule/active verified against snapshot
+4. prove the new path by natural run — job 21 at 00:00Z, job 20 at 15:00Z
+5. delete the legacy branch ← the actual migration, not yet done
+
+Proven at step 2, all four probes carrying `?dry_run=true`:
+
+| probe | result |
+|---|---|
+| vault `x-cron-secret` (what the jobs sent) | **200** `dry_run`, `would_send: true` |
+| `internal_call_headers()` | **200**, identical body |
+| no header | **403** |
+| wrong secret | **403** |
+
+`?dry_run=true` is safe by construction here: it returns above both callers of
+`runDigest`/`runUrgent`, which hold every `sendSmsToLO` site. Verified by reading
+the control flow.
 
 ## The 12 that stand
 
