@@ -1085,7 +1085,26 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
       background: rgba(20,20,20,0.98);
       border: 1px solid var(--gold-bdr);
       color: var(--text); font-size: 0.84rem; font-weight: 600;
-      z-index: 1000; box-shadow: 0 6px 28px rgba(0,0,0,.5);
+      /* ABOVE EVERY MODAL ON THIS PAGE, and that is the whole point.
+         At z-index:1000 the toast sat BELOW every overlay here — the LOE editor
+         (20000), Preview & send (20002), the e-sign workspace (20000), the
+         template preview (21000), and the several at 2147483000. Every message
+         raised from inside a modal was painted behind it.
+         That is what made "Send for signature does nothing" undiagnosable:
+         nothing was broken about the click. loeSendNow() ran, hit its own
+         "The letter is empty — draft it first." guard, toasted it, and the
+         toast rendered under the 70%-black scrim. No toast, no console error,
+         no network call — a working refusal that looked like a dead button.
+
+         DO NOT verify this with elementFromPoint. The toast is
+         pointer-events:none (below), so hit testing skips it and returns the
+         overlay underneath whether the stacking is right or wrong — the first
+         version of the render-check assertion did exactly that and failed
+         identically on the fixed and the broken page. Compare z-index against
+         the positioned elements covering the toast's rect instead; that is
+         what "LOE composer Send refuses an empty letter, VISIBLY" does.
+         pointer-events:none also means being on top blocks nothing. */
+      z-index: 2147483001; box-shadow: 0 6px 28px rgba(0,0,0,.5);
       transform: translateY(16px); opacity: 0;
       transition: all .28s ease; pointer-events: none;
     }
@@ -14980,7 +14999,6 @@ function _esignRemoveSigner(idx){ _esignSigners.splice(idx,1); _esignRenderSigne
 
 function _esignRenderSigners(){
   var list=document.getElementById('esignSignersList');
-  var btn=document.getElementById('esignSubmitBtn');
   if(list){
     if(!_esignSigners.length){
       list.innerHTML='<div style="color:#666;font-size:11px;padding:6px 2px;">No signers added yet.</div>';
@@ -14995,9 +15013,53 @@ function _esignRenderSigners(){
       }).join('');
     }
   }
-  if(btn){ btn.disabled=!_esignSigners.length; btn.style.opacity=_esignSigners.length?'1':'0.45'; btn.style.cursor=_esignSigners.length?'pointer':'not-allowed'; }
+  _esignUpdateSendState();
   // Keep the right-pane editor's signer dropdown / palette in sync as signers change
   if(typeof _esignRefreshEditorToolbar==='function') _esignRefreshEditorToolbar();
+}
+
+/* A DISABLED BUTTON MUST SAY WHY IT IS DISABLED.
+   Send used to gate on signers alone and explain nothing: with none added it
+   was disabled, and a disabled button swallows the click — no handler, no
+   toast, no network call. Rene read that as a dead button, correctly, because
+   nothing on screen distinguishes "refusing" from "broken". The suggestions
+   list showing the borrower's name reads as "a signer is selected" when it is
+   only an offer you still have to click.
+
+   It also gated on the WRONG condition. _esignSubmit needs a template document
+   too, so signers-but-no-template enabled the button and refused inside the
+   handler — a second silent stop before the toast fix landed.
+
+   So: gate on what _esignSubmit actually requires, and name the missing thing
+   in #esignSendNote next to the button. Same reasoning as the Create Folder
+   swap in item 4 — say what the state is rather than silently changing what
+   the control does. */
+function _esignUpdateSendState(){
+  var btn=document.getElementById('esignSubmitBtn');
+  var note=document.getElementById('esignSendNote');
+  var hasTpl=_esignDocs.some(function(d){ return d.kind==='template'; })
+          || !!((document.getElementById('esignTemplate')||{}).value||'');
+  var hasPdf=_esignDocs.some(function(d){ return d.kind==='pdf'; });
+
+  var blocked='';
+  if(!_esignSigners.length && !hasTpl) blocked='Add a document and at least one signer to send.';
+  else if(!_esignSigners.length)       blocked='Add at least one signer — click a suggestion above, or add someone manually.';
+  else if(!hasTpl)                     blocked='Add a template document — this button sends the template.';
+
+  if(btn){
+    btn.disabled=!!blocked;
+    btn.style.opacity=blocked?'0.45':'1';
+    btn.style.cursor=blocked?'not-allowed':'pointer';
+    btn.title=blocked||'Send this document for signature';
+  }
+  if(note){
+    /* The PDF hint is not a blocker, so it only shows once nothing is blocking
+       — otherwise it would replace the reason the button is off. */
+    var msg=blocked || (hasPdf ? 'Use a PDF’s “Send” button to send it for signature. The button below sends the template document.' : '');
+    note.textContent=msg;
+    note.style.display=msg?'block':'none';
+    note.style.color=blocked?'#C9A84C':'#888';
+  }
 }
 
 function _esignAddManual(){
@@ -15586,12 +15648,9 @@ function _esignDocStampPreview(i){ var d=_esignDocs[i]; if(d&&d.kind==='pdf') _e
 function _esignDocSaveToLibrary(i){ var d=_esignDocs[i]; if(d&&d.kind==='pdf') _esignSaveToLibrary(d.document_id, d.name); }
 
 function _esignRenderDocs(){
-  var note=document.getElementById('esignSendNote');
-  if(note){
-    var hasPdf=_esignDocs.some(function(d){ return d.kind==='pdf'; });
-    note.style.display=hasPdf?'block':'none';
-    note.textContent=hasPdf?'Use a PDF’s “Send” button to send it for signature. The button below sends the template document.':'';
-  }
+  // Documents are half of what Send requires, so the button state is recomputed
+  // here too — adding or removing one must move it.
+  _esignUpdateSendState();
   var list=document.getElementById('esignDocsList'); if(!list) return;
   if(!_esignDocs.length){
     list.innerHTML='<div style="color:#666;font-size:11px;padding:8px 2px;">No documents yet — add a template or upload a PDF.</div>';
@@ -16356,7 +16415,10 @@ async function openEsignSendModal(){
       if(!rows.length){ sel.innerHTML='<option value="">No templates available</option>'; }
       else { sel.innerHTML=rows.map(function(t){ return '<option value="'+lpEsc(t.key)+'">'+lpEsc(t.name)+'</option>'; }).join(''); }
     }
-  }catch(e){ var s2=document.getElementById('esignTemplate'); if(s2) s2.innerHTML='<option value="">Could not load templates</option>'; }
+    // Templates land AFTER the first render, and the send gate reads this select
+    // as a fallback document — so recompute or the button stays wrongly refusing.
+    _esignUpdateSendState();
+  }catch(e){ var s2=document.getElementById('esignTemplate'); if(s2) s2.innerHTML='<option value="">Could not load templates</option>'; _esignUpdateSendState(); }
 
   // Load signer suggestions
   try{

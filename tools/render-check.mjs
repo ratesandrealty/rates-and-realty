@@ -80,14 +80,24 @@ function fail(msg) { console.error('\nREFUSED: ' + msg); process.exit(2); }
  * than throwing: the harness is asserting on RENDERING, and a stub that throws
  * would produce console errors that the harness then reports as page failures —
  * turning gaps in the stub into false alarms about the page. */
-function stubSource(role, email, stubRow, rpcMap, fetchMap, rpcFns, staleRole) {
+function stubSource(role, email, stubRow, rpcMap, fetchMap, rpcFns, staleRole, invokeMap, tableMap) {
   const fnsSrc = '{' + Object.entries(rpcFns || {})
     .map(([k, src]) => `${JSON.stringify(k)}: (${src})`).join(',') + '}';
   return `(() => {
+    /* Declared before anything else can call an edge function, and never
+       re-created: this array is the record a spec asserts a click against. */
+    try { if (!window.__RC_CALLS) window.__RC_CALLS = []; } catch (_) {}
     const RES = (data) => Promise.resolve({ data, error: null });
     const RPC_STATE = {};
     const RPC_FNS = ${fnsSrc};
-    const q = () => { const t = RES([]);
+    /* TABLE ROWS, keyed by the .from() name (spec.tables). Unknown tables still
+       answer [], so no page depends on the harness knowing all of them.
+       Without this only the REFUSING direction of a gate can be tested: the
+       e-sign Send button needs a signature_templates row to become enabled, and
+       a spec that can only ever see the disabled state proves half a control.
+       Same reason absent-assertions here are paired with present-assertions. */
+    const TABLES = ${JSON.stringify(tableMap || {})};
+    const q = (tbl) => { const t = RES(Object.prototype.hasOwnProperty.call(TABLES, tbl) ? TABLES[tbl] : []);
       const h = { then: t.then.bind(t), catch: t.catch.bind(t), finally: t.finally.bind(t) };
       for (const m of ['select','insert','update','upsert','delete','eq','neq','gt','gte','lt','lte',
                        'like','ilike','is','in','contains','order','limit','range','filter','not','or','match'])
@@ -128,7 +138,22 @@ function stubSource(role, email, stubRow, rpcMap, fetchMap, rpcFns, staleRole) {
                     ? RES(RPC_FNS[n](args || {}, RPC_STATE))
                  : (Object.prototype.hasOwnProperty.call(${JSON.stringify(rpcMap || {})}, n)
                     ? RES(${JSON.stringify(rpcMap || {})}[n]) : RES([])))),
-      functions: { invoke: () => RES({}) },
+      /* EDGE-FUNCTION CALLS ARE RECORDED, not just answered.
+         A Send button that "does nothing" fails no presence assertion: the
+         button is there, the modal is there, the page is not blank. The only
+         thing that distinguishes a live Send from a dead one is whether it
+         reached the network — so every functions.invoke is appended to
+         window.__RC_CALLS, which a spec asserts on via calls[]. Without this the
+         harness can prove a Send button EXISTS and nothing more, which is the
+         presence-only shape this file already exists to reject.
+         spec.invoke supplies the response body per function name; anything
+         unnamed still answers {} so a page cannot depend on the harness knowing
+         every function it calls. */
+      functions: { invoke: (name, opts) => {
+        try { window.__RC_CALLS.push({ fn: name, body: (opts && opts.body) || null }); } catch (_) {}
+        const IM = ${JSON.stringify(invokeMap || {})};
+        return RES(Object.prototype.hasOwnProperty.call(IM, name) ? IM[name] : {});
+      } },
       storage: { from: () => ({ list: () => RES([]), createSignedUrl: () => RES({ signedUrl: '' }),
                                 upload: () => RES({}), remove: () => RES([]) }) },
       channel: () => { const ch = { on: () => ch, subscribe: () => ch, unsubscribe: () => ch }; return ch; },
@@ -187,10 +212,23 @@ function stubSource(role, email, stubRow, rpcMap, fetchMap, rpcFns, staleRole) {
        body — which is how a 403-vs-200 difference can be exercised without a
        real session for each role. */
     const FETCH_MAP = ${JSON.stringify(fetchMap || [])};
-    if (FETCH_MAP.length) {
+    /* ALWAYS installed, even with an empty FETCH_MAP, because the wrapper does
+       two jobs now. Some pages bypass the supabase client and POST an edge
+       function with raw fetch (_esignSubmit does), so recording only
+       functions.invoke would leave exactly those Send buttons unobservable —
+       and they are the ones being asserted on. Edge-function URLs are appended
+       to the SAME __RC_CALLS list, so a spec asserts "this fired" without
+       caring which transport the page happened to use. */
+    {
       const realFetch = window.fetch.bind(window);
       window.fetch = function (input, init) {
         const url = typeof input === 'string' ? input : (input && input.url) || '';
+        const hit = url.indexOf('/functions/v1/');
+        if (hit >= 0) {
+          let body = null;
+          try { body = init && init.body ? JSON.parse(init.body) : null; } catch (_) { body = null; }
+          try { window.__RC_CALLS.push({ fn: url.slice(hit + 14).split('?')[0], body: body }); } catch (_) {}
+        }
         for (const m of FETCH_MAP) {
           if (url.includes(m.match)) {
             return Promise.resolve(new Response(
@@ -279,6 +317,164 @@ const SPECS = [
     present: ['#tab-inbox .gm-inbox', '#tab-inbox [data-fd]'],
     absent: ['#tab-inbox .gm-rail-scoped'],
     expectText: ['not necessarily about this borrower'],
+  },
+  {
+    /* ── "SEND FOR SIGNATURE" ACTUALLY SENDS ────────────────────────────────
+     * Reported dead on BOTH the LOE composer and the E-Signature Status panel:
+     * no toast, no console error, no network call. Nothing was broken about
+     * either click. Two separate causes wearing the same silhouette:
+     *
+     *   1. Every toast raised from inside a modal was painted BEHIND it —
+     *      .ld-toast was z-index:1000 against overlays at 20000–2147483000. So
+     *      loeSendNow()'s own "The letter is empty" refusal was invisible, and
+     *      a working guard read as a dead button.
+     *   2. #esignSubmitBtn really was disabled, gated on signers with nothing
+     *      on screen saying so — and gated on the wrong condition, since
+     *      _esignSubmit needs a template document too.
+     *
+     * These specs assert on the SEND, not on the button. #loeSendBtn is
+     * present, enabled and correctly labelled on a page where clicking it does
+     * nothing — the #shell-present-and-empty shape again. Only calls[]
+     * separates the two, which is why the stub records edge-function calls. */
+    name: 'LOE composer Send actually sends',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    /* Mirrors what the real RPC returns for this fixture, checked against
+       production: one row, primary borrower, person_contact_id SET — so the
+       checkbox is pre-checked and carries a non-empty value. Two of
+       esign_signer_suggestions' six branches return null::uuid there, and a
+       null renders a checkbox that looks checkable and is silently dropped by
+       _loeSelectedSigners; a stub that always supplied an id would hide that. */
+    rpc: {
+      esign_signer_suggestions: [
+        { name: 'ZZ-TEST Fixture Borrower', email: 'zz-test.fixture@example.invalid',
+          role: 'borrower', source: 'Primary borrower', person_contact_id: FIXTURE },
+      ],
+      loe_save: FIXTURE,
+    },
+    steps: [
+      { click: 'button[onclick="loeOpenEditor(null)"]', waitMs: 2500 },
+      { fill: '#loeBody', value: 'RC-LOE-PROBE letter body', waitMs: 300 },
+      { click: '#loeSendBtn', waitMs: 3000 },
+    ],
+    // THE assertion. Not "the button exists" — "loe-send was invoked".
+    calls: ['loe-send'],
+    // A successful send closes the editor. Paired with calls[] so neither can
+    // pass vacuously: an editor that never opened would also be absent here.
+    absent: ['#loeEditorOverlay'],
+  },
+  {
+    /* The refusal path, which is the half that was invisible. Same composer,
+     * NO letter body — so loeSendNow must stop at its own guard, must NOT
+     * reach the network, and must put its message where it can be READ. */
+    name: 'LOE composer Send refuses an empty letter, VISIBLY',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    rpc: {
+      esign_signer_suggestions: [
+        { name: 'ZZ-TEST Fixture Borrower', email: 'zz-test.fixture@example.invalid',
+          role: 'borrower', source: 'Primary borrower', person_contact_id: FIXTURE },
+      ],
+    },
+    steps: [
+      { click: 'button[onclick="loeOpenEditor(null)"]', waitMs: 2500 },
+      { click: '#loeSendBtn', waitMs: 1500 },
+    ],
+    callsAbsent: ['loe-send'],
+    present: ['#loeEditorOverlay'],
+    /* THE ORIGINAL BUG, AS GEOMETRY RATHER THAN TEXT. The toast element was
+       always in the DOM with the right words in it — an innerText assertion
+       passed all along and would pass on the broken page today. What failed is
+       that the modal was painted over it, so the assertion has to be "what is
+       actually at the toast's own coordinates". Same lesson as the #shell
+       break test: presence was never the thing in doubt. */
+    evals: [
+      ['document.getElementById("ld-toast").textContent',
+       'The letter is empty — draft it first.'],
+      /* STACKING, not hit-testing. elementFromPoint was the obvious way to ask
+         "what is on top here" and it is USELESS for this: the toast is
+         pointer-events:none, so hit testing skips it and returns the overlay
+         underneath — the assertion failed identically on the fixed page and
+         the broken one. Compare painted order instead: every positioned body
+         child covering the toast's centre must have a LOWER z-index than the
+         toast. Verified to still fail at the old z-index:1000. */
+      ['(function(){'
+        + 'var t=document.getElementById("ld-toast"),r=t.getBoundingClientRect();'
+        + 'var cx=r.left+r.width/2,cy=r.top+r.height/2;'
+        + 'var tz=parseInt(getComputedStyle(t).zIndex,10)||0;'
+        + 'var bad=Array.prototype.slice.call(document.querySelectorAll("body > *")).filter(function(e){'
+        + 'if(e===t||t.contains(e))return false;var s=getComputedStyle(e);'
+        + 'if(s.display==="none"||s.visibility==="hidden"||s.position==="static")return false;'
+        + 'var b=e.getBoundingClientRect();'
+        + 'if(!(b.left<=cx&&b.right>=cx&&b.top<=cy&&b.bottom>=cy))return false;'
+        + 'return (parseInt(s.zIndex,10)||0)>=tz;'
+        + '}).map(function(e){return (e.id||e.tagName)+":"+getComputedStyle(e).zIndex;});'
+        + 'return bad.length?"COVERED BY "+bad.join(", "):"toast on top";})()',
+       'toast on top'],
+    ],
+  },
+  {
+    /* The e-sign workspace's Send is legitimately disabled with no signer, and
+     * that is fine — what was not fine is that it said nothing, so a refusal
+     * and a dead button looked identical. Assert the reason is ON SCREEN and
+     * that the click really does stay inert. */
+    name: 'e-sign Send says WHY it is disabled',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    steps: [
+      { click: 'button[onclick="openEsignSendModal()"]', waitMs: 3000 },
+      { click: '#esignSubmitBtn', waitMs: 1500 },
+    ],
+    present: ['#esignSendOverlay', '#esignSubmitBtn', '#esignSendNote'],
+    callsAbsent: ['esign'],
+    evals: [
+      ['String(document.getElementById("esignSubmitBtn").disabled)', 'true'],
+      // VISIBLE, not merely populated — the whole failure was invisible text.
+      ['getComputedStyle(document.getElementById("esignSendNote")).display !== "none"', true],
+      /* Both halves are missing HERE because the stub answers signature_templates
+         from .from(), which always returns [] and is not spec-controllable — so
+         there is no template either. That is why the expected string names a
+         document as well as a signer. On production, where templates exist, the
+         same code path yields the signer-only sentence. The assertion that
+         matters is identical in both: the button names what is missing instead
+         of being silently inert. */
+      ['document.getElementById("esignSendNote").textContent',
+       'Add a document and at least one signer to send.'],
+    ],
+  },
+  {
+    /* THE OTHER DIRECTION, and it is not optional. Making a button explain why
+     * it is disabled is only half a change — the half that is easy to get
+     * wrong is leaving it disabled when it should not be, which would turn a
+     * confusing button into an unusable one and look like the same bug. The
+     * gate now reads two conditions instead of one, so both have to be shown
+     * satisfiable together, ending in an actual send. */
+    name: 'e-sign Send enables and sends once a doc and signer exist',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    tables: {
+      signature_templates: [{ key: 'loe', name: 'Letter of Explanation' }],
+    },
+    // _esignSubmit POSTs esign with raw fetch, so the response comes from here
+    // rather than from invoke[]; the call itself is still recorded.
+    fetchMap: [{ match: '/functions/v1/esign', status: 200, body: { signers: [] } }],
+    /* THE TEMPLATE IS NOT ADDED VIA "+ Add", DELIBERATELY. That button
+       auto-previews the template, which itself POSTs esign
+       (action:'template_preview') — so calls:['esign'] below would pass
+       without any send having happened, which is precisely the vacuous
+       assertion these specs exist to avoid. Selecting the template instead
+       leaves the submit as the only thing that can produce an esign call, and
+       _esignSubmit falls back to the select's value exactly as the gate does. */
+    steps: [
+      { click: 'button[onclick="openEsignSendModal()"]', waitMs: 3000 },
+      { fill: '#esignManualName', value: 'ZZ-TEST Fixture Borrower', waitMs: 150 },
+      { fill: '#esignManualEmail', value: 'zz-test.fixture@example.invalid', waitMs: 150 },
+      { click: 'button[onclick="_esignAddManual()"]', waitMs: 1200 },
+      { click: '#esignSubmitBtn', waitMs: 2500 },
+    ],
+    calls: ['esign'],
+    // A send that reached the network closes the workspace.
+    absent: ['#esignSendOverlay'],
   },
   /* ── EMPTY SEARCH TELLS THE TRUTH ─────────────────────────────────────────
    * The reported bug: searching SC-27335-BU in Full mailbox said "Nothing in
@@ -718,7 +914,7 @@ async function runSpec(spec, opts) {
         }))});}catch(e){}` });
     } else {
       await b.send('Page.addScriptToEvaluateOnNewDocument', {
-        source: stubSource(spec.role || 'admin', 'render-check@local', spec.stubRow, spec.rpc, spec.fetchMap, spec.rpcFns, spec.staleRole),
+        source: stubSource(spec.role || 'admin', 'render-check@local', spec.stubRow, spec.rpc, spec.fetchMap, spec.rpcFns, spec.staleRole, spec.invoke, spec.tables),
       });
     }
 
@@ -811,6 +1007,9 @@ async function runSpec(spec, opts) {
             try { got = eval(expr); } catch (e) { got = '(threw: ' + (e && e.message) + ')'; }
             return [expr, JSON.stringify(want) || 'undefined', JSON.stringify(got) || 'undefined'];
           }),
+          /* Every edge-function call the page made, in order. */
+          calls: (window.__RC_CALLS || []).map(c => c.fn),
+          callBodies: (window.__RC_CALLS || []),
           textLen: (document.body ? (document.body.innerText || '').trim().length : 0),
           title:   document.title,
         };
@@ -832,6 +1031,25 @@ async function runSpec(spec, opts) {
       if (!exists) problems.push(`hidden-check target not on the page at all: ${sel} (assertion would be vacuous)`);
       else if (visible) problems.push(`element must be HIDDEN for this role but is visible: ${sel}`);
       else notes.push(`present and hidden, as required: ${sel}`);
+    }
+    /* CALLS — the assertion that a button DID something.
+       spec.calls is a list of edge-function names the run must have invoked.
+       This is the whole point of a click spec: #loeSendBtn is present, enabled
+       and correctly labelled on a page where clicking it is a no-op, so every
+       presence assertion passes while the feature is dead. Only "loe-send was
+       called" separates the two. spec.callsAbsent is the paired negative, so a
+       spec can also prove a click did NOT fire something. */
+    for (const want of spec.calls || []) {
+      if (!(p.calls || []).includes(want)) {
+        problems.push(`edge function NEVER CALLED: ${want} — the click did nothing.`
+          + ` Calls seen: ${(p.calls || []).length ? p.calls.join(', ') : '(none)'}`);
+      } else {
+        const b = (p.callBodies || []).find((c) => c.fn === want);
+        notes.push(`called ${want} with ${JSON.stringify(b && b.body)}`);
+      }
+    }
+    for (const bad of spec.callsAbsent || []) {
+      if ((p.calls || []).includes(bad)) problems.push(`edge function called but must NOT be: ${bad}`);
     }
     for (const [sel, want, got] of p.values || []) {
       if (String(got).trim() !== String(want)) problems.push(`${sel} rendered "${got}", expected "${want}"`);

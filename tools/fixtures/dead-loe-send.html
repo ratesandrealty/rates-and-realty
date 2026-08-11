@@ -1,0 +1,69 @@
+<meta charset="utf-8"><title>dead LOE send fixture</title>
+<!-- BREAK TEST for the "LOE composer Send actually sends" spec, and for the
+     calls[] assertion generally.
+
+     Everything a presence-only spec looks at is RIGHT here. #loeEditorOverlay
+     exists. #loeSendBtn exists, is enabled, is not covered, and carries the
+     correct label. #loeBody is fillable. A spec asserting "the button is there
+     and says Send for signature" passes this page completely.
+
+     What is missing is the only thing that matters: clicking it calls nothing.
+     So `calls: ['loe-send']` must FAIL here. If it passes, the assertion has
+     silently become presence-only again — which is the failure mode this whole
+     harness exists to reject, and the reason the shipped spec asserts on the
+     CALL rather than on the control.
+
+     It also pins the toast half. #ld-toast carries the right words at
+     z-index:1000 under a 20000 overlay — exactly the live bug — so a stacking
+     assertion must report COVERED BY while a textContent assertion on the same
+     element passes.
+
+     HOW TO RUN IT. --url mode builds a spec with no steps and no calls[], so it
+     cannot exercise this; point the real spec at this file instead — copy
+     "LOE composer Send actually sends" and replace its url with
+
+       url: 'file:///C:/AI/test/tools/fixtures/dead-loe-send.html',
+
+     Verified 2026-08-11, and the output is the point:
+
+       ✗ edge function NEVER CALLED: loe-send — the click did nothing.
+         Calls seen: (none)
+       ✗ element that must NOT exist is present: #loeEditorOverlay
+
+     …on a page where #loeSendBtn is present, enabled, uncovered and reads
+     "Send for signature". Separately, reverting the z-index fix and running
+     "LOE composer Send refuses an empty letter, VISIBLY" against the live page
+     gave "COVERED BY loeEditorOverlay:20000" while that spec's own
+     toast-textContent assertion PASSED — which is why the visibility check is
+     geometric and not a text match. -->
+<body style="background:#0d0d0d;color:#eee;font-family:system-ui;padding:20px">
+<div>Lead detail stand-in — enough visible text to clear the floor comfortably.</div>
+
+<!-- The toast, populated and styled exactly as the broken page had it. -->
+<div id="ld-toast" class="ld-toast show"
+     style="position:fixed;bottom:24px;right:24px;padding:11px 18px;border-radius:12px;
+            background:rgba(20,20,20,0.98);color:#eee;font-size:.84rem;font-weight:600;
+            z-index:1000;pointer-events:none;">The letter is empty — draft it first.</div>
+
+<!-- The composer, over the top of it, at the real overlay's z-index. -->
+<div id="loeEditorOverlay"
+     style="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:20000;
+            display:flex;align-items:center;justify-content:center;padding:20px;">
+  <div style="width:760px;max-width:100%;background:#131315;border-radius:12px;padding:18px;">
+    <div style="font-size:15px;font-weight:700;margin-bottom:12px;">New Letter of Explanation</div>
+    <div id="loeSigners">
+      <label><input type="checkbox" class="loe-signer-cb"
+        value="aa74cc5e-2186-4b40-8608-3d2aa033b9ca" data-name="ZZ-TEST Fixture Borrower" checked>
+        ZZ-TEST Fixture Borrower</label>
+    </div>
+    <textarea id="loeBody" rows="6" style="width:100%;margin:10px 0;"></textarea>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <!-- Perfect button. No handler. -->
+      <button type="button" id="loeSendBtn"
+        style="border:none;border-radius:7px;background:linear-gradient(135deg,#7A5020,#C9A84C);
+               color:#1A0E00;font-size:13px;font-weight:700;cursor:pointer;padding:0 16px;height:38px;">
+        Send for signature</button>
+    </div>
+  </div>
+</div>
+</body>
