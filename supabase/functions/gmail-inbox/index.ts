@@ -47,7 +47,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // Actions: list_threads, get_thread, send, modify, tag, untag, label_counts,
-//          list_drafts, get_draft, delete_draft.
+//          list_drafts, get_draft, delete_draft, dismiss_suggestion.
+//
+// dismiss_suggestion writes only CRM suggestion state — it rejects a proposed
+// filing. It touches no mail and no filing, so it inherits the mailbox gate like
+// everything else above and needs no gate of its own.
 // verify_jwt: true (pinned in config.toml) — the gateway rejects unauthenticated calls.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
@@ -62,6 +66,13 @@ import {
 // The attachment download below runs as the service role and bypasses storage RLS, so
 // this predicate is the actual authorization control. Kept in _shared to be testable.
 import { attachmentPathError } from '../_shared/attach.ts'
+// Escrow-number → contact. A pure function in _shared for the same reason as the
+// two above, and because loan_orders.reference is 0-populated: nothing in
+// production exercises it, so its 37 offline tests ARE its coverage.
+import {
+  escrowVerdict, threadScanText,
+  type EscrowRef, type EscrowVerdict,
+} from '../_shared/escrow-match.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -341,6 +352,177 @@ async function matchContact(svc: any, emails: string[]) {
   return { contact_id: null, matched_by: 'none' }
 }
 
+/* ── ESCROW-NUMBER SUGGESTION ────────────────────────────────────────────────
+ *
+ * SUGGESTS. NEVER FILES. Every path below returns a payload for the thread view
+ * and, in exactly one case, records a row. Nothing here writes email_log.contact_id
+ * or email_thread_tags — accepting a suggestion is a separate, human, `tag` call.
+ *
+ * Runs on get_thread because that is where the message BODIES already are. There
+ * is no ingest hook to hang it on: unmatched mail is never persisted, so
+ * matching IS the ingest gate, and a sweep over email_log would scan 171 rows of
+ * outbound marketing and find nothing. See docs/ESCROW-THREAD-SUGGESTION-2026-08-10.md §1.
+ */
+
+type FiledState = { contact_id: string; via: 'tag' | 'contact' | 'vendor'; evidence: string | null }
+
+/* Every populated reference in loan_orders — eleven rows total, so this is a
+ * full read, not a search. Returns [] fast when nothing is populated, which is
+ * the state today and short-circuits the whole feature at one cheap query. */
+async function loadEscrowRefs(svc: any): Promise<EscrowRef[]> {
+  const { data, error } = await svc.from('loan_orders')
+    .select('reference,contact_id,borrower_contact_id')
+    .not('reference', 'is', null)
+    .neq('reference', '')
+  if (error || !data) return []
+  return data
+    /* contact_id first: it is what the escrow editor writes (loan_order_set
+     * p_contact_id) and what ux_loan_orders_contact_type_single keys on.
+     * borrower_contact_id is the voe path's column and is a fallback only. */
+    .map((r: any) => ({ reference: String(r.reference || ''), contact_id: r.contact_id || r.borrower_contact_id || '' }))
+    .filter((r: EscrowRef) => r.reference && r.contact_id)
+}
+
+async function namesFor(svc: any, ids: string[]): Promise<Record<string, string>> {
+  const uniq = [...new Set(ids.filter(Boolean))]
+  if (!uniq.length) return {}
+  /* `name` is NOT a column on contacts. Asking for it makes PostgREST reject the
+   * whole select, which is how the inbox chips once fell back to the literal
+   * string "lead" while the filing itself was real. */
+  const { data } = await svc.from('contacts').select('id,first_name,last_name').in('id', uniq)
+  const out: Record<string, string> = {}
+  for (const c of data || []) {
+    out[c.id] = ([c.first_name, c.last_name].filter(Boolean).join(' ') || '').trim() || 'lead'
+  }
+  return out
+}
+
+/* Records a disagreement between an AUTOMATIC filing and the escrow number.
+ *
+ * WHY A ROW AND NOT JUST THE BANNER: thread 19f964d623e8a4c0 sat misfiled on the
+ * CC'd agent for weeks. It was found by somebody reading, not by anything
+ * reporting it. A banner only ever helps whoever opens that thread next.
+ *
+ * This row is also the minimum viable match_source/match_evidence: email_log has
+ * no such columns, and rather than add them for every filing, the evidence for
+ * BOTH sides is captured here for the only case that currently needs it. So a
+ * contradiction is fully reviewable from this table without reopening the mail.
+ *
+ * NEVER for a human tag — the CHECK constraint refuses filed_via='tag' — because
+ * re-litigating a decision somebody made on purpose is nagging, and the human is
+ * the likelier one to be right.
+ *
+ * Like recordRun() in gdrive-health-monitor, this must not throw: a suggestion
+ * feature that breaks the inbox because it could not write its own logbook is
+ * worse than one with a gap in the logbook. */
+async function recordContradiction(svc: any, row: {
+  gmail_thread_id: string; thread_subject: string | null; mailbox: string
+  filed_contact_id: string; filed_via: string; filed_evidence: string | null
+  escrow_contact_id: string; escrow_reference: string
+}) {
+  try {
+    if (row.filed_via !== 'contact' && row.filed_via !== 'vendor') return
+    await svc.from('email_thread_match_contradictions').upsert({
+      ...row,
+      last_seen_at: new Date().toISOString(),
+      /* Re-opening a thread must not resurrect a contradiction Rene already
+       * settled, so resolution fields are deliberately NOT touched here. */
+    }, { onConflict: 'gmail_thread_id', ignoreDuplicates: false })
+  } catch (e) {
+    console.error('[gmail-inbox] recordContradiction failed (non-fatal):', (e as Error).message)
+  }
+}
+
+async function escrowSuggestion(
+  svc: any, threadId: string, mailbox: string,
+  rows: any[], filed: FiledState | null,
+) {
+  const refs = await loadEscrowRefs(svc)
+  if (!refs.length) return { state: 'none' as const, reason: 'no_references_recorded' }
+
+  const verdict: EscrowVerdict = escrowVerdict(threadScanText(rows), refs)
+  if (verdict.kind === 'none') return { state: 'none' as const }
+
+  /* Both unanswerable verdicts suggest NOTHING and say why. Picking a winner
+   * would hide a data-entry error — nothing constrains reference to be unique
+   * across contacts. */
+  if (verdict.kind === 'ambiguous_reference') {
+    const nm = await namesFor(svc, verdict.contact_ids)
+    return {
+      state: 'ambiguous_reference' as const,
+      reference: verdict.reference,
+      contacts: verdict.contact_ids.map((id) => ({ id, name: nm[id] || 'lead' })),
+    }
+  }
+  if (verdict.kind === 'multiple_references') {
+    const ids = verdict.hits.map((h) => h.contact_ids[0])
+    const nm = await namesFor(svc, ids)
+    return {
+      state: 'multiple_references' as const,
+      hits: verdict.hits.map((h) => ({
+        reference: h.reference,
+        contact: { id: h.contact_ids[0], name: nm[h.contact_ids[0]] || 'lead' },
+      })),
+    }
+  }
+
+  // ── one file implicated ────────────────────────────────────────────────────
+  const escrowCid = verdict.contact_id
+  const nm = await namesFor(svc, [escrowCid, filed?.contact_id || ''])
+  const escrowContact = { id: escrowCid, name: nm[escrowCid] || 'lead' }
+  const subject = (rows[0] && rows[0].subject) || null
+
+  // Agrees with where it already is — a one-line confirmation, no action.
+  if (filed && filed.contact_id === escrowCid) {
+    return { state: 'confirms' as const, reference: verdict.reference, contact: escrowContact }
+  }
+
+  /* Dismissal is keyed on (thread, suggested contact, source) — never the thread
+   * alone — so rejecting one claim cannot suppress a different, correct one
+   * later. A corrected escrow number resolves to a different contact, which is a
+   * different key, and prompts again. That is intended. */
+  const { data: dis } = await svc.from('email_thread_suggestion_dismissals')
+    .select('dismissed_at')
+    .eq('gmail_thread_id', threadId)
+    .eq('suggested_contact_id', escrowCid)
+    .eq('source', 'escrow_reference')
+    .limit(1)
+  const dismissed = !!(dis && dis.length)
+
+  if (!filed) {
+    return {
+      state: dismissed ? ('dismissed' as const) : ('suggest' as const),
+      reference: verdict.reference, contact: escrowContact,
+    }
+  }
+
+  const filedContact = { id: filed.contact_id, name: nm[filed.contact_id] || 'lead' }
+
+  /* THE SPLIT. Contradicting an automatic match is the case that would have
+   * caught the 947 N Alamo misfile, and it is recorded as well as shown.
+   * Contradicting a human's explicit tag gets one quiet line, no buttons, no
+   * row. */
+  if (filed.via === 'tag') {
+    return {
+      state: 'contradicts_human' as const,
+      reference: verdict.reference, contact: escrowContact, filed: filedContact,
+    }
+  }
+
+  await recordContradiction(svc, {
+    gmail_thread_id: threadId, thread_subject: subject, mailbox,
+    filed_contact_id: filed.contact_id, filed_via: filed.via, filed_evidence: filed.evidence,
+    escrow_contact_id: escrowCid, escrow_reference: verdict.reference,
+  })
+
+  return {
+    state: dismissed ? ('dismissed' as const) : ('contradicts_auto' as const),
+    reference: verdict.reference,
+    contact: escrowContact,
+    filed: { ...filedContact, via: filed.via, evidence: filed.evidence },
+  }
+}
+
 // (MIME helpers now live in ../_shared/mime.ts — see the import above.)
 
 serve(async (req) => {
@@ -598,6 +780,30 @@ serve(async (req) => {
       const m = await matchContact(svc, participants)
       let persisted = null
       if (m.contact_id) persisted = await persistMessages(svc, rows, m.contact_id)
+
+      /* Where the thread stands, resolved HERE rather than in the browser: the
+       * human-vs-automatic split decides whether a contradiction is recorded,
+       * and that decision cannot be left to the caller. The client still reads
+       * email_thread_tags for its own chip; this is the server's own answer. */
+      let filed: FiledState | null = null
+      const { data: tagRow } = await svc.from('email_thread_tags')
+        .select('contact_id').eq('gmail_thread_id', threadId).limit(1)
+      if (tagRow && tagRow.length) {
+        filed = { contact_id: tagRow[0].contact_id, via: 'tag', evidence: null }
+      } else if (m.contact_id) {
+        // m.email is the address matchContact matched — the evidence the
+        // contradiction row keeps, since email_log has no match_evidence column.
+        filed = { contact_id: m.contact_id, via: m.matched_by as 'contact' | 'vendor', evidence: m.email || null }
+      }
+
+      /* Suggest-only, and never allowed to break the thread view: a failure here
+       * must cost a suggestion, not the mail. */
+      let escrow: unknown = { state: 'none' }
+      try {
+        escrow = await escrowSuggestion(svc, threadId, mailbox, rows, filed)
+      } catch (e) {
+        console.error('[gmail-inbox] escrowSuggestion failed (non-fatal):', (e as Error).message)
+      }
       // reply_to / message_id are read straight off the Gmail headers rather than added to
       // `rows` — those objects are spread into the email_log insert and have no such columns.
       const messages = rows.map((r: any, i: number) => {
@@ -613,7 +819,7 @@ serve(async (req) => {
           attachments: r.attachments || [], unread: (msgs[i].labelIds || []).includes('UNREAD'),
         }
       })
-      return ok({ thread_id: threadId, matched: m, persisted, messages })
+      return ok({ thread_id: threadId, matched: m, persisted, messages, escrow })
     }
 
     if (action === 'send') {
@@ -881,7 +1087,65 @@ serve(async (req) => {
       // email_thread_tag (as the user): records the tag + backfills contact_id + auto-files future msgs.
       const { data: tagRes, error: tagErr } = await userClient.rpc('email_thread_tag', { p_thread_id: threadId, p_contact_id: contactId })
       if (tagErr) return err('email_thread_tag failed: ' + tagErr.message, 502)
+
+      /* Accepting an escrow suggestion comes through here, unchanged — which is
+       * the point of suggesting rather than filing. It lands as a human tag with
+       * tagged_by set, correctly, because a human decided.
+       *
+       * Close any open contradiction on the way past. 'refiled' when the tag
+       * agrees with the escrow number; 'superseded' when Rene picked a third
+       * contact, because reading that back as 'kept' would credit the automatic
+       * match with an outcome it did not earn. Non-fatal: a tag must not fail
+       * because its bookkeeping did. */
+      try {
+        const { data: open } = await svc.from('email_thread_match_contradictions')
+          .select('escrow_contact_id').eq('gmail_thread_id', threadId).is('resolved_at', null).limit(1)
+        if (open && open.length) {
+          await svc.from('email_thread_match_contradictions')
+            .update({
+              resolved_at: new Date().toISOString(),
+              resolution: open[0].escrow_contact_id === contactId ? 'refiled' : 'superseded',
+              resolved_by: uid,
+            })
+            .eq('gmail_thread_id', threadId).is('resolved_at', null)
+        }
+      } catch (e) {
+        console.error('[gmail-inbox] contradiction resolve failed (non-fatal):', (e as Error).message)
+      }
+
       return ok({ ok: true, thread_id: threadId, contact_id: contactId, persisted, filed: tagRes })
+    }
+
+    /* Reject an escrow suggestion. Writes a dismissal and closes the
+     * contradiction, if there was one.
+     *
+     * Server-side because the actor must come from the verified JWT, never the
+     * body — the same reasoning as the mailbox boundary and _shared/attach.ts.
+     * A browser that could name its own dismissed_by could dismiss as somebody
+     * else, and this table is the record of who declined what. */
+    if (action === 'dismiss_suggestion') {
+      const threadId = String(body.thread_id || '')
+      const contactId = String(body.contact_id || '')
+      if (!threadId || !contactId) return err('thread_id and contact_id required')
+
+      const { error: dErr } = await svc.from('email_thread_suggestion_dismissals').upsert({
+        gmail_thread_id: threadId,
+        suggested_contact_id: contactId,
+        source: 'escrow_reference',
+        evidence: body.evidence ? String(body.evidence) : null,
+        dismissed_by: uid,
+        dismissed_at: new Date().toISOString(),
+      }, { onConflict: 'gmail_thread_id,suggested_contact_id,source', ignoreDuplicates: false })
+      if (dErr) return err('dismiss failed: ' + dErr.message, 502)
+
+      /* 'kept' — the automatic filing stands. Only closes rows still open, so a
+       * later dismissal cannot overwrite an earlier 'refiled'. */
+      await svc.from('email_thread_match_contradictions')
+        .update({ resolved_at: new Date().toISOString(), resolution: 'kept', resolved_by: uid })
+        .eq('gmail_thread_id', threadId)
+        .is('resolved_at', null)
+
+      return ok({ ok: true, thread_id: threadId, dismissed_contact_id: contactId })
     }
 
     if (action === 'untag') {

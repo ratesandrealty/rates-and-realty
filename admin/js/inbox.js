@@ -319,6 +319,24 @@
       '.gm-pacts{display:flex;gap:6px;align-items:center;flex-shrink:0}',
       '.gm-badge{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:12px;background:rgba(80,200,120,.14);color:#50c878;border:1px solid rgba(80,200,120,.4);white-space:nowrap;max-width:190px;overflow:hidden;text-overflow:ellipsis}',
       '.gm-badge.none{background:rgba(255,255,255,.05);color:var(--muted,#999);border-color:var(--border2,rgba(255,255,255,.14))}',
+      /* Escrow-number suggestion. Sits under the header, in the flow — not a
+       * toast and not a modal, because it must survive being ignored and stay
+       * re-readable. Three weights, and the difference is deliberate:
+       *   .quiet  — a confirmation, or a disagreement with a HUMAN's tag. One
+       *             line, no buttons. Nagging somebody about a decision they
+       *             made on purpose is how a suggestion gets tuned out.
+       *   (base)  — an ordinary suggestion on an unfiled thread.
+       *   .loud   — escrow disagrees with an AUTOMATIC match. This is the 947 N
+       *             Alamo case and it is the reason the feature exists. */
+      '.gm-esc{padding:9px 14px;border-bottom:1px solid var(--border,rgba(255,255,255,.08));font-size:12px;line-height:1.5;display:flex;flex-wrap:wrap;align-items:center;gap:8px;background:rgba(201,168,76,.08)}',
+      '.gm-esc .t{flex:1;min-width:220px;color:#e8e2d0}',
+      '.gm-esc b{color:#fff}',
+      '.gm-esc code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;color:#f0e6c8}',
+      '.gm-esc.quiet{background:rgba(255,255,255,.03);color:var(--muted,#999)}',
+      '.gm-esc.quiet .t{color:var(--muted,#9a9a9a)}',
+      '.gm-esc.loud{background:rgba(248,113,113,.10);border-bottom-color:rgba(248,113,113,.35)}',
+      '.gm-esc.loud .t{color:#f4d6d6}',
+      '.gm-esc .gm-btn{flex-shrink:0}',
       /* Collapsed older messages: one-line stubs. A 4-message thread opens showing
        * the newest message only, which is the one being replied to. */
       '.gm-stub{display:flex;align-items:baseline;gap:8px;padding:7px 16px;border-bottom:1px solid var(--border,rgba(255,255,255,.06));cursor:pointer;font-size:12px}',
@@ -2904,6 +2922,47 @@
     if (ctx.modal) h.push('<button class="gm-modal-close" data-gm="close">×</button>');
     h.push('</div></div>');
 
+    /* ── escrow-number suggestion ──────────────────────────────────────────────
+     *
+     * SUGGESTS, NEVER FILES. Every button here is a human deciding; nothing
+     * below writes a filing on its own.
+     *
+     * The copy names BOTH the token matched and the contact, and in the loud
+     * case also names the address the automatic match used. That is the whole
+     * design: an insurance thread about 947 N Alamo, filed on a contact because
+     * an agent's address appeared in the CC, is obviously wrong the moment the
+     * evidence is written down — and indistinguishable from a deliberate
+     * decision when it is not. */
+    var esc_ = data.escrow || { state: 'none' };
+    var escHtml = '';
+    if (esc_.state === 'suggest') {
+      escHtml = '<div class="gm-esc"><div class="t">🔎 Escrow <code>' + esc(esc_.reference) + '</code> appears in this thread. ' +
+        'That is the escrow number on <b>' + esc(esc_.contact.name) + '</b>’s file.</div>' +
+        '<button class="gm-btn" data-esc="file">File on ' + esc(esc_.contact.name) + '</button>' +
+        '<button class="gm-btn plain" data-esc="dismiss">Dismiss</button></div>';
+    } else if (esc_.state === 'contradicts_auto') {
+      escHtml = '<div class="gm-esc loud"><div class="t">⚠️ This thread is filed on <b>' + esc(esc_.filed.name) + '</b> — matched automatically' +
+        (esc_.filed.evidence ? ' on the address <code>' + esc(esc_.filed.evidence) + '</code>' : ' by the ' + esc(esc_.filed.via) + ' rule') + '.<br>' +
+        'Escrow <code>' + esc(esc_.reference) + '</code> in this thread belongs to <b>' + esc(esc_.contact.name) + '</b>.</div>' +
+        '<button class="gm-btn" data-esc="file">Re-file on ' + esc(esc_.contact.name) + '</button>' +
+        '<button class="gm-btn plain" data-esc="dismiss">Keep ' + esc(esc_.filed.name) + '</button></div>';
+    } else if (esc_.state === 'contradicts_human') {
+      // One quiet line, no buttons — somebody filed this deliberately.
+      escHtml = '<div class="gm-esc quiet"><div class="t">Escrow <code>' + esc(esc_.reference) + '</code> in this thread is recorded on <b>' +
+        esc(esc_.contact.name) + '</b>’s file.</div></div>';
+    } else if (esc_.state === 'confirms') {
+      escHtml = '<div class="gm-esc quiet"><div class="t">✓ Escrow <code>' + esc(esc_.reference) + '</code> in this thread confirms the current filing.</div></div>';
+    } else if (esc_.state === 'ambiguous_reference') {
+      escHtml = '<div class="gm-esc quiet"><div class="t">⚠️ Escrow <code>' + esc(esc_.reference) + '</code> is recorded on <b>' + esc_.contacts.length +
+        '</b> files (' + esc_.contacts.map(function (c) { return esc(c.name); }).join(', ') +
+        '). Not suggesting a lead — one of those is probably a typo.</div></div>';
+    } else if (esc_.state === 'multiple_references') {
+      escHtml = '<div class="gm-esc quiet"><div class="t">This thread mentions escrow numbers from more than one file (' +
+        esc_.hits.map(function (x) { return esc(x.reference) + ' → ' + esc(x.contact.name); }).join('; ') +
+        '). Not suggesting a lead.</div></div>';
+    }
+    if (escHtml) h.push(escHtml);
+
     /* ── messages ──────────────────────────────────────────────────────────────
      * Only the newest is expanded. The rest are one-line stubs — a 4-message thread
      * opens showing one message, not four, and the one shown is the one being
@@ -3084,6 +3143,44 @@
       try { await invoke(cl, mailbox, 'untag', { thread_id: threadId, unfile: true }); toast('Unfiled'); renderThread(host, ctx); if (ctx.onChanged) ctx.onChanged(); }
       catch (err) { toast(err.message); }
     }
+    /* Accept → the EXISTING tag action, unchanged. So an accepted suggestion
+     * lands as a human tag with tagged_by set — correctly, because a human
+     * decided. That is the point of suggesting rather than filing, and it means
+     * the accept path needed no new write path at all. */
+    wire('[data-esc="file"]', async function (e) {
+      var btn = e.currentTarget, was = btn.textContent;
+      btn.disabled = true; btn.textContent = 'Filing…';
+      try {
+        await invoke(cl, mailbox, 'tag', { thread_id: threadId, contact_id: esc_.contact.id });
+        toast('Filed on ' + (esc_.contact.name || 'lead'));
+        renderThread(host, ctx);
+        if (ctx.onChanged) ctx.onChanged();
+      } catch (err) {
+        // Loud, and the suggestion stays on screen so it can be retried.
+        btn.disabled = false; btn.textContent = was;
+        toast('Could not file: ' + err.message);
+      }
+    });
+    /* Dismiss must STICK. The row is keyed on (thread, suggested contact), so
+     * this rejects one claim and not the thread — a later, different suggestion
+     * still gets through. */
+    wire('[data-esc="dismiss"]', async function (e) {
+      var btn = e.currentTarget, was = btn.textContent;
+      btn.disabled = true; btn.textContent = 'Dismissing…';
+      try {
+        await invoke(cl, mailbox, 'dismiss_suggestion', {
+          thread_id: threadId, contact_id: esc_.contact.id, evidence: esc_.reference,
+        });
+        var banner = host.querySelector('.gm-esc');
+        if (banner) banner.remove();
+      } catch (err) {
+        /* Leave the banner up. A dismissal that only APPEARS to have worked is
+         * the worst outcome here: it returns on the next render and reads as the
+         * feature ignoring you. */
+        btn.disabled = false; btn.textContent = was;
+        toast('Could not dismiss: ' + err.message);
+      }
+    });
     wire('[data-gm="acts"]', function (e) {
       var anchor = e.currentTarget;
       var menu = document.createElement('div');

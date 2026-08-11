@@ -1787,7 +1787,7 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
           integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
           crossorigin="anonymous" defer></script>
     <script src="/admin/js/attachment-viewer.js?v=e8f2b14c9f"></script>
-  <script src="/admin/js/inbox.js?v=8fd048b1ed" defer></script>
+  <script src="/admin/js/inbox.js?v=c093251355" defer></script>
   <!-- Places loads its own Maps bundle ON DEMAND, when a field is attached — not
        on every lead-detail open. This tag is only the ~4KB helper. -->
   <script src="/admin/js/places-autocomplete.js" defer></script>
@@ -17402,6 +17402,35 @@ async function lpScheduleLockReminders(){
    usually the one who has it. Same reasoning as LOAN #, which reads straight
    from contacts rather than contacts_secure so it is not masked for her. */
 const LP_SNAP_STAFF_KEYS = ['escrow_ref'];
+
+/* ⚠️ MIRROR of referenceIsMatchable() in
+ *    supabase/functions/_shared/escrow-match.ts — KEEP THE TWO IN STEP.
+ *
+ * There is no build step bundling edge-function TypeScript into these pages, so
+ * the rule is stated twice. escrow-match.test.ts has a drift test that reads
+ * THIS FILE and fails if the constants or the shape pattern below stop matching
+ * the TypeScript, because a floor that disagrees with itself is worse than
+ * either floor: the editor would promise matching that never happens, or stay
+ * silent about a number that is quietly ignored.
+ *
+ * WHY WARN AT ENTRY AT ALL: a floor enforced only inside the matcher is
+ * invisible. The feature simply never fires and looks broken. Said here, it
+ * reaches the one person who can tell a mistyped number from a real one, at the
+ * moment they typed it.
+ *
+ * Returns a reason string when the number cannot be matched on, else null. */
+const LP_ESC_MIN_LEN = 6;                                    // sync: MIN_LEN
+const LP_ESC_MIN_LEN_ALL_DIGITS = 7;                         // sync: MIN_LEN_ALL_DIGITS
+const LP_ESC_SHAPE = /^[A-Za-z0-9][A-Za-z0-9\-\/]*[A-Za-z0-9]$/;  // sync: MATCHABLE_SHAPE
+function lpEscrowUnmatchableReason(raw){
+  const ref = (raw||'').trim();
+  if(!ref) return null;                       // empty is a clear, not a mistake
+  if(!LP_ESC_SHAPE.test(ref)) return 'contains characters other than letters, digits, hyphens and slashes';
+  if(ref.length < LP_ESC_MIN_LEN) return 'is shorter than '+LP_ESC_MIN_LEN+' characters';
+  if(!/[0-9]/.test(ref)) return 'contains no digit';
+  if(/^[0-9]+$/.test(ref) && ref.length < LP_ESC_MIN_LEN_ALL_DIGITS) return 'is all digits and shorter than '+LP_ESC_MIN_LEN_ALL_DIGITS+' characters';
+  return null;
+}
 function lpSnapEdit(key, ev){
   if (LP_SNAP_STAFF_KEYS.indexOf(key) < 0 && typeof _ldNonAdmin === 'function' && _ldNonAdmin()) return;
   try{ ev&&ev.stopPropagation&&ev.stopPropagation(); }catch(_){}
@@ -17418,8 +17447,22 @@ function lpSnapEdit(key, ev){
     /* loan_orders.reference on the contact's order_type='escrow' row. No new
        column, and loan_order_set UPSERTS — so the escrow order row is created
        on first save if it does not exist yet. */
-    bodyHtml='<div style="'+lbl+'">Escrow #</div><input id="lpSnapEscrow" type="text" autocomplete="off" placeholder="Escrow / order number" style="'+inStyle+'">';
-    setTimeout(()=>{ const e=document.getElementById('lpSnapEscrow'); if(e){ e.value=(_lpEscrowRef||''); e.focus(); e.select(); } },10);
+    bodyHtml='<div style="'+lbl+'">Escrow #</div><input id="lpSnapEscrow" type="text" autocomplete="off" placeholder="Escrow / order number" style="'+inStyle+'">'
+            +'<div id="lpSnapEscrowHint" style="font-size:10px;line-height:1.4;color:rgba(255,255,255,.4);margin-top:1px;"></div>';
+    setTimeout(()=>{
+      const e=document.getElementById('lpSnapEscrow'); if(!e) return;
+      e.value=(_lpEscrowRef||''); e.focus(); e.select();
+      /* Live, while typing — so a number that will never be matched on says so
+         before Save rather than after. Advisory only: the value still saves. */
+      const hint=document.getElementById('lpSnapEscrowHint');
+      const paint=()=>{
+        if(!hint) return;
+        const why=lpEscrowUnmatchableReason(e.value);
+        hint.textContent = why ? ('Too ambiguous to search mail for — it '+why+'. It will still be saved.') : '';
+        hint.style.color = why ? 'rgba(245,158,11,.85)' : 'rgba(255,255,255,.4)';
+      };
+      e.addEventListener('input', paint); paint();
+    },10);
     commit=async ()=>{
       const e=document.getElementById('lpSnapEscrow');
       const v=e?(e.value||'').trim():'';
@@ -17435,6 +17478,12 @@ function lpSnapEdit(key, ev){
       if(r && r.error) throw r.error;
       _lpEscrowRef=v;
       lpRenderSnapshot(cid);
+      /* Say it once more on save. The panel closes on commit, so the inline hint
+         disappears with it — and this is the sentence that explains why threads
+         never get suggested from this number. */
+      const why=lpEscrowUnmatchableReason(v);
+      const _t=window.showToast||window.toast||function(){};
+      if(why) _t('Saved. This number '+why+', so it is too ambiguous to search mail for — threads will not be suggested from it.');
     };
   } else if(key==='type_purpose'){
     const tSel=document.getElementById('pricingLoanType'), pSel=document.getElementById('pricingLoanPurpose');
