@@ -5,11 +5,14 @@
 //   GET  ?action=get-folder&folderId=FOLDER_ID
 //   GET  ?action=list-files&folderId=FOLDER_ID
 //   GET  ?action=download&fileId=FILE_ID[&download=1]   -> streams bytes (auth as app acct)
+//   POST ?action=create-borrower-folder  body: { contact_id }
+// EVERY action requires a staff session or the service key (requireStaff).
 //   POST ?action=create-folder    body: { parentId, name }
 //   POST ?action=upload-file      body: multipart/form-data { folderId, file }
 //   POST ?action=rename           body: { fileId, name }
 // Auth: folder ops + reads = service account; file writes (upload/rename) = user OAuth
-// token (google_calendar_tokens id='rene'). Deploy with --no-verify-jwt.
+// token (google_calendar_tokens id='rene').
+// verify_jwt stays FALSE and is not the control — requireStaff() in-function is.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { requireStaff } from "../_shared/require-staff.ts";
@@ -109,20 +112,19 @@ Deno.serve(async (req: Request) => {
     const url = new URL(req.url);
     const action = url.searchParams.get("action") || "";
 
-    /* ── CALLER AUTHENTICATION FOR EVERY ACTION EXCEPT download ────────────
+    /* ── CALLER AUTHENTICATION FOR EVERY ACTION ───────────────────────────
      *
      * Until 2026-08-11 this function had none at all, with verify_jwt = false,
      * and its writes use rene@'s USER OAuth token — so an unauthenticated
      * caller could create, rename, upload and trash files in his Drive.
      *
-     * `download` IS DELIBERATELY EXCLUDED, and this is the honest reason rather
-     * than an oversight: two call sites hand the URL to the browser as an
-     * <a href> (lead-detail.html:8858 and :19266, the "Download" link and the
-     * attachment link). A navigation cannot carry an Authorization header, so
-     * guarding download would break both — and break them as a 401 page, not a
-     * silent failure, but break them all the same. Closing it needs a different
-     * mechanism: a short-lived signed URL, or a one-time token in the query
-     * string. That is a design change, not a guard, and it is NOT done here.
+     * `download` WAS exempt until 2026-08-11 and no longer is. Two call sites
+     * handed the URL to the browser as an <a href>, and a navigation cannot
+     * carry an Authorization header — that, and only that, kept it open. Both
+     * now use _gpDownloadFile() in lead-detail.html: authenticated fetch, blob,
+     * synthetic <a download>. The same pattern the file already used three
+     * times, so no signed URL and no second credential type were needed.
+     * Frontend shipped first and was confirmed working before this line changed.
      *
      * Everything else was already sending the session token, which is why this
      * needed no frontend-first staging. Verified caller by caller before
@@ -142,10 +144,8 @@ Deno.serve(async (req: Request) => {
      * trash-file keeps its own check below as well — it was guarded first, on
      * its own, and a destructive action should not depend on a shared gate
      * staying correct. */
-    if (action !== "download") {
-      const _a = await requireStaff(req, { what: "Drive access" });
-      if (!_a.ok) return err(_a.msg || "not authorized", _a.status || 401);
-    }
+    const _a = await requireStaff(req, { what: "Drive access" });
+    if (!_a.ok) return err(_a.msg || "not authorized", _a.status || 401);
 
     /* ── create-borrower-folder ────────────────────────────────────────────
      *
