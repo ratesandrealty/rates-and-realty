@@ -273,6 +273,27 @@ Deno.serve(async (req: Request) => {
      * which is the correct boundary for an endpoint reachable with a service
      * key. */
     if (req.method === "POST" && action === "trash-file") {
+      /* ── WHO may ask, as distinct from WHAT may be trashed ────────────────
+       *
+       * The two guards below constrain the TARGET and are good. They never
+       * constrained the CALLER: until 2026-08-11 this function had no auth of
+       * any kind and verify_jwt = false, so anyone who knew the URL could ask
+       * to trash a file. The target guards limited the blast radius; they did
+       * not make the endpoint anybody's to invoke.
+       *
+       * Guarded on its own, ahead of the other actions, because the usual
+       * frontend-first staging does not apply: trash-file has NO caller
+       * anywhere — not in this repo, not in any of the 11 n8n workflows, not in
+       * any of the 45 cron jobs. There is no legitimate traffic to break, and
+       * it is the one action with no undo. A trashed Drive item sits in the bin
+       * for 30 days and nothing here restores it.
+       *
+       * No allowInternal: nothing reaches this from Postgres, and widening the
+       * guard for a caller that does not exist is how a check meant for one
+       * path ends up covering a destructive one. This IS the destructive one. */
+      const _auth = await requireStaff(req, { what: "Trashing a Drive file" });
+      if (!_auth.ok) return err(_auth.msg || "not authorized", _auth.status || 401);
+
       /* Two explicit guards, checked BEFORE the PATCH.
        *
        * The original version relied on Google returning 403 for anything the
