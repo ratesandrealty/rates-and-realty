@@ -504,6 +504,28 @@ const SPECS = [
     // The pad survived the toggle. Without the rerender parameter this is ''.
     values: { '#cmPadNum': '7145550142' },
   },
+  {
+    /* "CREATE FOLDER" DISAPPEARING IS GUARD 2 WORKING, and it read as a bug
+     * because the control simply swapped itself for a different one. The server
+     * refuses to create a second folder — the first has borrower documents in
+     * it and a duplicate would strand them — but nothing on screen said so.
+     * A refusal and a breakage must not look alike. */
+    name: 'Create Folder does not silently vanish when a folder exists',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    stubRow: {
+      gdrive_folder_id: 'RC-FOLDER-ID',
+      gdrive_folder_url: 'https://drive.google.com/drive/folders/RC-FOLDER-ID',
+    },
+    present: ['#driveFolderBtn', '#driveFolderBtnLabel'],
+    // Names the STATE, not just the action it happens to offer.
+    values: { '#driveFolderBtnLabel': '📁 Drive folder ✓' },
+    evals: [
+      ['document.getElementById("driveFolderBtn").title.includes("already HAS a Drive folder")', true],
+      // The sentence that answers Rene's actual question.
+      ['document.getElementById("driveFolderBtn").title.includes("that is not a missing button")', true],
+    ],
+  },
   /* ── EMPTY SEARCH TELLS THE TRUTH ─────────────────────────────────────────
    * The reported bug: searching SC-27335-BU in Full mailbox said "Nothing in
    * Inbox" while that thread was visible in the same lead's filed list. The

@@ -6098,6 +6098,18 @@ async function callBorrowerDrive(payload) {
   try { return JSON.parse(text); } catch(e) { return { error: 'Invalid response: ' + text.slice(0,200) }; }
 }
 
+/* SAY WHICH STATE THIS IS IN, rather than swapping the control silently.
+ *
+ * "+ Create Folder" simply became "View Drive Folder" the moment a folder
+ * existed, and Rene read the disappearance as the button breaking. It was
+ * Guard 2 in gdrive-proxy working exactly as designed: it refuses to create a
+ * second folder, because the first one has borrower documents in it and a
+ * second would strand them.
+ *
+ * A control that vanishes explains nothing. The label now names the STATE it
+ * is reporting ("Drive folder ✓") rather than only the action it offers, and
+ * the tooltip says why there is nothing to create. Same reasoning as the
+ * e-sign Send button: a refusal and a breakage must not look alike. */
 function updateDriveFolderBtn() {
   const btn = document.getElementById('driveFolderBtn');
   const label = document.getElementById('driveFolderBtnLabel');
@@ -6106,11 +6118,17 @@ function updateDriveFolderBtn() {
   if (window._leadDriveFolderUrl) {
     btn.style.borderColor = '#C9A84C';
     btn.style.color = '#C9A84C';
-    label.textContent = '📁 View Drive Folder';
+    label.textContent = '📁 Drive folder ✓';
+    var made = (contactData && (contactData.drive_folder_created_at || contactData.gdrive_folder_created_at)) || '';
+    btn.title = 'This lead already HAS a Drive folder' + (made ? ' (created ' + String(made).slice(0, 10) + ')' : '')
+      + '. Click to open it.\n\nThere is no "Create Folder" button because one already exists — that is not a'
+      + ' missing button. Creating a second would leave the first stranded with its documents in it, so the'
+      + ' server refuses.';
   } else {
     btn.style.borderColor = '#2a2a2a';
     btn.style.color = '#888';
     label.textContent = '+ Create Folder';
+    btn.title = 'No Drive folder for this lead yet. Click to create one.';
   }
 }
 
@@ -6157,6 +6175,38 @@ async function _ldCreateContactFolder() {
     let msg = 'HTTP ' + res.status;
     try { const j = await res.json(); if (j && j.error) msg = j.error; } catch (_) {}
     throw new Error(msg);
+  }
+
+  /* READ THE ANSWER. This response was being thrown away, and the code below
+     then polled, found the id Guard 2 had just declined to replace, and toasted
+     "✓ Drive folder created!" — for a call that created nothing. That is the
+     same defect as the vanishing button, one layer down: a refusal reported as
+     a success. The server distinguishes three outcomes and now so does this.
+
+     It also removes a pointless wait. The writeback is server-side, so the id
+     is in this body; the 10s poll below dates from the n8n era when something
+     else did the writing, and is kept only as a fallback. */
+  let out = null;
+  try { out = await res.json(); } catch (_) {}
+  if (out && out.folder_id) {
+    window._leadDriveFolderId = out.folder_id;
+    window._leadDriveFolderUrl = out.folder_url || ('https://drive.google.com/drive/folders/' + out.folder_id);
+    contactData.gdrive_folder_id = window._leadDriveFolderId;
+    contactData.gdrive_folder_url = window._leadDriveFolderUrl;
+    if (typeof toast === 'function') {
+      if (out.raced) {
+        /* Two callers passed the exists-check together. A folder WAS created and
+           is now referenced by nothing — say so, with its id, because nobody
+           will find it otherwise. */
+        toast('This lead already had a folder — opened that one. A duplicate was created and is unreferenced'
+          + (out.unreferenced_folder_id ? ' (' + out.unreferenced_folder_id + ')' : '') + '.', true);
+      } else if (out.already_existed) {
+        toast('This lead already had a Drive folder — nothing created. Opening the existing one.');
+      } else {
+        toast('✓ Drive folder created!');
+      }
+    }
+    return;
   }
 
   // Poll Supabase for up to 10s waiting for n8n to write back.
