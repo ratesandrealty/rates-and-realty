@@ -7,6 +7,7 @@
 // Body: { dry_run?: bool }
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { requireStaff } from '../_shared/require-staff.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -78,6 +79,34 @@ function buildDigest(items: any[]) {
 }
 
 serve(async (req) => {
+  /* ── GUARDED. THIS FUNCTION SENDS SMS TO STAFF HANDSETS. ──────────────────
+   *
+   * verify_jwt = false and NO check of any kind, so an unauthenticated POST
+   * texted the loan-date digest to every number in sms_authorized_phones —
+   * which is how an earlier probe rang Rene's phone. One of eleven senders in
+   * that state; docs/OPEN-ENDPOINTS-2026-08-11.md.
+   *
+   * BEFORE req.json(), deliberately: the refusal must not depend on the body
+   * being parseable, and a caller must not be able to reach the dry_run flag
+   * to influence what the guard does.
+   *
+   * allowInternal — the only caller is pg_cron job 38 (daily 15:00Z), which
+   * cannot hold the service key. No browser caller; the frontend was grepped
+   * and the single hit is a comment in gdrive-health-monitor.
+   *
+   * THE JOB WAS RE-HEADERED FIRST. It had been sending NO AUTHORIZATION HEADER
+   * AT ALL — worse than the anon key, because there was nothing for requireStaff
+   * to even reject. Being daily, there was no natural run to watch inside a
+   * session, so the re-header was proven by running the job's exact mechanism
+   * (net.http_post + internal_call_headers()) with dry_run:true. That is safe
+   * BY CONSTRUCTION, not by hope: sendSMS() has exactly one call site, and the
+   * `if (dryRun) return` below sits above it with nothing between. Result was
+   * 200, sent:0, "nothing due". */
+  const auth = await requireStaff(req, { allowInternal: true, what: 'Sending loan-date nudges' })
+  if (!auth.ok) {
+    console.error('[loan-date-nudges] REJECTED:', auth.status, auth.msg)
+    return new Response(JSON.stringify({ error: auth.msg || 'unauthorized' }), { status: auth.status || 401, headers: J })
+  }
   let body: any = {}
   try { body = await req.json() } catch {}
   const dryRun = !!body.dry_run

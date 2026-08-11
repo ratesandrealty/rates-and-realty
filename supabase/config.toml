@@ -667,3 +667,27 @@ verify_jwt = false
 # Job re-headered first and observed returning 200
 # {"message":"No reminders due","processed":0} — net._http_response id 386179.
 verify_jwt = false
+
+# ── SENDERS 3–4 OF 7, guarded 2026-08-11 ────────────────────────────────────
+[functions.loan-date-nudges]
+# Stays false. Caller is pg_cron job 38 (daily 15:00Z) via net.http_post, which
+# cannot present a JWT. Pinned at the LIVE value so an unpinned deploy cannot
+# flip it to true and 401 every run.
+#
+# THE ACCESS CONTROL is requireStaff(req, { allowInternal: true }) in index.ts,
+# placed BEFORE req.json() so the refusal cannot depend on a parseable body.
+# Until 2026-08-11 there was no check at all AND the job sent no Authorization
+# header whatsoever — so an unauthenticated POST texted the loan-date digest to
+# every number in sms_authorized_phones, which is how a probe once rang Rene's
+# phone. Job re-headered to internal_call_headers() FIRST and proven with
+# dry_run:true (200, sent:0, "nothing due") while this still accepted anything.
+verify_jwt = false
+
+[functions.sms-inbound-reconcile]
+# Stays false: pg_cron job 40 (daily 13:20Z), same reasoning.
+# THE ACCESS CONTROL is requireStaff(req, { allowInternal: true }) in index.ts.
+# NOTE: docs/OPEN-ENDPOINTS-2026-08-11.md tags this SENDS-SMS and it DOES NOT
+# SEND — its only Twilio call is a GET of Messages.json. It writes
+# sms_suppressions (recorded opt-outs, a compliance record) and raises an in-app
+# alert, which is why it is guarded; the tag is wrong and should be corrected.
+verify_jwt = false

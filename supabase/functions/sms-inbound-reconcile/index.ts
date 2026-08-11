@@ -20,6 +20,7 @@
  */
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { requireStaff } from '../_shared/require-staff.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const sb = createClient(SUPABASE_URL, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
@@ -33,6 +34,27 @@ const isOptOut = (b: string) =>
   /^(stop|unsubscribe|quit|cancel|end|optout|opt out|stopall|remove)\b/.test(String(b || '').toLowerCase().trim());
 
 Deno.serve(async (req) => {
+  /* ── GUARDED. ────────────────────────────────────────────────────────────
+   * verify_jwt = false with no check of any kind: an unauthenticated POST could
+   * run the reconcile, which writes sms_suppressions rows (sms_record_optout)
+   * and raises an in-app alert.
+   *
+   * NOTE FOR THE OPEN-ENDPOINTS LIST: this is tagged SENDS-SMS there and it
+   * DOES NOT SEND. Its only Twilio call is a GET of Messages.json to list what
+   * arrived; every write is a DB write. Still worth guarding — recording a
+   * borrower opt-out is a compliance record — but it is not a sender, and the
+   * tag should be corrected rather than propagated.
+   *
+   * BEFORE req.json(), so the refusal cannot depend on a parseable body.
+   * allowInternal: only caller is pg_cron job 40 (daily 13:20Z); no browser
+   * caller, frontend grepped. Job re-headered from the anon key to
+   * internal_call_headers() FIRST and proven with dry_run:true — 200,
+   * missing_count 0 — while this still accepted anything. */
+  const auth = await requireStaff(req, { allowInternal: true, what: 'Reconciling inbound SMS' });
+  if (!auth.ok) {
+    console.error('[sms-inbound-reconcile] REJECTED:', auth.status, auth.msg);
+    return new Response(JSON.stringify({ error: auth.msg || 'unauthorized' }), { status: auth.status || 401, headers: J });
+  }
   const body = await req.json().catch(() => ({} as Record<string, unknown>));
   const days = Math.min(Number(body.days) || 7, 90);
   const dryRun = !!body.dry_run;
