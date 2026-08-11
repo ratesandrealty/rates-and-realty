@@ -329,6 +329,27 @@ async function resolveContactByPhone(
     const { data } = await sb.from('contacts')
       .select('id, first_name, last_name, phone, pipeline_status')
       .or(`phone.ilike.%${last10}%,secondary_phone.ilike.%${last10}%`)
+      /* READ FILTER: current roster only — a merged-away duplicate is not a
+         person you can call, and attaching to one is worse than not attaching.
+         This path was written after the merge filter swept the rosters and
+         searches, and it missed it, so it became the FIRST ghost WRITE:
+         calls_log a9eec719 (2026-08-11 17:21) landed on 93724c8a, the loser of
+         the 08-08 Rene Duarte merge, and showed on no lead page.
+
+         It caused BOTH symptoms, which is the part worth keeping. Survivor
+         ce753903 and ghost 93724c8a BOTH carry 7144728508, so without this the
+         resolver saw two exact matches and correctly refused to guess — the
+         multi-match refusal below was never broken. The refusal then handed the
+         choice to the attach panel, which offered two rows both reading "Rene
+         Duarte" (pipeline_status is the only disambiguator, by design) and the
+         ghost was picked. With the filter there is exactly ONE match and the
+         call auto-attaches to the survivor, so the human is never shown a
+         corpse to choose between.
+
+         Belongs in the FILTER column of docs/CONTACT-MERGE-2026-08-08.md: it is
+         a search that turns a number into an identity, not a by-id lookup of a
+         contact the user already chose. */
+      .is('merged_into_contact_id', null)
       .limit(10);
     const rows = (data as any[]) || [];
     /* ilike %digits% is a loose net — it also matches a longer number that

@@ -336,7 +336,28 @@ async function persistMessages(svc: any, rows: any[], contactId: string | null, 
 async function matchContact(svc: any, emails: string[]) {
   const uniq = [...new Set(emails.map((e) => (e || '').toLowerCase()).filter((e) => e && !SELF.has(e)))]
   for (const e of uniq) {
-    const { data: c } = await svc.from('contacts').select('id').or(`email.ilike.${e},secondary_email.ilike.${e}`).limit(1)
+    /* READ FILTER: current roster only. Found by the 2026-08-11 ghost sweep —
+       three email_log rows written AFTER the 08-08 merge sat on 93724c8a, the
+       merged-away Rene Duarte, including an inbound lender message.
+       reneduarte.homeside@gmail.com is the ghost's PRIMARY email and only the
+       survivor's SECONDARY, so `.limit(1)` with no ordering picked the corpse.
+
+       Filtering here does NOT rewrite history: existing email_log rows keep the
+       contact_id they were written with, which is what
+       docs/CONTACT-MERGE-2026-08-08.md means by leaving email_log unfiltered.
+       That rule is about READING the table. This is the resolver that decides
+       who a NEW message attaches to, and a message that arrives today belongs
+       on the record a human can actually open.
+
+       The unordered .limit(1) is still a coin-flip whenever two LIVE contacts
+       share an address; the filter removes the dead half of that set, not the
+       ambiguity itself. Left as-is deliberately — unlike the phone path there
+       is no refusal here to fall back on, and silently unfiling mail that used
+       to file is a worse trade than an occasional wrong live pick. */
+    const { data: c } = await svc.from('contacts').select('id')
+      .or(`email.ilike.${e},secondary_email.ilike.${e}`)
+      .is('merged_into_contact_id', null)
+      .limit(1)
     if (c && c.length) return { contact_id: c[0].id, matched_by: 'contact', email: e }
   }
   for (const e of uniq) {

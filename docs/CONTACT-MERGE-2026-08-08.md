@@ -207,6 +207,65 @@ page: the "becomes unreachable" failure, not the "disappears from a list" one.
 **When the list and the rule disagree, the rule wins.** The list was written by
 scanning names; the rule was written by thinking about what each surface answers.
 
+### 2026-08-11 — the ghosts caught their first WRITES, and that is a new class
+
+Everything before this was a read: a merged contact showing up in a list it
+should have left. These are rows CREATED after the merge that point at a dead
+id. The record is then not merely untidy — it is invisible, because every
+surface that would display it filters the ghost out.
+
+Both were the same one-line miss, in resolvers written after the sweep:
+
+| path | what it wrote | why it missed |
+|---|---|---|
+| `twilio-voice` `resolveContactByPhone` | `calls_log` a9eec719 — a 35s recorded call on 93724c8a | added for dial-pad attach after the sweep; never got the filter |
+| `gmail-inbox` `matchContact` | 3 `email_log` rows on 93724c8a, incl. an inbound lender message | matches on `email` OR `secondary_email` with an unordered `.limit(1)` |
+
+**The phone one is worth reading twice, because the obvious diagnosis is wrong.**
+The multi-match refusal was NOT broken. Survivor `ce753903` and ghost `93724c8a`
+BOTH carry `7144728508`, so the resolver saw two exact matches and correctly
+refused to guess. It then handed the choice to the dialer's attach panel — which
+renders name plus `pipeline_status` and nothing else, by design, so Rene was
+shown two rows both reading `Rene Duarte · New Lead` and picked the wrong one.
+
+So the missing filter caused BOTH symptoms: it put a corpse in the picker, AND
+it turned what should have been a clean single-match auto-attach into an
+ambiguous choice a human could only get right by luck. With the filter there is
+exactly one match and nothing is asked.
+
+**The email one shows why `email_log` being in the do-NOT-filter column is not
+the whole answer.** That column is about READING the table — history is true and
+must not be rewritten. `matchContact` is not a read of history; it decides who a
+message arriving TODAY attaches to. `reneduarte.homeside@gmail.com` is the
+ghost's PRIMARY email and only the survivor's SECONDARY, so an unordered
+`.limit(1)` across both picked the dead one every time.
+
+**The rule that generalises:** a resolver that turns a phone number, an email
+address or a name into an identity is a SEARCH, whatever table it ultimately
+writes to. Filter it. The do-NOT-filter column covers by-id lookups of a contact
+the user already chose, and rows that record something that genuinely happened to
+the old id — not the act of choosing an id in the first place.
+
+Full sweep of all 100 `contact_id` columns for rows created after the last merge
+(2026-08-08 04:33Z) found exactly these: `calls_log` ×1, `email_log` ×3, and the
+`activity_events` ×1 derived from the call by trigger. No other write path has
+leaked. The four named ghosts earned their keep.
+
+Repointed: `calls_log` a9eec719 → `ce753903`. The `calls_log_sync_activity`
+AFTER UPDATE trigger MOVED the existing `activity_events` row (same id 7ca4d5c0,
+`contact_id` rewritten) rather than inserting a second one — the `v_ae_id is
+null` branch is what inserts, and it was not taken.
+
+**But the trigger did NOT stamp the survivor**, and this is the part to remember
+when repointing anything else. `tg_calls_log_advance_contact` gates its
+`contacts` update on `v_first_contact` — INSERT with a contact, or UPDATE from
+NULL to a contact. A ghost→survivor repoint is neither, so `last_contact_date`,
+`last_meaningful_activity_at` and the New Lead → Contacted advance are all
+skipped, and the stamp stays on the ghost where the misattach put it. Stamped
+`ce753903` by hand afterwards. The ghost keeps its incorrect
+`last_contact_date`; it is a tombstone excluded from every roster, and there is
+no correct earlier value to restore.
+
 Every other entry in the filter column was re-checked by signature on 2026-08-10.
 Two more take a uuid and are NOT the same shape, so they stay in the filter
 column: `partner_leads(p_partner_id)` and `partner_overview(p_partner_id)` take a
