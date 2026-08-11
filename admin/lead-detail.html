@@ -11735,12 +11735,23 @@ async function lpSaveContact(role){
   const g = f => { const e = row.querySelector('input[data-f="'+f+'"]'); return e ? (e.value||null) : null; };
   const first=((g('first_name')||'')).trim(), last=((g('last_name')||'')).trim(), name=(first+' '+last).trim();
   try{ await _authClient().from('loan_contacts').upsert({contact_id:cid,role:role,first_name:first||null,last_name:last||null,name:name||null,company:g('company'),phone:g('phone'),email:g('email'),updated_at:new Date().toISOString()}, {onConflict:'contact_id,role'}); }catch(e){ console.warn('[lpSaveContact]', e.message); }
-  // Also capture the vendor into the shared directory (vendor_directory_upsert derives first/last
-  // from p_name). Best-effort — never blocks the contact save.
-  try{
-    const co=((g('company')||'')).trim();
-    if(name||co){ await _authClient().rpc('vendor_directory_upsert', { p_id:null, p_role:role, p_name:name||null, p_company:co||null, p_phone:((g('phone')||'')).trim()||null, p_email:((g('email')||'')).trim()||null, p_website:null, p_notes:null }); }
-  }catch(_){}
+  /* THE SHARED-DIRECTORY WRITE USED TO HAPPEN HERE, AND THAT WAS THE BUG.
+     This function is bound to onchange on the phone and email inputs, so it
+     ran on every blur — and it called vendor_directory_upsert with p_id:null
+     while the email was still being typed. The RPC de-duped on the email, so
+     each half-typed prefix was a different identity and got its own row:
+     raul.lirio / raul.Lirio@t / raul.Lirio@titlegroup / raul.Lirio@titlegroup.fntg
+     / (no email) — five vendors for one person, and the same for Norberto
+     Uriarte and Peggy Mcadams. 16 fragments over 8 people.
+
+     Capturing a vendor is now an EXPLICIT act: the 💾 button on the row
+     (lpVendorSaveRow). Saving the loan contact still happens on blur, because
+     that writes one row keyed by (contact_id, role) and cannot fragment.
+
+     The RPC was fixed too — it no longer treats a half-typed address as an
+     identity — but a guard is not a licence to keep calling it forty times
+     while somebody types. Both halves, because either alone still leaves the
+     VOE vendor picker and the HOI recipient list full of prefixes. */
 }
 // Statuses treated as done/closed — hidden from the default (open-only) tasks view.
 const LP_TASK_DONE_STATUSES = ['completed','complete','done','cancelled','canceled','dismissed'];

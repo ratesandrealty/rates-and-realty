@@ -4,6 +4,12 @@
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
+--
+-- 2026-08-11: same de-dupe fix as the sibling overload — see
+-- vendor_directory_upsert__p_id_uuid_p_role_text_…_566e8b.sql for the full
+-- reasoning. Both share public.vendor_directory_match() rather than each
+-- carrying its own copy of the rule, because two copies of "what counts as the
+-- same vendor" is how the two overloads would drift apart.
 
 CREATE OR REPLACE FUNCTION public.vendor_directory_upsert(p_id uuid, p_category text, p_name text, p_company text, p_phone text DEFAULT NULL::text, p_email text DEFAULT NULL::text, p_website text DEFAULT NULL::text, p_notes text DEFAULT NULL::text, p_role text DEFAULT NULL::text)
  RETURNS uuid
@@ -11,14 +17,14 @@ CREATE OR REPLACE FUNCTION public.vendor_directory_upsert(p_id uuid, p_category 
  SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
-declare v_id uuid; v_name text; v_email text; v_role text; v_cat text; v_first text; v_last text; v_dupe uuid;
+declare v_id uuid; v_name text; v_role text; v_cat text; v_first text; v_last text; v_dupe uuid; v_email_ok boolean; v_rolekey text;
 begin
   if auth.role() is null then raise exception 'not authenticated'; end if;
   v_name  := nullif(trim(coalesce(p_name,'')),'');
-  v_email := nullif(lower(trim(coalesce(p_email,''))),'');
-  -- role comes from p_role if given, else p_category (this overload historically used category as the role)
-  v_role  := public.vendor_canonical_role(coalesce(nullif(trim(coalesce(p_role,'')),''), p_category));
-  v_cat   := case lower(trim(coalesce(coalesce(nullif(p_role,''),p_category),'')))
+  v_email_ok := public.vendor_email_is_complete(p_email);
+  v_rolekey := coalesce(nullif(trim(coalesce(p_role,'')),''), p_category);
+  v_role  := public.vendor_canonical_role(v_rolekey);
+  v_cat   := case lower(trim(coalesce(v_rolekey,'')))
                when 'title' then 'title' when 'title_officer' then 'title'
                when 'escrow' then 'escrow' when 'escrow_officer' then 'escrow'
                when 'appraisal' then 'appraisal' when 'appraiser' then 'appraisal'
@@ -35,17 +41,14 @@ begin
     return v_id;
   end if;
 
-  select id into v_dupe from public.vendor_directory
-    where public.vendor_canonical_role(role) is not distinct from v_role
-      and ((v_email is not null and lower(email)=v_email)
-        or (v_email is null and lower(coalesce(name,''))=lower(coalesce(v_name,''))
-            and lower(coalesce(company,''))=lower(coalesce(p_company,''))))
-    limit 1;
+  v_dupe := public.vendor_directory_match(v_rolekey, p_name, p_company, p_email);
   if v_dupe is not null then
     update public.vendor_directory set
       role=coalesce(v_role,role), category=coalesce(v_cat,category), name=coalesce(v_name,name),
       first_name=nullif(v_first,''), last_name=v_last, company=coalesce(p_company,company),
-      phone=coalesce(p_phone,phone), email=coalesce(p_email,email), website=coalesce(p_website,website),
+      phone=coalesce(p_phone,phone),
+      email=case when v_email_ok then p_email else coalesce(email, p_email) end,
+      website=coalesce(p_website,website),
       notes=coalesce(p_notes,notes), usage_count=coalesce(usage_count,0)+1, last_used_at=now(), updated_at=now()
     where id=v_dupe returning id into v_id;
     return v_id;
