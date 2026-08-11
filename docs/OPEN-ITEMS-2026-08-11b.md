@@ -285,3 +285,86 @@ trigger the error workflow, so any future test of this must use production mode.
 - `Google Calendar Two-Way Sync` has pre-existing validation warnings unrelated
   to this work: a disconnected `HTTP Request 1` node, and `Google Calendar 1`
   missing its `resource` discriminator.
+
+---
+
+# Contact Folder Creator — the unshipped draft, investigated. DO NOT PUBLISH YET.
+
+Read-only. Nothing changed, nothing published.
+
+## The exposure is far narrower than "two months unguarded"
+
+**Nothing in the database fires this workflow.** The `contacts` triggers
+(`trg_borrower_foldering_ins` / `_upd`) call `notify_borrower_foldering()` —
+that is the *Borrower Stage Foldering* workflow, a different one. The only
+DB-fired webhook of this family is `lender-folder-creator` on `lenders`.
+
+`contact-folder-create` is invoked from the app, in two places, and **both only
+call it when the contact has no folder**:
+
+- `admin/lead-detail.html:6119` via `handleDriveFolderBtn()` — if
+  `window._leadDriveFolderUrl` is set the button OPENS the folder instead of
+  creating one.
+- `components/admin-dashboard.js:2640` `_fvCreateFolder`, on `dashboard/admin.html`.
+
+So the missing `&gdrive_folder_id=is.null` guard is defence-in-depth on a path
+the UI does not take. That is why two months passed without visible harm.
+
+## No evidence of any overwrite
+
+| check | result |
+|---|---|
+| contacts with a folder / distinct folder ids | **67 / 67** — no two contacts share one |
+| folder id changed since the `merge_snap_contacts_20260808` snapshot | **0** |
+| `google_drive_folder_id` (a second, older column) populated | **0 rows** |
+| a folder id in that column no contact now points at | **0** |
+| `audit_log` rows showing `gdrive_folder_id` changing | **0** |
+
+**But the audit is not proof, and this is the honest limit.** `audit_log` holds
+only 5 rows for `contacts`, all 2026-08-08 to 2026-08-10 — it does not cover the
+2026-05-11 → 2026-06-15 window at all, nor most of the period since. n8n retains
+**zero** executions for this workflow. There is no history that would show an
+overwrite in the exposed period, so "no evidence" here means *no record exists*,
+not *it did not happen*.
+
+Orphaned Drive folders cannot be enumerated from here either — that needs the
+Drive API through `gdrive-proxy`, which needs a session. If Rene wants certainty,
+listing the Borrowers root and diffing against those 67 ids is the check, and it
+is the same orphan shape as the esign bucket.
+
+## The exposure that IS real, and that the draft closes
+
+The webhook takes **no credentials** ("No credentials required for this
+webhook"). Anyone who knows the URL can POST `{contact_id, first_name,
+last_name}` and cause a folder create plus an unguarded PATCH — which *would*
+overwrite an existing `gdrive_folder_id` and strand the previous folder, with
+borrower documents in it. The UI guard does not apply to a direct POST.
+
+The second path is a race: double-click, or the 10-second writeback poll timing
+out so the button still reads "Create Folder" after a folder was made.
+
+## Why the draft was probably never published
+
+Not "published, failed, reverted" — there is no failed execution to support that,
+and n8n retains none for this workflow either way.
+
+The likelier reading is the trap itself. The draft was created
+**2026-06-15 06:07Z**, inside a cluster of workflow edits that day (Sync Failure
+Alert 07:07, ClickUp Calendar 07:13, Google Calendar 07:13, Lender Prospect
+16:10). Whoever added the guard saw a success response and believed it shipped —
+exactly what happened to the CRON_KEY rotation on 2026-08-11.
+
+## Recommendation
+
+Publishing the draft is correct and low-risk: it only adds
+`&gdrive_folder_id=is.null` to the PATCH, so the workflow stops overwriting a
+folder that already exists. It changes nothing about the create path.
+
+**It stops the bleeding; it recovers nothing.** If a folder was stranded during
+the exposed window, publishing does not find it — and that folder holds borrower
+documents. The recovery check is the Drive listing above, and it is a separate
+job.
+
+Worth doing in the same pass, since the draft does not address it: the webhook is
+unauthenticated. That, not the missing guard, is the way an overwrite could still
+be caused deliberately.
