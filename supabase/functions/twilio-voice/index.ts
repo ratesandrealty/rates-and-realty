@@ -733,9 +733,38 @@ Deno.serve(async (req) => {
       if (phase === 'leg_status' || phase === 'call_status') {
         const st = params.get('CallStatus') || params.get('DialCallStatus') || 'completed';
         const dur = parseInt(params.get('CallDuration') || params.get('DialCallDuration') || '0', 10) || null;
+        /* ── PARENT FIRST. THIS IS THE SID MISMATCH. ────────────────────────
+         * leg_status is reached from <Number statusCallback>, which is a CHILD
+         * leg callback: its CallSid is the SID of the leg dialled out, while
+         * calls_log holds the PARENT's. `.eq('twilio_call_sid', callSid)`
+         * therefore matched NOTHING, and the backstop this handler exists to
+         * be — the one for a caller who hangs up while it is still ringing,
+         * which the Dial action never sees — had never once fired.
+         *
+         * Proven on row 2f9e67a8 rather than argued: it carries a RECORDING
+         * and was still 'ringing' with a null duration. Both callbacks hang off
+         * the same <Dial>, so this was never delivery. The recording callback
+         * is Dial-level and fires on the parent — matched, recording_url
+         * written. The status callback is <Number>-level and fires on the
+         * child — same lookup, no row. One row, two callbacks, one matched.
+         *
+         * ParentCallSid is in that payload and was simply not read. Tried
+         * first, CallSid second, so the parent-level phases (call_status, and
+         * the inbound Dial action) are unchanged — they send no ParentCallSid
+         * and fall straight through to the value they always used. */
+        const parentSid = params.get('ParentCallSid') || '';
+        const sidsToTry = parentSid && parentSid !== callSid ? [parentSid, callSid] : [callSid];
         try {
-          const { data: row } = await sb.from('calls_log')
-            .select('id, status').eq('twilio_call_sid', callSid).maybeSingle();
+          let row: any = null;
+          for (const sid of sidsToTry) {
+            if (!sid) continue;
+            const { data } = await sb.from('calls_log')
+              .select('id, status').eq('twilio_call_sid', sid).maybeSingle();
+            if (data) { row = data; break; }
+          }
+          if (!row) {
+            console.warn(`[twilio-voice] ${phase}: no calls_log row for sid(s) ${sidsToTry.join(',')}`);
+          }
           // Never downgrade a row that already reached a terminal outcome.
           if (row && ['ringing', 'in-progress'].includes(String(row.status))) {
             await sb.from('calls_log').update({ status: st, duration: dur }).eq('id', row.id);
@@ -893,11 +922,34 @@ Deno.serve(async (req) => {
          * The inbound branch is deliberately left alone — its parent is a real
          * PSTN caller whose carrier does supply ringback, and it is not the
          * reported defect. */
+        /* ── THE OUTBOUND LEG HAD NO STATUS CALLBACK AT ALL ──────────────────
+         *
+         * recordingStatusCallback above is about RECORDINGS and says nothing
+         * about call status. There was no action= and no per-leg
+         * statusCallback=, so `leg_status` and `inbound_done` were unreachable
+         * from the browser dialer: the row was INSERTed 'ringing' and no code
+         * path could ever update it. Five of the seven rows stuck at 'ringing'
+         * over 30 days are this, and they were stuck by ABSENCE — not by the
+         * SID mismatch that explains the other two.
+         *
+         * Both closers, matching the inbound branch:
+         *   action=          fires on the PARENT when the Dial finishes. Its
+         *                    CallSid is the row's own SID.
+         *   <Number status=  fires on the CHILD leg, and carries ParentCallSid;
+         *                    it is what closes a call the caller abandons while
+         *                    it is still ringing, which the Dial action never
+         *                    sees because Twilio stops processing TwiML once
+         *                    the calling party is gone.
+         *
+         * phase=call_status rather than a new name: leg_status already handles
+         * exactly this shape and never downgrades a row that reached a terminal
+         * state. statusCallbackEvent="completed" only — 'initiated'/'ringing'
+         * would post twice per call to write a status the row already has. */
         const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   ${rec.ok ? noticeSay(noticeText) : ''}
-  <Dial callerId="${TWILIO_PHONE}" timeout="30" answerOnBridge="true" ringTone="us"${recAttr}>
-    <Number${whisper}>${dialTo}</Number>
+  <Dial callerId="${TWILIO_PHONE}" timeout="30" answerOnBridge="true" ringTone="us"${recAttr} action="${recordingCb}?phase=call_status" method="POST">
+    <Number${whisper} statusCallback="${recordingCb}?phase=leg_status" statusCallbackEvent="completed" statusCallbackMethod="POST">${dialTo}</Number>
   </Dial>
 </Response>`;
         console.log('[twilio-voice] dialing', dialTo, 'callerId=', TWILIO_PHONE, 'sid=', callSid, 'ref=', clientRef);
@@ -929,7 +981,20 @@ Deno.serve(async (req) => {
      * and its control is the request signature. verify_jwt stays as pinned
      * (false) for the same reason — flipping it would 401 every Twilio webhook
      * at the gateway before this function ever ran. */
-    const staff = await requireStaff(req, { what: 'The dialer' });
+    /* ONE ACTION MAY ALSO ARRIVE FROM POSTGRES, and opts in from the URL
+     * because this check runs before req.json() and the body is not readable
+     * yet. backfill_call_status is invoked by net.http_post, which cannot hold
+     * the service key — see require-staff note 3.
+     *
+     * Gating on the query string is not a weakening. allowInternal only decides
+     * whether the x-internal-secret HEADER is consulted; without a secret that
+     * verify_cron_secret() accepts it falls straight through to the normal
+     * paths, so anyone can put this in a URL and still get 401. And the action
+     * itself re-checks with requireStaff({ roles:['admin'], allowInternal }),
+     * so the blanket keeps covering every action including ones added later —
+     * which is the invariant this guard exists for. */
+    const wantsInternal = reqUrl.searchParams.get('action') === 'backfill_call_status';
+    const staff = await requireStaff(req, { what: 'The dialer', allowInternal: wantsInternal });
     if (!staff.ok) {
       console.error('[twilio-voice] REJECTED json action:', staff.status, staff.msg);
       return err(staff.msg || 'unauthorized', staff.status || 403);
@@ -1175,6 +1240,71 @@ Deno.serve(async (req) => {
      * rotating, so this is narrower than the rest of the function — the dialer
      * is admin/va/agent/loa, this is admin. Widening it is one word; it should
      * be a decision rather than an inheritance. */
+    /* ── BACKFILL ROWS THAT NEVER GOT A STATUS CALLBACK ──────────────────────
+     *
+     * The outbound leg carried no status callback until 2026-08-11, so rows
+     * INSERTed 'ringing' could never be closed by anything. Twilio still knows
+     * what happened to each — status and duration are on the Call resource, by
+     * SID — so the history is recoverable rather than lost.
+     *
+     * READ-ONLY AT TWILIO. It fetches Calls/<sid>.json and writes only this
+     * database. It cannot place, modify or end a call.
+     *
+     * NARROW BY CONSTRUCTION: only rows already in a non-terminal state, only
+     * rows that HAVE a SID, and it never downgrades — the same rule
+     * leg_status follows, so running it twice is a no-op and running it after
+     * the callbacks start working cannot overwrite a real outcome.
+     *
+     * Kept rather than deleted after the one-off: the fix stops NEW rows
+     * sticking, and if a callback is ever lost again this is how the row gets
+     * its truth back. dry_run reports without writing. */
+    if (action === 'backfill_call_status' || reqUrl.searchParams.get('action') === 'backfill_call_status') {
+      const admin = await requireStaff(req, { roles: ['admin'], allowInternal: true, what: 'Backfilling call status' });
+      if (!admin.ok) return err(admin.msg || 'unauthorized', admin.status || 403);
+      if (!ACCOUNT_SID || !AUTH_TOKEN) return err('Twilio not configured', 500);
+      const dryRun = body.dry_run === true;
+      const limit = Math.min(Number(body.limit) || 50, 200);
+
+      const { data: rows, error: rErr } = await sb.from('calls_log')
+        .select('id, twilio_call_sid, status, duration, created_at')
+        .in('status', ['ringing', 'in-progress', 'initiated'])
+        .not('twilio_call_sid', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (rErr) return err(rErr.message, 500);
+
+      const auth = btoa(`${ACCOUNT_SID}:${AUTH_TOKEN}`);
+      const out: any[] = [];
+      for (const row of (rows || [])) {
+        const sid = String((row as any).twilio_call_sid || '');
+        if (!sid.startsWith('CA')) { out.push({ id: (row as any).id, skipped: 'not a call sid' }); continue; }
+        try {
+          const tw = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${ACCOUNT_SID}/Calls/${sid}.json`,
+            { headers: { 'Authorization': 'Basic ' + auth } });
+          const tj = await tw.json().catch(() => ({}));
+          if (!tw.ok) {
+            /* A 404 is INFORMATION, not noise: Twilio keeps call records for a
+               long time, so a missing one means the SID never belonged to a
+               real call — which is itself the answer for that row. */
+            out.push({ id: (row as any).id, sid, error: `HTTP ${tw.status}`, detail: tj?.message || null });
+            continue;
+          }
+          const st = String(tj.status || '');
+          const dur = parseInt(String(tj.duration || '0'), 10) || null;
+          if (!st) { out.push({ id: (row as any).id, sid, error: 'no status in Twilio response' }); continue; }
+          const terminal = ['completed', 'busy', 'no-answer', 'failed', 'canceled'].includes(st);
+          if (!terminal) { out.push({ id: (row as any).id, sid, twilio_status: st, skipped: 'still live at Twilio' }); continue; }
+          if (!dryRun) {
+            await sb.from('calls_log').update({ status: st, duration: dur }).eq('id', (row as any).id);
+          }
+          out.push({ id: (row as any).id, sid, from: (row as any).status, to: st, duration: dur, written: !dryRun });
+        } catch (e) {
+          out.push({ id: (row as any).id, sid, error: String((e as Error)?.message || e) });
+        }
+      }
+      return jsonRes({ ok: true, dry_run: dryRun, examined: (rows || []).length, results: out });
+    }
+
     if (action === 'get_recording') {
       const admin = await requireStaff(req, { roles: ['admin'], what: 'Call recordings' });
       if (!admin.ok) {
