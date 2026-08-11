@@ -80,7 +80,7 @@ function fail(msg) { console.error('\nREFUSED: ' + msg); process.exit(2); }
  * than throwing: the harness is asserting on RENDERING, and a stub that throws
  * would produce console errors that the harness then reports as page failures —
  * turning gaps in the stub into false alarms about the page. */
-function stubSource(role, email, stubRow, rpcMap, fetchMap, rpcFns) {
+function stubSource(role, email, stubRow, rpcMap, fetchMap, rpcFns, staleRole) {
   const fnsSrc = '{' + Object.entries(rpcFns || {})
     .map(([k, src]) => `${JSON.stringify(k)}: (${src})`).join(',') + '}';
   return `(() => {
@@ -144,7 +144,43 @@ function stubSource(role, email, stubRow, rpcMap, fetchMap, rpcFns) {
     });
     pin('supabase', { createClient: () => client });
     pin('_supabaseClient', client);
-    try { sessionStorage.setItem('rnr_app_role', ${JSON.stringify(role)}); } catch (_) {}
+    /* ROLE CACHE SEEDING.
+       auth-guard caches the role keyed on the uid it was fetched for, so the
+       harness seeds BOTH — otherwise every spec would exercise the cache-MISS
+       path and never the hit path real page loads take.
+
+       spec.staleRole seeds the opposite: a role left behind by a DIFFERENT user,
+       which is what same-tab "View as" produces. The uid deliberately does not
+       match the stub session, so a correct guard must discard it and re-read. */
+    /* SEED ONCE PER TAB, NOT ONCE PER DOCUMENT.
+       This script is installed with Page.addScriptToEvaluateOnNewDocument, which
+       fires for EVERY document — measured at 7 per lead-detail load, because the
+       page mounts iframes. Re-seeding on each one overwrites sessionStorage
+       AFTER auth-guard has already resolved the role, so a correctly-working
+       guard reads back as if it had never run. That cost a real debugging
+       detour: the fix was live and verified in the shipped bytes while this
+       harness insisted the bug was still there.
+       Same family as the two stub defects documented in CLAUDE.md — a stub that
+       under-delivers reads as a broken page; one that over-writes reads as an
+       unfixed bug. */
+    try {
+      if (sessionStorage.getItem('rnr_rc_seeded')) throw 0;
+      sessionStorage.setItem('rnr_rc_seeded', '1');
+      const STALE = ${JSON.stringify(staleRole || null)};
+      /* A record of what was PLANTED, under a key the guard never touches.
+         Without it the staleRole spec can pass vacuously: if the seed silently
+         failed, the guard would find no cached role, fetch 'va' anyway, and the
+         assertions would all hold having tested nothing. Asserting on this
+         proves the stale role really was there to be discarded. */
+      sessionStorage.setItem('rnr_rc_seeded_role', STALE || ${JSON.stringify(role)});
+      if (STALE) {
+        sessionStorage.setItem('rnr_app_role', STALE);
+        sessionStorage.setItem('rnr_app_role_uid', '00000000-0000-4000-8000-0000000ad311');
+      } else {
+        sessionStorage.setItem('rnr_app_role', ${JSON.stringify(role)});
+        sessionStorage.setItem('rnr_app_role_uid', session.user.id);
+      }
+    } catch (_) {}
     /* RAW-FETCH STUBBING. Some pages call an edge function with fetch() rather
        than through the supabase client, so owning window.supabase is not enough
        to control what they see. Each entry maps a URL substring to a status and
@@ -258,6 +294,57 @@ const SPECS = [
     steps: [{ click: '.ld-tab-btn[onclick*="\'inbox\'"]', waitMs: 3000 }],
     present: ['#tab-inbox .gm-rail-scoped'],
     absent: ['#tab-inbox [data-fd]'],
+  },
+  {
+    /* SAME-TAB "VIEW AS" — the exact path that produced the stale-role bug.
+     *
+     * Rene signs in as admin; sessionStorage holds rnr_app_role='admin'. He then
+     * opens a View-as magic link IN THE SAME TAB (the settings modal only
+     * SUGGESTS incognito, and a web page cannot force a private window). The
+     * Supabase session becomes the VA's; sessionStorage is untouched by a
+     * sign-in, so the tab still claimed 'admin'.
+     *
+     * staleRole seeds that: role 'admin' stamped with a DIFFERENT user's uid,
+     * over a session whose current_app_role() answers 'va'.
+     *
+     * The three evals are the bug itself, not proxies for it:
+     *   rnr_app_role      — the cache was discarded and re-read, not reused
+     *   _ldNonAdmin()     — the page now knows it is a VA session
+     *   _smsDest(...)     — and therefore sends NULL instead of a real phone
+     *                       number, letting the server resolve it from
+     *                       contact_id. This is the one with a consequence
+     *                       outside the browser: a text to a real handset.
+     *
+     * Before the fix all three came back the admin answers. */
+    name: 'same-tab View-as: a stale admin role does not survive the user change',
+    url: '/admin/lead-detail?id=' + FIXTURE,
+    role: 'va',
+    staleRole: 'admin',
+    steps: [{ waitMs: 2500 }],
+    evals: [
+      // The stale admin role really was planted — otherwise everything below
+      // would hold vacuously, on a tab that simply had no cached role.
+      ["sessionStorage.getItem('rnr_rc_seeded_role')", 'admin'],
+      ["sessionStorage.getItem('rnr_app_role')", 'va'],
+      ['_ldNonAdmin()', true],
+      ["_smsDest('7145550142')", null],
+    ],
+  },
+  {
+    /* The other half of the pair, and the reason the one above is not vacuous:
+     * the same three expressions must give the ADMIN answers for an admin. If
+     * they were somehow pinned to the VA result, this fails. It also guards the
+     * regression that matters least dramatically and would be noticed most —
+     * the fix quietly demoting admins. */
+    name: 'admin session still resolves as admin (the evals discriminate)',
+    url: '/admin/lead-detail?id=' + FIXTURE,
+    role: 'admin',
+    steps: [{ waitMs: 2500 }],
+    evals: [
+      ["sessionStorage.getItem('rnr_app_role')", 'admin'],
+      ['_ldNonAdmin()', false],
+      ["_smsDest('7145550142')", '+17145550142'],
+    ],
   },
   {
     /* Shelley Hurle's real stored values, fed through the stub. This proves the
@@ -599,7 +686,7 @@ async function runSpec(spec, opts) {
         }))});}catch(e){}` });
     } else {
       await b.send('Page.addScriptToEvaluateOnNewDocument', {
-        source: stubSource(spec.role || 'admin', 'render-check@local', spec.stubRow, spec.rpc, spec.fetchMap, spec.rpcFns),
+        source: stubSource(spec.role || 'admin', 'render-check@local', spec.stubRow, spec.rpc, spec.fetchMap, spec.rpcFns, spec.staleRole),
       });
     }
 
@@ -680,6 +767,18 @@ async function runSpec(spec, opts) {
                         + ' needs ' + e.scrollWidth + 'px in ' + e.clientWidth + 'px');
             return [sel, all.length, bad];
           }),
+          /* JS-EXPRESSION ASSERTIONS.
+             Some things a role gate decides are not rendering at all. _smsDest()
+             returning null for a VA is what stops an outbound text going to a
+             real number the page should never have handed over — there is no
+             element to select for that, and asserting on a proxy would be
+             asserting on something else. Each entry is [expr, expected]; the
+             result is JSON-compared so null, false and '' stay distinct. */
+          evals: ${JSON.stringify(spec.evals || [])}.map(([expr, want]) => {
+            let got;
+            try { got = eval(expr); } catch (e) { got = '(threw: ' + (e && e.message) + ')'; }
+            return [expr, JSON.stringify(want) || 'undefined', JSON.stringify(got) || 'undefined'];
+          }),
           textLen: (document.body ? (document.body.innerText || '').trim().length : 0),
           title:   document.title,
         };
@@ -687,6 +786,10 @@ async function runSpec(spec, opts) {
     });
     const p = probe.result.result.value;
 
+    for (const [expr, want, got] of p.evals || []) {
+      if (got !== want) problems.push(`eval mismatch: ${expr} → ${got}, expected ${want}`);
+      else notes.push(`${expr} = ${got}`);
+    }
     for (const [sel, exists] of p.present) if (!exists) problems.push(`expected element ABSENT: ${sel}`);
     for (const [sel, exists] of p.absent) if (exists) problems.push(`element that must NOT exist is present: ${sel}`);
     for (const [sel, visible, exists] of p.hidden || []) {

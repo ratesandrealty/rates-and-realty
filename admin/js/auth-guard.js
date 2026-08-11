@@ -76,7 +76,26 @@
     return client;
   }
 
+  /* Drop the cached role and the uid it belongs to.
+   *
+   * Called on sign-out AND on every no-session redirect. Both matter: the role
+   * lives in sessionStorage, which outlives a Supabase sign-out and is shared by
+   * whoever signs in next IN THAT TAB. Leaving it behind is the same defect the
+   * uid keying fixes, arriving by a different route — an admin signs out, a VA
+   * signs in, and the tab still says 'admin'.
+   *
+   * Deliberately NOT sessionStorage.clear(): other keys in this tab belong to
+   * pages, not to the guard, and clearing them would be a side effect nobody
+   * asked this function for. */
+  function clearCachedRole() {
+    try {
+      sessionStorage.removeItem('rnr_app_role');
+      sessionStorage.removeItem('rnr_app_role_uid');
+    } catch (_) {}
+  }
+
   function redirectToLogin() {
+    clearCachedRole();
     const path = window.location.pathname;
     const search = window.location.search || '';
     window.location.replace('/auth/admin-login.html?redirect=' + encodeURIComponent(path + search));
@@ -180,18 +199,66 @@
         console.error('[auth-guard] signOut failed:', err);
       }
       setStaffMarker(false);
+      /* BEFORE navigating, and unconditionally — even when signOut threw. A
+         failed signOut is exactly when a stale role must not survive: the next
+         person to sign in this tab would inherit it. */
+      clearCachedRole();
       window.location.replace('/auth/admin-login.html');
     };
 
     // ── Role-based page gating ──────────────────────────────────────────────
     // Resolve the user's app role (cached per-session). Admin is always allowed
     // everywhere; any page not listed in PAGE_ACCESS is open to all staff.
-    let role = sessionStorage.getItem('rnr_app_role');
+    //
+    /* THE CACHE IS KEYED ON THE USER IT WAS FETCHED FOR.
+     *
+     * It used to be `sessionStorage.getItem('rnr_app_role')` refetched only when
+     * ABSENT — never invalidated when the user changed. sessionStorage survives
+     * same-tab navigation and a Supabase sign-in does not clear it, so signing
+     * in as somebody else IN THE SAME TAB left the previous user's role sitting
+     * over the new session.
+     *
+     * The path that produced it: "View as" in settings mints a real magic-link
+     * session for the target user, and the modal only SUGGESTS incognito. Opened
+     * in the same tab, an admin became a VA on the server while the tab still
+     * said 'admin' — so _ldNonAdmin() was false, lead-detail rendered admin
+     * affordances, and _smsDest() sent a real phone number where a VA session
+     * must send null and let the server resolve it from contact_id.
+     *
+     * Keyed on the uid, a user change invalidates it on the very next guarded
+     * page load, with no timer involved. A TTL would have been wrong for however
+     * long it lasted — the window where the answer is stale is exactly the
+     * window where it matters.
+     *
+     * A MISSING uid key is treated as a MISS, not as a hit. That covers the role
+     * cached by an older build of this file and the one admin-login writes, and
+     * it fails in the safe direction: one extra RPC, never a stale role. */
+    const ROLE_KEY = 'rnr_app_role';
+    const ROLE_UID_KEY = 'rnr_app_role_uid';
+    const uid = (session.user && session.user.id) || '';
+
+    let role = null;
+    try {
+      if (uid && sessionStorage.getItem(ROLE_UID_KEY) === uid) {
+        role = sessionStorage.getItem(ROLE_KEY);
+      } else {
+        // Different user (or unknown provenance) — the cached role is not about
+        // this session. Drop it before anything downstream can read it.
+        sessionStorage.removeItem(ROLE_KEY);
+        sessionStorage.removeItem(ROLE_UID_KEY);
+      }
+    } catch (err) {
+      role = null;
+    }
+
     if (!role) {
       try {
         const { data: r } = await client.rpc('current_app_role');
         role = r || 'none';
-        sessionStorage.setItem('rnr_app_role', role);
+        try {
+          sessionStorage.setItem(ROLE_KEY, role);
+          sessionStorage.setItem(ROLE_UID_KEY, uid);
+        } catch (_) {}
       } catch (err) {
         // Transient failure: never strand the user (especially admins). Allow.
         console.warn('[auth-guard] current_app_role failed, allowing page:', err);

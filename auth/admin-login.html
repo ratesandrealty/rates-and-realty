@@ -255,7 +255,18 @@
     if (redirect) return redirect;
     try {
       const { data: role } = await sb.rpc('current_app_role');
-      if (role) sessionStorage.setItem('rnr_app_role', role);
+      /* Cache the role WITH the uid it was fetched for. auth-guard keys on that
+         pair and treats a role with no uid as a miss, so writing the role alone
+         would just cost an extra RPC on the next page — but it would also leave
+         a provenance-less value in a tab that may later hold a different user's
+         session, which is the shape of the bug the pairing exists to stop. */
+      if (role) {
+        sessionStorage.setItem('rnr_app_role', role);
+        try {
+          const { data: u } = await sb.auth.getUser();
+          if (u && u.user && u.user.id) sessionStorage.setItem('rnr_app_role_uid', u.user.id);
+        } catch (_) {}
+      }
       if (role === 'va') return '/admin/va-dashboard.html';
     } catch (e) {
       // Never strand the user on a role lookup failure — fall through to the default.
