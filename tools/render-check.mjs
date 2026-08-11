@@ -709,6 +709,103 @@ const SPECS = [
        'menu opens'],
     ],
   })),
+  /* ── UNREAD CHAT BADGE ON THE COLLAPSED FAB ───────────────────────────────
+   *
+   * The FAB consolidated the floating buttons and hid .sc-bubble-btn, which
+   * hides #staff-chat-badge with it, so action-fab mirrors the count onto its
+   * own .af-badge. That mirror only ran for the first ~20 seconds: watch()
+   * stops polling after 40 tries and the only other trigger was a childList
+   * observer on document.body, which staff-chat's renderBadge() never trips —
+   * it writes textContent and style on an element deep inside the bubble.
+   *
+   * BOTH DIRECTIONS AND BOTH ROLES, because a badge that is always shown and a
+   * badge that is never shown both pass a presence-only check. The zero case
+   * asserts the element is PRESENT and hidden rather than absent, so it cannot
+   * pass by the FAB failing to mount at all.
+   *
+   * Each spec also pins WHERE it is: inside #action-fab-btn, the collapsed
+   * button, with the menu still closed. Mirroring onto an expanded-only row
+   * would satisfy "a badge exists" and none of the requirement. */
+  ...[
+    ['admin', 'admin', 3, '3'],
+    ['va', 'va', 7, '7'],
+  ].map(([label, role, unread, shown]) => ({
+    name: `staff-chat unread badge shows on the collapsed FAB (${label})`,
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role,
+    rpcFns: {
+      staff_threads_list: `() => ([{ thread_id: 't-badge', is_group: false, title: 'Badge thread',
+        last_message_at: new Date().toISOString(), last_message: 'unread message',
+        last_sender: 'u2', unread: ${unread},
+        others: [{ user_id: 'u2', email: 'teammate@ratesandrealty.com' }] }])`,
+      staff_thread_mark_read: `() => null`,
+    },
+    // settleMs covers staff-chat's own client poll before its first renderBadge.
+    settleMs: 6000,
+    present: ['#action-fab-btn', '#action-fab-badge'],
+    evals: [
+      ['document.getElementById("action-fab-badge").textContent', shown],
+      ['getComputedStyle(document.getElementById("action-fab-badge")).display !== "none"', true],
+      // On the COLLAPSED button, and the menu is not open.
+      ['document.getElementById("action-fab-btn").contains(document.getElementById("action-fab-badge"))', true],
+      ['document.getElementById("action-fab-btn").getAttribute("aria-expanded")', 'false'],
+    ],
+  })),
+  {
+    /* The other direction. Nothing unread — the badge must be there and
+       HIDDEN, never merely missing, or this passes on a page where the FAB
+       never mounted. */
+    name: 'staff-chat unread badge is hidden when nothing is unread',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    rpcFns: {
+      staff_threads_list: `() => ([{ thread_id: 't-badge', is_group: false, title: 'Read thread',
+        last_message_at: new Date().toISOString(), last_message: 'all read',
+        last_sender: 'u2', unread: 0,
+        others: [{ user_id: 'u2', email: 'teammate@ratesandrealty.com' }] }])`,
+      staff_thread_mark_read: `() => null`,
+    },
+    settleMs: 6000,
+    present: ['#action-fab-btn', '#action-fab-badge'],
+    hidden: ['#action-fab-badge'],
+    evals: [
+      ['document.getElementById("action-fab-badge").textContent', ''],
+    ],
+  },
+  {
+    /* THE SPEC THAT ACTUALLY PINS THE FIX, and the reason the three above are
+     * not enough. They all settle inside watch()'s ~20s polling window, so
+     * they pass on the BROKEN code too — the mirror was never dead on load, it
+     * died afterwards. A message that arrives later is the whole complaint.
+     *
+     * staff_threads_list is stateful: 0 unread on the first call, 5 on every
+     * call after. staff-chat re-polls on its own 25s timer, well past the point
+     * where action-fab has stopped polling, so the ONLY thing that can move the
+     * FAB badge at that moment is an observer watching the source element.
+     *
+     * Slow on purpose — it has to outlive a 25s poll. Verified to fail before
+     * the fix with the badge still empty and hidden. */
+    name: 'staff-chat unread badge still updates AFTER the FAB stops polling',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    rpcFns: {
+      staff_threads_list: `(a, st) => { st.n = (st.n || 0) + 1;
+        return [{ thread_id: 't-badge', is_group: false, title: 'Late thread',
+          last_message_at: new Date().toISOString(), last_message: 'arrived late',
+          last_sender: 'u2', unread: st.n === 1 ? 0 : 5,
+          others: [{ user_id: 'u2', email: 'teammate@ratesandrealty.com' }] }]; }`,
+      staff_thread_mark_read: `() => null`,
+    },
+    settleMs: 34000,
+    present: ['#action-fab-badge'],
+    evals: [
+      // The source moved…
+      ['document.getElementById("staff-chat-badge").textContent', '5'],
+      // …and the mirror followed it, long after watch() gave up.
+      ['document.getElementById("action-fab-badge").textContent', '5'],
+      ['getComputedStyle(document.getElementById("action-fab-badge")).display !== "none"', true],
+    ],
+  },
   /* ── EMPTY SEARCH TELLS THE TRUTH ─────────────────────────────────────────
    * The reported bug: searching SC-27335-BU in Full mailbox said "Nothing in
    * Inbox" while that thread was visible in the same lead's filed list. The

@@ -223,10 +223,57 @@
 
   /* Copy staff-chat's unread count onto this FAB. Its own badge lives inside the
      hidden bubble, so without this the count would still update and nobody would
-     ever see it. */
+     ever see it.
+
+     IT LIVES ON THE COLLAPSED BUTTON, not in the menu: .af-badge is a child of
+     .af-fab, so the count is visible without expanding anything. That was
+     already right and is what the specs pin.
+
+     WHAT WAS BROKEN — the mirror only ran for the first ~20 seconds.
+     watch() polls every 500ms and gives up after 40 tries, which is correct for
+     its actual job (catching whichever order staff-chat and this file mount in).
+     After that the only trigger was
+         MutationObserver(document.body, { childList: true })
+     and staff-chat's renderBadge() does not change the body's child list — it
+     writes textContent and style.display on #staff-chat-badge, deep inside the
+     bubble. No subtree, no characterData, no attributes: the observer never
+     fired for it. So the badge mirrored whatever the count was during the first
+     20 seconds and then froze. A message arriving a minute later updated the
+     source badge and never reached the FAB, which is exactly the symptom
+     reported — an indicator that works when you reload and never again.
+
+     Fixed by watching the SOURCE ELEMENT for the mutations it actually
+     produces. Re-attached whenever the source node changes identity, because
+     staff-chat can re-render its bubble and leave the observer on a detached
+     node — an observer pointed at a corpse fails silently, which is the same
+     class of bug as the one above. */
+  var _badgeSrc = null, _badgeObs = null;
   function mirrorBadge() {
     if (!badge) return;
     var src = document.getElementById('staff-chat-badge');
+
+    if (src !== _badgeSrc) {
+      if (_badgeObs) { try { _badgeObs.disconnect(); } catch (_) {} _badgeObs = null; }
+      _badgeSrc = src;
+      if (src && window.MutationObserver) {
+        _badgeObs = new MutationObserver(paintBadge);
+        _badgeObs.observe(src, {
+          childList: true, characterData: true, subtree: true,
+          attributes: true, attributeFilter: ['style', 'class'],
+        });
+      }
+    }
+    paintBadge();
+  }
+
+  /* The count is staff-chat's `unread` from staff_threads_list, which counts
+     messages newer than staff_thread_participants.last_read_at. So this clears
+     on READ — staff_thread_mark_read, fired when a thread is opened — and NOT
+     when the FAB or the chat panel is opened. No second read concept is
+     introduced here; opening this menu deliberately clears nothing. */
+  function paintBadge() {
+    if (!badge) return;
+    var src = _badgeSrc;
     var n = src ? (src.textContent || '').trim() : '';
     var on = !!(src && n && src.style.display !== 'none');
     badge.textContent = on ? n : '';

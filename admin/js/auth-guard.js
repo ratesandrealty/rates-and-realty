@@ -435,7 +435,7 @@
     function mountActionFab() {
       if (document.querySelector('script[src*="/admin/js/action-fab.js"]')) return;
       const af = document.createElement('script');
-      af.src = '/admin/js/action-fab.js?v=f88ec976e8';
+      af.src = '/admin/js/action-fab.js?v=2d1b99b251';
       document.head.appendChild(af);
     }
     if (document.readyState === 'loading') {
