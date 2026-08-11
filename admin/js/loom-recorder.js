@@ -111,7 +111,36 @@
       '.lr-note{color:#bdb3a0;font-size:12.5px;line-height:1.5;text-align:center;padding:2px 4px}',
       '.lr-spin{display:inline-block;width:13px;height:13px;border:2px solid rgba(17,17,17,.35);border-top-color:#111;border-radius:50%;animation:lr-spin .7s linear infinite;vertical-align:middle;margin-right:6px}',
       '@keyframes lr-spin{to{transform:rotate(360deg)}}',
-      '.lr-foot{display:flex;align-items:center;gap:10px;padding:13px 16px;border-top:1px solid rgba(255,255,255,.08);flex-shrink:0}'
+      '.lr-foot{display:flex;align-items:center;gap:10px;padding:13px 16px;border-top:1px solid rgba(255,255,255,.08);flex-shrink:0}',
+
+      /* ── LIVE MODE: the recorder gets OUT OF THE WAY while it records ──────
+       * The recording UI was the same centred 560px modal over a full-screen
+       * 72%-black backdrop as the setup UI — sitting on top of the very page
+       * being recorded, unmovable, and swallowing every click because the
+       * backdrop covers the viewport. You could not use the thing you were
+       * recording.
+       *
+       * While live the backdrop goes transparent AND pointer-events:none, so
+       * the page underneath is fully usable; only the pill itself takes
+       * clicks. Corner-anchored, draggable, elapsed time and stop — nothing
+       * else. Everything the setup UI needs (stage, head, title, save) is
+       * hidden rather than removed, so the canvas that feeds captureStream
+       * stays in the DOM and the capture is untouched by the reshape. */
+      '.lr-ov.lr-live{background:transparent;pointer-events:none;display:block;padding:0}',
+      '.lr-ov.lr-live .lr-box{position:fixed;width:auto;max-height:none;border-radius:999px;'
+        + 'border-color:rgba(229,72,77,.55);box-shadow:0 8px 28px rgba(0,0,0,.55);pointer-events:auto;'
+        + 'background:rgba(13,13,13,.96);cursor:grab}',
+      '.lr-ov.lr-live .lr-box.lr-dragging{cursor:grabbing}',
+      '.lr-ov.lr-live .lr-head{display:none}',
+      '.lr-ov.lr-live .lr-body{padding:0;gap:0;overflow:visible}',
+      '.lr-ov.lr-live .lr-stage,.lr-ov.lr-live .lr-audio{display:none}',
+      '.lr-ov.lr-live .lr-ctrl{padding:7px 9px 7px 13px;gap:9px}',
+      '.lr-ov.lr-live .lr-timer{flex:0 0 auto;font-size:12.5px;font-weight:700;letter-spacing:.02em}',
+      '.lr-ov.lr-live .lr-btn.stop{padding:6px 12px;font-size:12px;border-radius:999px}',
+      /* Grip, so it LOOKS draggable rather than only being draggable. */
+      '.lr-grip{width:9px;height:15px;flex:0 0 auto;opacity:.5;'
+        + 'background-image:radial-gradient(currentColor 1px,transparent 1px);'
+        + 'background-size:4px 4px;color:#9a9488;margin-right:1px}'
     ].join('');
     document.head.appendChild(s);
   }
@@ -127,8 +156,105 @@
     document.body.appendChild(ov);
     return ov;
   }
-  function setHead(txt) { var h = document.getElementById('lr-title-h'); if (h) h.textContent = txt; }
+  /* Every render path calls setHead first, which makes it the one safe place to
+     drop live mode. Leaving the class on would render the save/preview step as
+     a corner pill with its title field and Save button hidden — a dead end. */
+  function setHead(txt) {
+    setLive(false);
+    var h = document.getElementById('lr-title-h'); if (h) h.textContent = txt;
+  }
   function body() { return document.getElementById('lr-body'); }
+
+  /* ── the live pill: corner-anchored, draggable, remembered ─────────────────
+   *
+   * CAN THE BROWSER KEEP THIS OUT OF THE RECORDING? Not in general, and it is
+   * worth writing down so nobody goes looking for the flag:
+   *
+   *  · There is no API to exclude a DOM element from getDisplayMedia. The
+   *    capture is of a SURFACE composited outside the page; anything drawn in
+   *    this tab is in it if that surface includes this tab.
+   *  · Region Capture / Element Capture (CropTarget / RestrictionTarget) can
+   *    CROP a self-capture to one element, which is the inverse tool — you
+   *    would crop to the content and keep the pill outside the crop. Chromium
+   *    only, self-capture only, and it silently does nothing elsewhere.
+   *  · What products like Loom actually do is put the controls in a separate
+   *    always-on-top window. This file already opens one for the camera
+   *    viewfinder (openPip, documentPictureInPicture), so the same trick is
+   *    available here — and it genuinely works WHEN THE USER SHARES A TAB OR A
+   *    WINDOW, because the PiP window is neither.
+   *  · If the user shares the ENTIRE SCREEN, nothing excludes it. The PiP
+   *    window is captured too.
+   *
+   * So the honest fix is the one that helps in every case: make it small and
+   * let the user move it. Position is remembered, because being made to drag
+   * it out of the way on every recording is its own annoyance. */
+  var LR_POS_KEY = 'rr_loom_pill_pos';
+  function setLive(on) {
+    var ov = document.getElementById('lr-ov'); if (!ov) return;
+    ov.classList.toggle('lr-live', !!on);
+    if (on) placePill();
+  }
+  function pillBox() {
+    var ov = document.getElementById('lr-ov');
+    return ov ? ov.querySelector('.lr-box') : null;
+  }
+  /* Clamped on every placement, not just on drag. A position saved on a wide
+     monitor would otherwise put the only Stop button off-screen on a laptop —
+     with a recording running and no way to end it. */
+  function clampPill(x, y) {
+    var b = pillBox(); if (!b) return { x: x, y: y };
+    var w = b.offsetWidth || 160, h = b.offsetHeight || 40, m = 8;
+    return {
+      x: Math.max(m, Math.min(x, (window.innerWidth || 0) - w - m)),
+      y: Math.max(m, Math.min(y, (window.innerHeight || 0) - h - m))
+    };
+  }
+  function placePill() {
+    var b = pillBox(); if (!b) return;
+    var saved = null;
+    try { saved = JSON.parse(localStorage.getItem(LR_POS_KEY) || 'null'); } catch (e) {}
+    // Default: bottom-right, the corner people already expect a recorder in.
+    var w = b.offsetWidth || 170, h = b.offsetHeight || 40;
+    var x = (saved && typeof saved.x === 'number') ? saved.x : (window.innerWidth - w - 18);
+    var y = (saved && typeof saved.y === 'number') ? saved.y : (window.innerHeight - h - 18);
+    var p = clampPill(x, y);
+    b.style.left = p.x + 'px'; b.style.top = p.y + 'px';
+    b.style.right = 'auto'; b.style.bottom = 'auto';
+  }
+  function wirePillDrag() {
+    var b = pillBox(); if (!b || b._lrDragWired) return;
+    b._lrDragWired = true;
+    var dx = 0, dy = 0, id = null;
+    b.addEventListener('pointerdown', function (e) {
+      // Never start a drag on Stop — the button must stay a button.
+      if (e.target.closest('[data-lr-stop]')) return;
+      var ov = document.getElementById('lr-ov');
+      if (!ov || !ov.classList.contains('lr-live')) return;
+      id = e.pointerId;
+      dx = e.clientX - b.offsetLeft; dy = e.clientY - b.offsetTop;
+      b.classList.add('lr-dragging');
+      try { b.setPointerCapture(id); } catch (_) {}
+      e.preventDefault();
+    });
+    b.addEventListener('pointermove', function (e) {
+      if (id === null || e.pointerId !== id) return;
+      var p = clampPill(e.clientX - dx, e.clientY - dy);
+      b.style.left = p.x + 'px'; b.style.top = p.y + 'px';
+    });
+    function end(e) {
+      if (id === null || (e && e.pointerId !== id)) return;
+      try { b.releasePointerCapture(id); } catch (_) {}
+      id = null; b.classList.remove('lr-dragging');
+      try { localStorage.setItem(LR_POS_KEY, JSON.stringify({ x: b.offsetLeft, y: b.offsetTop })); } catch (_) {}
+    }
+    b.addEventListener('pointerup', end);
+    b.addEventListener('pointercancel', end);
+    // A pill parked against an edge would end up off-screen after a resize.
+    window.addEventListener('resize', function () {
+      var ov = document.getElementById('lr-ov');
+      if (ov && ov.classList.contains('lr-live')) placePill();
+    });
+  }
 
   // ── mode picker ─────────────────────────────────────────────────────────────
   function showMenu() {
@@ -450,7 +576,8 @@
       ? '<div class="lr-audio"><span class="lr-dot"></span> Recording audio…</div>'
       : '<div class="lr-stage" id="lr-stage"></div>';
     body().innerHTML = stageInner
-      + '<div class="lr-ctrl"><span class="lr-dot"></span><span class="lr-timer" id="lr-timer">0:00</span>'
+      + '<div class="lr-ctrl"><span class="lr-grip" aria-hidden="true"></span>'
+      + '<span class="lr-dot"></span><span class="lr-timer" id="lr-timer">0:00</span>'
       + '<button type="button" class="lr-btn stop" data-lr-stop>■ Stop</button></div>';
     var stage = document.getElementById('lr-stage');
     if (stage) {
@@ -464,6 +591,15 @@
         stage.innerHTML = '<div class="lr-audio"><span class="lr-dot"></span> Recording your screen…</div>';
       }
     }
+    /* AFTER the DOM is built and after setHead — setHead clears live mode, so
+       setting it earlier would be undone. The stage stays in the DOM and is
+       hidden by CSS: the loom canvas feeding captureStream lives in there and
+       detaching it would change what is being recorded, which a cosmetic
+       reshape must not do. */
+    setLive(true);
+    wirePillDrag();
+    placePill();   // again, now that the pill has its real width
+
     var secs = 0;
     _rec.timer = setInterval(function () {
       secs++; var t = document.getElementById('lr-timer');

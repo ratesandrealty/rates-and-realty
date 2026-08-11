@@ -22,6 +22,14 @@
  */
 import { spawn } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { dirname, join } from 'node:path';
+
+/* Fixture specs address their page RELATIVELY. The break-test instructions in
+   this file used to carry an absolute C:\AI\test\… path, which is fine for a
+   command somebody types and wrong for a spec that has to run on any checkout. */
+const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
+const fixture = (name) => pathToFileURL(join(REPO, 'tools', 'fixtures', name)).href;
 
 const CHROME_CANDIDATES = [
   'C:\\Users\\rened\\AppData\\Local\\ms-playwright\\chromium-1223\\chrome-win64\\chrome.exe',
@@ -621,6 +629,86 @@ const SPECS = [
     ],
     expectText: ['different signers'],
   },
+  {
+    /* THE RECORDER MUST GET OUT OF THE WAY WHILE IT RECORDS.
+     * The live UI was the same centred 560px modal over a full-screen
+     * 72%-black backdrop as the setup UI — sitting on top of the page being
+     * recorded, unmovable, and swallowing every click because the backdrop
+     * covers the viewport.
+     *
+     * Runs against a fixture that fakes only getDisplayMedia and MediaRecorder
+     * and loads the REAL module, so everything asserted here is the shipped
+     * code path. Screen mode deliberately: it renders no preview, so the pill
+     * is all there is.
+     *
+     * The pointer-events assertion is the load-bearing one. A pill that merely
+     * LOOKS small still blocks the whole page if its backdrop is left at
+     * pointer-events:auto, and nothing about its size or position would show
+     * that — same shape as the toast that was present, correct, and painted
+     * underneath a modal. */
+    name: 'recorder shrinks to a draggable corner pill while recording',
+    url: fixture('loom-pill.html'),
+    role: 'admin',
+    steps: [
+      { click: '#go', waitMs: 800 },
+      { click: '[data-lr-start="screen"]', waitMs: 1500 },
+    ],
+    present: ['#lr-ov.lr-live', '#lr-timer', '[data-lr-stop]'],
+    evals: [
+      // The page underneath stays usable — the backdrop must not take clicks.
+      ['getComputedStyle(document.getElementById("lr-ov")).pointerEvents', 'none'],
+      // …while the pill itself still does.
+      ['getComputedStyle(document.querySelector("#lr-ov .lr-box")).pointerEvents', 'auto'],
+      // Corner-anchored, not centred: comfortably into the bottom-right half.
+      ['(function(){var r=document.querySelector("#lr-ov .lr-box").getBoundingClientRect();'
+        + 'return r.left>window.innerWidth/2 && r.top>window.innerHeight/2;})()', true],
+      // Small. The old modal was min(560px,96vw) and full-height-capable.
+      ['(function(){var r=document.querySelector("#lr-ov .lr-box").getBoundingClientRect();'
+        + 'return r.width<320 && r.height<90;})()', true],
+      // Elapsed time and stop ONLY — no stage, no preview, no save controls.
+      ['getComputedStyle(document.querySelector("#lr-ov .lr-head")).display', 'none'],
+      ['!!document.querySelector("#lr-ov .lr-title")', false],
+      // Draggable: the handler is bound, and moving the pointer moves the pill.
+      ['(function(){var b=document.querySelector("#lr-ov .lr-box");var x0=b.offsetLeft;'
+        + 'b.dispatchEvent(new PointerEvent("pointerdown",{pointerId:1,clientX:x0+10,clientY:b.offsetTop+10,bubbles:true}));'
+        + 'b.dispatchEvent(new PointerEvent("pointermove",{pointerId:1,clientX:x0-120,clientY:b.offsetTop+10,bubbles:true}));'
+        + 'var moved=b.offsetLeft<x0-50;'
+        + 'b.dispatchEvent(new PointerEvent("pointerup",{pointerId:1,bubbles:true}));return moved;})()', true],
+    ],
+    expectText: ['Stop'],
+  },
+  /* ONE RECORDER, THREE SURFACES — so verify three, not one.
+   *
+   * The pill fix is entirely inside admin/js/loom-recorder.js, which is the
+   * whole argument for one fix serving the SMS composer, staff chat and the
+   * email composer. That argument is only as good as "all three actually reach
+   * that module", which is the part that can quietly stop being true — a page
+   * can drop the script tag, or load it after the code that calls it, and the
+   * launcher then fails on that surface alone.
+   *
+   * These open the recorder through window.LoomRecorder directly rather than
+   * through each page's own launch button. Stated plainly: they prove the
+   * module is loaded and its menu mounts on that page. They do NOT exercise
+   * the composer button that calls it, which still needs the composer's own
+   * state. The pill's behaviour is proven once, on the fixture above, because
+   * it is the same code on all three. */
+  ...[
+    ['SMS composer (lead-detail)', `/admin/lead-detail?contact_id=${FIXTURE}`],
+    ['staff chat', '/admin/chat.html'],
+    ['email composer', '/admin/email-marketing'],
+  ].map(([surface, url]) => ({
+    name: `recorder is reachable from ${surface}`,
+    url,
+    role: 'admin',
+    evals: [
+      ['(function(){ if(!window.LoomRecorder || typeof window.LoomRecorder.open!=="function") return "module missing";'
+        + ' window.LoomRecorder.open({context:"render-check"});'
+        + ' var ov=document.getElementById("lr-ov");'
+        + ' if(!ov) return "no overlay"; '
+        + ' return ov.querySelector(\'[data-lr-start="screen"]\') ? "menu opens" : "no menu"; })()',
+       'menu opens'],
+    ],
+  })),
   /* ── EMPTY SEARCH TELLS THE TRUTH ─────────────────────────────────────────
    * The reported bug: searching SC-27335-BU in Full mailbox said "Nothing in
    * Inbox" while that thread was visible in the same lead's filed list. The

@@ -1,0 +1,57 @@
+<meta charset="utf-8"><title>loom recorder pill fixture</title>
+<!-- HARNESS FIXTURE for the live recording pill in admin/js/loom-recorder.js.
+     Loads the REAL module — nothing about the pill is reimplemented here, or
+     the spec would be testing this file instead of the shipped one.
+
+     Only two things are faked, and only the two that need hardware:
+       · getDisplayMedia  -> a canvas captureStream, so screen mode starts
+       · MediaRecorder    -> start/stop/state, so beginRecorder() succeeds
+     Everything after that — renderRecordingUi, setLive, placePill,
+     wirePillDrag — is the shipped code path exactly as a real recording runs
+     it. Upload/save is never reached, so no Supabase client is needed.
+
+     Screen mode is the one chosen deliberately: it is the mode that renders no
+     preview (no hall of mirrors when the shared surface is this tab), so the
+     pill is all there is, which is precisely what the spec asserts on. -->
+<body style="background:#101014;color:#ddd;font-family:system-ui;padding:18px;margin:0">
+<h1 style="font-size:15px;margin:0 0 8px">Loom recorder — live pill fixture</h1>
+<p style="font-size:12px;color:#8f8f8f;max-width:60ch;margin:0 0 14px">
+  Enough visible text to clear the harness floor. The button below opens the
+  real recorder; the spec then picks "Record my screen" and asserts the live UI
+  is a small draggable corner pill that does not block the page underneath.
+</p>
+<button id="go" type="button" style="padding:8px 14px;border-radius:8px;border:1px solid #C9A84C;background:transparent;color:#C9A84C;font-size:13px;cursor:pointer">Open recorder</button>
+<div id="under" style="margin-top:16px;padding:12px;border:1px dashed #333;border-radius:8px;font-size:12px;color:#9a9488">
+  Page content underneath the recorder. Must stay clickable while recording —
+  the old full-screen backdrop swallowed every click here.
+</div>
+
+<script>
+(function () {
+  /* A real MediaStream, from a canvas — MediaRecorder and the track-ended
+     watcher both want genuine tracks, and a plain object is not enough. */
+  var c = document.createElement('canvas'); c.width = 320; c.height = 180;
+  c.getContext('2d').fillRect(0, 0, 320, 180);
+  var fake = c.captureStream(5);
+
+  navigator.mediaDevices = navigator.mediaDevices || {};
+  navigator.mediaDevices.getDisplayMedia = function () { return Promise.resolve(fake); };
+  // Mic is optional for screen mode and its rejection is caught upstream; make
+  // it reject so the fixture never waits on a permission prompt.
+  navigator.mediaDevices.getUserMedia = function () { return Promise.reject(new Error('no mic in fixture')); };
+
+  window.MediaRecorder = function () {
+    this.state = 'inactive';
+    this.start = function () { this.state = 'recording'; };
+    this.stop = function () { this.state = 'inactive'; if (this.onstop) this.onstop(); };
+    this.ondataavailable = null; this.onstop = null;
+  };
+  window.MediaRecorder.isTypeSupported = function () { return false; };
+
+  document.getElementById('go').addEventListener('click', function () {
+    window.LoomRecorder.open({ context: 'fixture' });
+  });
+})();
+</script>
+<script src="../../admin/js/loom-recorder.js"></script>
+</body>
