@@ -1020,6 +1020,37 @@ const SPECS = [
     // The two surviving digits must not have been reformatted into a number.
     absentText: ['(•••) •••-28', '+28'],
   },
+  {
+    /* FORMAT ON RENDER, STRIP ON SAVE — asserted on what would be WRITTEN.
+     *
+     * These two inputs were the only display sites left unformatted, because
+     * their save paths wrote the field value raw: formatting them would have
+     * put "(818) 272-7418" into loan_contacts.phone and vendor_directory.
+     *
+     * Checking that the input renders formatted proves half of it and the
+     * dangerous half is the other one, so this asserts on the PAYLOAD the save
+     * builds, not on the field. _lpPhoneForSave is that payload's phone value.
+     * Three cases, and the third is the one that would quietly destroy data:
+     * a masked value must be SKIPPED, not written as its two surviving digits. */
+    name: 'phone inputs format on render and strip on save',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      // Rendered formatted…
+      ['RRPhone.format("8182727418")', '(818) 272-7418'],
+      // …and what the save would write is DIGITS, from the formatted string.
+      ['_lpPhoneForSave("(818) 272-7418")', '8182727418'],
+      ['_lpPhoneForSave("818 272 7418")', '8182727418'],
+      ['_lpPhoneForSave("+1 (818) 272-7418")', '18182727418'],
+      ['_lpPhoneForSave("")', null],
+      /* A MASK RETURNS undefined, which the callers use to omit the column
+         entirely. Writing RRPhone.digits() of a mask would store '28' and
+         destroy the real number for everyone. */
+      ['typeof _lpPhoneForSave("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u2022\\u202228")', 'undefined'],
+      // The formatted value round-trips: format(strip(format(x))) is stable.
+      ['RRPhone.format(_lpPhoneForSave(RRPhone.format("8182727418")))', '(818) 272-7418'],
+    ],
+  },
   /* ── EMPTY SEARCH TELLS THE TRUTH ─────────────────────────────────────────
    * The reported bug: searching SC-27335-BU in Full mailbox said "Nothing in
    * Inbox" while that thread was visible in the same lead's filed list. The

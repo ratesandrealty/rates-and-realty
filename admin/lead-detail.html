@@ -11214,7 +11214,7 @@ function lpRenderAppraisalPortal(cid, selectedId){
       +'<div style="grid-column:1/-1;max-width:380px;"><div style="'+lbl+'">Website</div><div style="display:flex;gap:6px;"><input id="lpApWebsite" type="text" placeholder="https://amc-portal.com" value="'+lpEsc(v.website||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"><button onclick="lpOpenAppraisalSite()" title="Open site" style="'+gbtn+'">↗</button></div></div>'
       +'<div><div style="'+lbl+'">Login</div><input id="lpApLogin" type="text" placeholder="username" value="'+lpEsc(v.login||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"></div>'
       +'<div><div style="'+lbl+'">Password</div><div style="display:flex;gap:6px;"><input id="lpApPass" type="password" placeholder="password" value="'+lpEsc(v.password||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"><button onclick="lpTogglePass()" title="Show / hide" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);color:#aaa;border-radius:6px;padding:0 11px;cursor:pointer;">👁</button></div></div>'
-      +'<div><div style="'+lbl+'">Phone</div><input id="lpApPhone" type="text" placeholder="phone" value="'+lpEsc(v.phone||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"></div>'
+      +'<div><div style="'+lbl+'">Phone</div><input id="lpApPhone" type="text" placeholder="phone" value="'+lpEsc(window.RRPhone?window.RRPhone.format(v.phone||''):(v.phone||''))+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"></div>'
       +'<div><div style="'+lbl+'">Email</div><input id="lpApEmail" type="email" placeholder="email" value="'+lpEsc(v.email||'')+'" onchange="lpSaveAppraisalPortal()" style="'+inp+'"></div>'
       +'</div><div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:9px;">🔓 Shared vendor record — editing updates it for every loan. Visible to your VA.</div>';
   } else {
@@ -11243,10 +11243,32 @@ async function lpVendorCreate(cid){
   }catch(e){ console.warn('[lpVendorCreate]', e.message); }
   lpLoadAppraisalPortal(cid);
 }
+/* FORMAT ON RENDER, STRIP ON SAVE — the second half.
+   These inputs were the two display sites left unformatted, because their save
+   paths wrote the field value RAW: formatting them would have put
+   "(818) 272-7418" into loan_contacts.phone and vendor_directory. Stored digits
+   are what resolveContactByPhone, is_phone_suppressed, the calling-hours
+   area-code lookup and Twilio all match on, so this strips first and the inputs
+   can then be formatted like everything else.
+
+   A MASKED VALUE IS NEVER WRITTEN BACK. RRPhone.digits('(•••) •••-••28') is
+   '28', and saving that would turn a redaction into a permanent two-digit
+   phone number — destroying the real one for everybody. A va cannot edit these
+   fields (the DB blocks it and _ldApplyVaMode makes them read-only), but the
+   rule belongs at the write, not in the reasoning about who reaches it. */
+function _lpPhoneForSave(v){
+  var s = (v == null) ? '' : String(v);
+  if (!s.trim()) return null;
+  if (window.RRPhone && window.RRPhone.isMasked(s)) return undefined;   // caller must skip the column
+  return (window.RRPhone ? window.RRPhone.digits(s) : s.replace(/\D/g,'')) || null;
+}
 async function lpSaveAppraisalPortal(){
   if(!_lpVendorId) return;
   const g = id => { const e = document.getElementById(id); return e ? (e.value||null) : null; };
-  try{ await _authClient().from('vendor_logins').update({ website:g('lpApWebsite'), login:g('lpApLogin'), password:g('lpApPass'), phone:g('lpApPhone'), email:g('lpApEmail'), updated_at:new Date().toISOString() }).eq('id', _lpVendorId); }catch(e){ console.warn('[lpSaveAppraisalPortal]', e.message); }
+  const patch = { website:g('lpApWebsite'), login:g('lpApLogin'), password:g('lpApPass'), email:g('lpApEmail'), updated_at:new Date().toISOString() };
+  const ph = _lpPhoneForSave(g('lpApPhone'));
+  if (ph !== undefined) patch.phone = ph;      // masked → leave the stored value alone
+  try{ await _authClient().from('vendor_logins').update(patch).eq('id', _lpVendorId); }catch(e){ console.warn('[lpSaveAppraisalPortal]', e.message); }
 }
 function lpOpenAppraisalSite(){ const e = document.getElementById('lpApWebsite'); let u = e && e.value ? e.value.trim() : ''; if(!u) return; if(!/^https?:\/\//i.test(u)) u = 'https://'+u; window.open(u, '_blank', 'noopener'); }
 function lpTogglePass(){ const e = document.getElementById('lpApPass'); if(e) e.type = e.type==='password' ? 'text' : 'password'; }
@@ -11485,7 +11507,9 @@ async function lpLoadContacts(cid){
         +'<input data-f="last_name" type="text" autocomplete="off" placeholder="Last" value="'+lpEsc(cl||'')+'" oninput="lpVendorSuggest(\''+r.key+'\',this)" onfocus="lpVendorSuggest(\''+r.key+'\',this)" onkeydown="lpVendorKey(\''+r.key+'\',this,event)" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'flex:1;min-width:0;">'
       +'</div>'
       +'<input data-f="company" type="text" autocomplete="off" placeholder="Company" value="'+lpEsc(c.company||'')+'" oninput="lpVendorSuggest(\''+r.key+'\',this)" onfocus="lpVendorSuggest(\''+r.key+'\',this)" onkeydown="lpVendorKey(\''+r.key+'\',this,event)" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
-      +'<input data-f="phone" type="text" placeholder="Phone" value="'+lpEsc(c.phone||'')+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
+      /* Formatted now that lpSaveContact/lpVendorSaveRow strip on the way out.
+         A masked value renders as the mask and is skipped by the save. */
+      +'<input data-f="phone" type="text" placeholder="Phone" value="'+lpEsc(window.RRPhone?window.RRPhone.format(c.phone||''):(c.phone||''))+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
       +'<input data-f="email" type="email" autocomplete="off" placeholder="Email" value="'+lpEsc(c.email||'')+'" onchange="lpSaveContact(\''+r.key+'\')" style="'+inp+'">'
       +'<div style="display:flex;gap:4px;justify-content:flex-end;align-items:center;">'
         +'<button type="button" class="lp-actbtn lp-scan-btn" title="Scan an email-signature screenshot to auto-fill" onclick="lpScanRow(\''+r.key+'\',this)">📷</button>'
@@ -11715,7 +11739,9 @@ async function lpPasteRow(role){
 async function lpVendorSaveRow(role){
   const row = document.querySelector('.lp-contact[data-role="'+role+'"]'); if(!row) return;
   const g = function(f){ const e=row.querySelector('input[data-f="'+f+'"]'); return e?(e.value||'').trim():''; };
-  const name=(g('first_name')+' '+g('last_name')).trim(), company=g('company'), phone=g('phone'), email=g('email');
+  // Same strip: the 💾 button writes straight into vendor_directory.
+  const name=(g('first_name')+' '+g('last_name')).trim(), company=g('company'), email=g('email');
+  const _ph=_lpPhoneForSave(g('phone')), phone=(_ph===undefined?null:_ph);
   const toastFn = window.showToast||window.toast||function(){};
   if(!name && !company){ toastFn('Add a name or company first.', true); return; }
   try{
@@ -11734,7 +11760,11 @@ async function lpSaveContact(role){
   const row = document.querySelector('.lp-contact[data-role="'+role+'"]'); if(!row) return;
   const g = f => { const e = row.querySelector('input[data-f="'+f+'"]'); return e ? (e.value||null) : null; };
   const first=((g('first_name')||'')).trim(), last=((g('last_name')||'')).trim(), name=(first+' '+last).trim();
-  try{ await _authClient().from('loan_contacts').upsert({contact_id:cid,role:role,first_name:first||null,last_name:last||null,name:name||null,company:g('company'),phone:g('phone'),email:g('email'),updated_at:new Date().toISOString()}, {onConflict:'contact_id,role'}); }catch(e){ console.warn('[lpSaveContact]', e.message); }
+  // `patch`, not `row` — `row` is already the .lp-contact element above.
+  const patch={contact_id:cid,role:role,first_name:first||null,last_name:last||null,name:name||null,company:g('company'),email:g('email'),updated_at:new Date().toISOString()};
+  const ph=_lpPhoneForSave(g('phone'));
+  if(ph!==undefined) patch.phone=ph;           // masked → do not overwrite the stored number
+  try{ await _authClient().from('loan_contacts').upsert(patch, {onConflict:'contact_id,role'}); }catch(e){ console.warn('[lpSaveContact]', e.message); }
   /* THE SHARED-DIRECTORY WRITE USED TO HAPPEN HERE, AND THAT WAS THE BUG.
      This function is bound to onchange on the phone and email inputs, so it
      ran on every blur — and it called vendor_directory_upsert with p_id:null
@@ -12294,7 +12324,14 @@ function lpHoiRecipAdd(){
   const name=(first+' '+last).trim();
   const c=document.getElementById('lpHoiRCompany'); const vid=(c&&c._vendorId)||null;
   const save=!!(document.getElementById('lpHoiRSave')&&document.getElementById('lpHoiRSave').checked);
-  _lpHoiRecipients.push({ vendor_id:vid, company:company, agent_first:first, agent_last:last, agent_name:name, agent_email:email, agent_phone:phone, save:save });
+  /* STRIPPED AT THE DOOR. This phone travels a long way from here — into
+     hoi_quote_requests.agent_phone via hoi_quote_log, into vendor_directory
+     via vendor_directory_upsert, and then COPIED into loan_contacts.phone when
+     a quote is selected. Formatting it at the input without stripping here
+     would have written "(818) 272-7418" into all three. A masked value is
+     dropped rather than reduced to its two surviving digits. */
+  const _hph=_lpPhoneForSave(phone);
+  _lpHoiRecipients.push({ vendor_id:vid, company:company, agent_first:first, agent_last:last, agent_name:name, agent_email:email, agent_phone:(_hph===undefined?null:_hph), save:save });
   ['lpHoiRCompany','lpHoiRFirst','lpHoiRLast','lpHoiREmail','lpHoiRPhone'].forEach(function(i){ const e=document.getElementById(i); if(e){ e.value=''; e._vendorId=null; } });
   lpHoiRenderRecips();
 }
