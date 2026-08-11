@@ -1,6 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0'
 import { requireStaff } from '../_shared/require-staff.ts'
-import { PDFDocument, StandardFonts, rgb } from 'https://esm.sh/pdf-lib@1.17.1'
+import { renderLoePdf } from '../_shared/loe-pdf.ts'
 
 const URL = Deno.env.get('SUPABASE_URL')!
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -34,113 +34,6 @@ const SIGNER_BLOCK = `<div style="margin:16px 0 4px;">
   <div style="min-height:46px;">{{signature}}</div>
   <div style="border-top:1px solid #333;width:300px;padding-top:3px;font-size:13px;color:#222;">{{printed_name}} &nbsp;&middot;&nbsp; Date: {{signed_date}}</div>
 </div>`
-
-/* ── MULTI-LOE PACKAGE ────────────────────────────────────────────────────────
- *
- * Several letters drafted in one sitting, sent as ONE signature package, each
- * letter signed individually.
- *
- * WHY THIS RENDERS A PDF RATHER THAN REUSING THE TEMPLATE PATH.
- * esign has two envelope shapes. `create` with `template_key` builds ONE html
- * document and hangs it on signature_requests.document_html — it is single by
- * construction. `create` with `document_ids[]` builds an envelope over N
- * esign_documents rows, each with its own esign_fields keyed on
- * (document_id, signer_index), and view/sign/finalize already loop those
- * documents (esign/index.ts:437, :635, :684). The N-document path is the one
- * that already works, so a package is N documents on it — NOT a change to the
- * signing machinery of a legally significant function.
- *
- * A consequence worth stating: because these are separate documents with
- * separate fields, ONE SIGNATURE CANNOT COVER THE PACKAGE. The signer signs each
- * letter, which is the point.
- *
- * Generating the PDF here (rather than converting supplied HTML) is what makes
- * the field placement exact: the renderer knows the y of every signature rule it
- * drew, so the signature box is placed directly above the printed name instead
- * of being guessed from a layout engine's output.
- *
- * COORDINATES: esign_fields x/y/w/h are FRACTIONS of the page, y measured from
- * the TOP. pdf-lib draws from the BOTTOM. Verified against live rows before
- * writing this — a wrong axis puts a signature somewhere else on a legal
- * document, and it would look plausible. */
-const PAGE_W = 612, PAGE_H = 792            // US Letter, matching existing esign_documents.page_sizes
-const MARGIN = 56
-const SIG_BOX_H = 34                        // height of the signature area above the rule
-const SIG_BOX_W = 240
-
-type PlacedField = { page: number; x: number; y: number; w: number; h: number; signer_index: number }
-
-function wrap(text: string, font: any, size: number, maxW: number): string[] {
-  const out: string[] = []
-  for (const para of String(text || '').replace(/\r/g, '').split('\n')) {
-    if (!para.trim()) { out.push(''); continue }
-    let line = ''
-    for (const word of para.split(/\s+/)) {
-      const probe = line ? line + ' ' + word : word
-      if (font.widthOfTextAtSize(probe, size) <= maxW) { line = probe; continue }
-      if (line) out.push(line)
-      line = word
-    }
-    if (line) out.push(line)
-  }
-  return out
-}
-
-/* One letter → one PDF, plus the signature fields it placed.
- * signerNames is in signer order, so index i becomes signer_index i+1 — the same
- * 1-based convention esign's createPdf reads when it counts required signers. */
-async function renderLoePdf(title: string, bodyText: string, signerNames: string[]) {
-  const pdf = await PDFDocument.create()
-  const font = await pdf.embedFont(StandardFonts.TimesRoman)
-  const bold = await pdf.embedFont(StandardFonts.TimesRomanBold)
-  const SIZE = 11, LEAD = 16, TEXT_W = PAGE_W - MARGIN * 2
-
-  let page = pdf.addPage([PAGE_W, PAGE_H])
-  let y = PAGE_H - MARGIN
-  let pageNo = 1
-  const fields: PlacedField[] = []
-
-  const nextPageIfNeeded = (need: number) => {
-    if (y - need >= MARGIN) return
-    page = pdf.addPage([PAGE_W, PAGE_H]); y = PAGE_H - MARGIN; pageNo++
-  }
-
-  page.drawText(String(title || 'Letter of Explanation').slice(0, 90), { x: MARGIN, y, size: 14, font: bold, color: rgb(0, 0, 0) })
-  y -= LEAD * 2
-
-  for (const line of wrap(bodyText, font, SIZE, TEXT_W)) {
-    nextPageIfNeeded(LEAD)
-    if (line) page.drawText(line, { x: MARGIN, y, size: SIZE, font, color: rgb(0, 0, 0) })
-    y -= LEAD
-  }
-
-  /* SIGNATURE BLOCKS — one per signer, each directly ABOVE that signer's own
-   * printed full name. Two borrowers on one letter therefore get two separate
-   * blocks and two separate names, never a shared line. */
-  y -= LEAD
-  for (let i = 0; i < signerNames.length; i++) {
-    nextPageIfNeeded(SIG_BOX_H + LEAD * 3)
-    const boxTopPdf = y                      // pdf-lib space, measured from the bottom
-    const ruleY = boxTopPdf - SIG_BOX_H
-    page.drawLine({ start: { x: MARGIN, y: ruleY }, end: { x: MARGIN + SIG_BOX_W, y: ruleY }, thickness: 1, color: rgb(0.2, 0.2, 0.2) })
-    page.drawText(String(signerNames[i] || '').slice(0, 80), { x: MARGIN, y: ruleY - 14, size: SIZE, font, color: rgb(0, 0, 0) })
-
-    fields.push({
-      page: pageNo,
-      x: MARGIN / PAGE_W,
-      // y from the TOP of the page, as a fraction — see the coordinates note above.
-      y: (PAGE_H - boxTopPdf) / PAGE_H,
-      w: SIG_BOX_W / PAGE_W,
-      h: SIG_BOX_H / PAGE_H,
-      signer_index: i + 1,
-    })
-    y = ruleY - 14 - LEAD * 2
-  }
-
-  const bytes = await pdf.save()
-  const pageSizes = pdf.getPages().map(() => ({ w: PAGE_W, h: PAGE_H }))
-  return { bytes, fields, pageCount: pageSizes.length, pageSizes }
-}
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors })
