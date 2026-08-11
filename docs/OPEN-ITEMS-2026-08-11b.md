@@ -218,3 +218,70 @@ Three ways forward, in preference order:
 
 (1) and (3) are complements, not alternatives: (3) reports a failure n8n noticed,
 (1) notices a workflow that stopped running at all.
+
+---
+
+# 2026-08-11 — n8n failure alerting fixed, and a trap that hid a live breakage
+
+## n8n edits create DRAFTS. They do not run until published.
+
+`update_workflow` returns success and shows the new values — and the **active
+version keeps running the old ones**. `versionId` and `activeVersionId` are
+different fields, and only the second is executed.
+
+**This hid a live breakage for a day.** Yesterday's CRON_KEY rotation updated
+the three n8n HTTP nodes and reported success. It never took: a production run
+of post-close-followups on 2026-08-11 sent
+`x-cron-key: rnr-cron-9b1f7a3e8c2d460a85f4e6172c0d9b3e` — the OLD literal,
+already dead — and got 401. Critical-date-reminders would have failed the same
+way at 22:00Z that night.
+
+Caught only because the break test read the EXECUTION DATA rather than the
+update tool's response. The tool said the key was changed; the wire said
+otherwise.
+
+**Rule: after any update_workflow, call publish_workflow, then prove it with an
+execution — not with the update response.**
+
+All four touched workflows are now published and verified:
+
+```
+6685  post-close-followups, vault key, published   -> success
+6688  post-close-followups, restored after test    -> success
+```
+
+## Sync Failure Alert now works, proven by breaking a workflow twice
+
+Wired as `errorWorkflow` on all 11 workflows (1 had it before). Its HTTP node
+posted to email-service with Content-Type only and would 401; it now uses the
+existing **"Supabase service_role (HTTP)"** n8n credential — no new secret was
+pasted anywhere, and email-service accepts the service key from either header.
+
+Two break tests, bogus x-cron-key on post-close-followups:
+
+| run | workflow | result |
+|---|---|---|
+| 6683 | post-close-followups | error (401) |
+| 6684 | Sync Failure Alert | fired, **error** — credential fix was still a draft |
+| 6686 | post-close-followups | error (401) |
+| 6687 | Sync Failure Alert | fired, **success** — alert delivered |
+
+6684 is the useful one: it proves the alarm fires, and that the first attempt to
+fix it had not actually shipped.
+
+**An error workflow does NOT need a production trigger.** `triggerCount: 0` and
+"can only be executed in manual mode" describe direct invocation; the Error
+Trigger fires on a linked workflow's failure regardless. Verified — 6684 and
+6687 both ran with `mode: "error"`. So no schedule trigger was added, and one
+should not be: it would email an empty alert on every tick.
+
+**Failure handling fires for PRODUCTION executions only.** A manual run does not
+trigger the error workflow, so any future test of this must use production mode.
+
+## Still open
+
+- The execution-history check (option 1) is NOT built — it needs `n8n_api_key`
+  in the vault, which only Rene can paste.
+- `Google Calendar Two-Way Sync` has pre-existing validation warnings unrelated
+  to this work: a disconnected `HTTP Request 1` node, and `Google Calendar 1`
+  missing its `resource` discriminator.
