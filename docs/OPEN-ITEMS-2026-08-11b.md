@@ -514,3 +514,80 @@ credential, publish, prove by execution — then guard the whole function.
   `15fS1PzNx4zM8Xfwt8mDbMBpNCjF8Yqw4` which nothing points at now that the
   fixture is cleared. Both are rene@-owned via n8n's OAuth, so `gdrive-proxy`
   (service account) cannot trash them.
+
+---
+
+# gdrive-proxy: Lender Folder Creator credentialled; the REST is not guarded yet
+
+## Steps 1–3 done
+
+`Lender Folder Creator` (`35OAO1zJqCZsKMsM`) "Create Drive Folder" node now uses
+the existing **"Supabase service_role (HTTP)"** credential. Published
+(`activeVersionId 5b75ccc0`) and proven by execution **6692 — success**, folder
+`1Anb0EiqwMTyIxsOzQMO4j49DJ4xySntN` created under the Lenders root.
+
+**What that execution does and does not prove.** gdrive-proxy is still unguarded,
+so it proves the credential does not BREAK the call. It cannot yet prove the
+credential SATISFIES a guard — that check only exists after step 4. This is the
+frontend-first order working as intended, not a gap.
+
+Run against `id 00000000-…cafe`, which matches no lender, so the PATCH was a
+no-op. Deliberate: the only test lender, "New Lender Test", already has
+`1HJdIATu_RVWRUJ0OPTCXQGi4xXMU_No_`, and **this workflow's PATCH has no
+`is.null` guard either** — re-running against it would have overwritten the id
+and stranded that folder. Same bug as Contact Folder Creator had. Worth fixing;
+not fixed here.
+
+## STEP 4 IS BLOCKED, and the audit is why
+
+Guarding the remaining actions would break **10 browser call sites today**.
+`admin/lead-detail.html` has 12 `fetch` calls to gdrive-proxy and only 2 send an
+Authorization header:
+
+| action | call sites | authenticated |
+|---|---|---|
+| `download` | 3 | **0** |
+| `upload-file` | 3 | 1 |
+| `create-folder` | 2 | **0** |
+| `list-folders` | 2 | **0** |
+| `rename` | 1 | 1 |
+| `list-files` | 1 | **0** |
+
+Guarding first would break Drive upload, download, folder listing and renaming on
+the lead page — silently for the reads, which just render empty.
+
+**So the remaining order is: ship those 10 call sites sending the session token,
+confirm the lead page still uploads/downloads/lists, THEN guard.** That is the
+same rule that has held all week; the audit is what turned "add requireStaff"
+into a ten-site frontend change.
+
+## Guard shape per action — do NOT apply one shape to all
+
+| action | callers | guard |
+|---|---|---|
+| `create-borrower-folder` | browsers (2) | `requireStaff` — **done** |
+| `create-folder` | browser (2 sites) + n8n Lender Folder Creator | `requireStaff` — service key covers n8n now |
+| `upload-file` | browser (3 sites) | `requireStaff` |
+| `rename` | browser (1 site) | `requireStaff` |
+| `download`, `list-files`, `list-folders`, `get-folder` | browser reads | `requireStaff` |
+| `resolve-folder` | **gdrive-sync edge function**, sends `Bearer SERVICE_KEY` | `requireStaff` accepts the service key — no change needed |
+| `trash-file` | **NO caller anywhere** in repo, n8n or cron | `requireStaff`, and it is the most urgent |
+
+`allowInternal` is NOT needed by any of them: the one server-side caller
+(`gdrive-sync`) already presents the service key, and nothing here is reached
+from Postgres. Adding `allowInternal` would widen the guard for no caller.
+
+## What is exposed until step 4 lands — state it plainly
+
+These writes use **rene@'s USER OAuth token** (`google_calendar_tokens id='rene'`),
+not the service account. So an unauthenticated caller who knows the URL can today:
+
+- **create** folders anywhere he can write,
+- **rename** any file he can reach,
+- **TRASH any file he can reach** — `trash-file`, which has no caller at all and
+  therefore no legitimate traffic to protect, and **no undo**. Trashed Drive items
+  are recoverable from the bin for 30 days by a human; nothing here restores them.
+- **upload** files into his Drive, and **download** anything readable through it.
+
+`trash-file` is the one to close first when step 4 runs: highest damage, zero
+callers, so guarding it cannot break anything.
