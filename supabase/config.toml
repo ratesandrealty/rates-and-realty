@@ -542,18 +542,15 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.extract-conditions]
-# Pinned at the value that is LIVE right now (false), NOT a change — added 2026-08-11
-# only so deploy-function.sh would proceed.
+# Pinned at the value that is LIVE (false) — NOT a change, and NOT the control.
+# Flipping it to true would only demand a project-signed JWT, and the anon key is
+# one and is printed in this app's source. Stability control, not access control.
 #
-# ⚠️ THIS ONE IS WORSE THAN THE PINNED-NOT-GUARDED SET, and the difference matters.
-# Those functions at least require a project-signed JWT at the gateway. This has
-# verify_jwt = false AND no in-function check of any kind — grep for getUser,
-# requireStaff, auth_user_roles or a role compare returns nothing. It builds its
-# client from SUPABASE_SERVICE_ROLE_KEY, so an unauthenticated caller who knows the
-# URL can read and update loan_conditions for any contact_id, and drive the Anthropic
-# extraction at our cost.
-#
-# NOT fixed here on purpose: adding a guard to a function with a browser caller is
-# frontend-first (admin/lead-detail.html calls it at COND_FN), and this commit is
-# about attribution, not access. Closing it is its own piece of work.
+# THE ACCESS CONTROL is requireStaff() in index.ts, added 2026-08-11, before
+# req.json(). Until then this had verify_jwt = false AND no in-function check at
+# all, over a SUPABASE_SERVICE_ROLE_KEY client: an unauthenticated caller who
+# knew the URL could read and update loan_conditions for any contact_id and drive
+# the Anthropic extraction at Rene's cost. Verified open before the fix — an
+# anonymous POST returned 33 real conditions for a live borrower — and closed
+# after: no credential, the anon key, and a garbage bearer all 401.
 verify_jwt = false

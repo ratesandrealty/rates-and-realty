@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const cors = { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,Authorization,apikey' };
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -133,6 +134,30 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
   const ok = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, 'Content-Type': 'application/json' } });
   const err = (m: string, s = 400) => new Response(JSON.stringify({ error: m }), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+
+  /* ── THE GUARD ─────────────────────────────────────────────────────────────
+   *
+   * This function was open to the entire internet until 2026-08-11: pinned
+   * verify_jwt = false AND no in-function check of any kind, over a client
+   * built from SUPABASE_SERVICE_ROLE_KEY. Anyone who knew the URL could read
+   * and update loan_conditions for ANY contact_id and drive the Anthropic
+   * extraction at Rene's cost. No credential of any kind was required — not
+   * even the public anon key.
+   *
+   * verify_jwt stays false, deliberately: flipping it would only demand a
+   * project-signed JWT, and the anon key is one and is printed in this app's
+   * source. That is a stability control, not an access one. THIS is the access
+   * control. See docs/PINNED-NOT-GUARDED.md.
+   *
+   * BEFORE req.json(), per the note in _shared/require-staff.ts: a guard placed
+   * after body parsing is one that a later-added action can be written in front
+   * of by accident.
+   *
+   * Frontend shipped first (admin/lead-detail.html condFetch, deployed and
+   * render-checked) so a mistake in the caller showed up as a page that still
+   * worked rather than an outage with two suspects. */
+  const _auth = await requireStaff(req, { what: 'Loan conditions' });
+  if (!_auth.ok) return err(_auth.msg || 'not authorized', _auth.status || 401);
 
   try {
     const body = await req.json();

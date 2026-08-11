@@ -18899,6 +18899,34 @@ async function exportDealAnalyzerPDF() {
 /* ═══ CONDITIONS ═══ */
 const COND_FN = 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/extract-conditions';
 
+/* STEP 1 OF THE FRONTEND-FIRST ORDER for closing extract-conditions.
+ *
+ * All six call sites below used to send `{'Content-Type':'application/json'}`
+ * and NOTHING else — no Authorization, no apikey. The function is pinned
+ * verify_jwt = false and has no in-function check, so it answered anybody: an
+ * unauthenticated caller who knew the URL could read and update
+ * loan_conditions for any contact_id and drive the Anthropic extraction at
+ * Rene's cost.
+ *
+ * This ships BEFORE the guard, on purpose. Done in this order a mistake here
+ * shows up as a page that still works, because the function has not started
+ * enforcing yet. Done backwards the same mistake is an outage, and you cannot
+ * tell whether the token or the guard is at fault because both changed at once.
+ *
+ * One wrapper rather than six edits: a call site that quietly kept the old
+ * headers is exactly how `email-service` 401'd every send from a lead record
+ * for twelve minutes. There is now only one place that can be wrong. */
+async function condFetch(body) {
+  const tok = await _getUserAccessToken();
+  const headers = { 'Content-Type': 'application/json' };
+  /* No token → send none and let the server refuse. Falling back to the anon
+     key would be worse than useless: it is printed in this page's source and
+     identifies nobody, so it would satisfy a gateway check while telling the
+     guard nothing about who is calling. */
+  if (tok) headers['Authorization'] = 'Bearer ' + tok;
+  return fetch(COND_FN, { method: 'POST', headers: headers, body: JSON.stringify(body) });
+}
+
 async function loadConditions() {
   const contactId = new URLSearchParams(window.location.search).get('contact_id');
   if (!contactId) return;
@@ -18928,11 +18956,7 @@ async function loadConditions() {
   // Fallback: if the RPC failed, use the edge function (no attachments, but keeps the tab alive).
   if (conditions === null) {
     try {
-      const res = await fetch(COND_FN, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'get_conditions', contact_id: contactId })
-      });
+      const res = await condFetch({ action: 'get_conditions', contact_id: contactId });
       const data = await res.json();
       conditions = data.conditions || [];
       if (!loanDoc && conditions[0] && conditions[0].condition_documents) loanDoc = conditions[0].condition_documents;
@@ -19566,10 +19590,7 @@ async function loadCondNotes(conditionId) {
   var el = document.getElementById('nh-' + conditionId);
   if (!el) return;
   try {
-    var res = await fetch(COND_FN, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'get_notes', condition_id: conditionId })
-    });
+    var res = await condFetch({ action: 'get_notes', condition_id: conditionId });
     var data = await res.json();
     var notes = data.notes || [];
     if (!notes.length) { el.innerHTML = '<div style="font-size:.75rem;color:var(--muted);font-style:italic;">No notes yet</div>'; return; }
@@ -19600,10 +19621,7 @@ document.addEventListener('click', async function(e) {
     if (!text) return;
     saveBtn.disabled = true; saveBtn.textContent = '...';
     var contactId = new URLSearchParams(location.search).get('contact_id');
-    await fetch(COND_FN, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'add_note', condition_id: sid, contact_id: contactId, note_text: text, created_by: 'Rene' })
-    });
+    await condFetch({ action: 'add_note', condition_id: sid, contact_id: contactId, note_text: text, created_by: 'Rene' });
     input.value = '';
     saveBtn.disabled = false; saveBtn.textContent = 'Save';
     await loadCondNotes(sid);
@@ -19664,10 +19682,7 @@ async function processConditionFile(file) {
 
   try {
     // Clear old conditions before re-extracting
-    await fetch(COND_FN, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'clear_conditions', contact_id: contactId })
-    });
+    await condFetch({ action: 'clear_conditions', contact_id: contactId });
 
     // Upload to Supabase Storage
     var storageResult = await uploadApprovalToStorage(file, contactId);
@@ -19679,14 +19694,10 @@ async function processConditionFile(file) {
       reader.readAsDataURL(file);
     });
 
-    var res = await fetch(COND_FN, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'extract', file_base64: base64, mime_type: file.type, file_name: file.name, contact_id: contactId,
-        file_url: storageResult ? storageResult.url : null,
-        storage_path: storageResult ? storageResult.path : null
-      })
+    var res = await condFetch({
+      action: 'extract', file_base64: base64, mime_type: file.type, file_name: file.name, contact_id: contactId,
+      file_url: storageResult ? storageResult.url : null,
+      storage_path: storageResult ? storageResult.path : null
     });
 
     var data = await res.json();
@@ -19712,11 +19723,7 @@ async function processConditionFile(file) {
 async function clearAndReupload() {
   if (!confirm('Clear all conditions and re-upload?')) return;
   var contactId = new URLSearchParams(window.location.search).get('contact_id');
-  await fetch(COND_FN, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'clear_conditions', contact_id: contactId })
-  });
+  await condFetch({ action: 'clear_conditions', contact_id: contactId });
   await loadConditions();
 }
 
