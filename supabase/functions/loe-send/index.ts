@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0'
 import { requireStaff } from '../_shared/require-staff.ts'
+import { renderLoePdf } from '../_shared/loe-pdf.ts'
 
 const URL = Deno.env.get('SUPABASE_URL')!
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -46,8 +47,96 @@ Deno.serve(async (req: Request) => {
     const body = await req.json().catch(() => ({}))
     const loe_id = body.loe_id
     const sendSms = body.send_sms !== false
-    if (!loe_id) return json({ error: 'loe_id required' }, 400)
     const db = svc()
+
+    /* action:'send_package' — several LOEs, one envelope, each signed on its own
+     * document. Falls through to the single-LOE path when absent, so every
+     * existing caller is untouched. */
+    if (body.action === 'send_package') {
+      const loeIds: string[] = Array.isArray(body.loe_ids) ? body.loe_ids.filter(Boolean) : []
+      if (!loeIds.length) return json({ error: 'loe_ids[] required' }, 400)
+
+      const { data: loeRows } = await db.from('loe_requests').select('*').in('id', loeIds)
+      const loes = loeIds.map((id) => (loeRows || []).find((l: any) => l.id === id)).filter(Boolean) as any[]
+      if (loes.length !== loeIds.length) return json({ error: 'one or more LOEs not found' }, 404)
+      for (const l of loes) {
+        if (!l.body || !String(l.body).trim()) return json({ error: `LOE "${l.title || l.topic || l.id}" has no drafted body` }, 400)
+        if (l.envelope_id && ['sent', 'signed'].includes(l.status)) return json({ error: `LOE "${l.title || l.id}" is already ${l.status}` }, 409)
+      }
+
+      /* ONE signer set for the package. Each letter is a separate document, but
+       * they go to the same people in one sitting — that is what "one package"
+       * means. Mixed signer sets would need separate envelopes, so refuse rather
+       * than silently sending letter 2 to letter 1's borrowers. */
+      const sig = (l: any) => JSON.stringify(
+        ((Array.isArray(l.signer_contact_ids) && l.signer_contact_ids.length) ? l.signer_contact_ids : [l.contact_id]).filter(Boolean).slice().sort())
+      const first = sig(loes[0])
+      const mismatch = loes.find((l) => sig(l) !== first)
+      if (mismatch) return json({ error: `"${mismatch.title || mismatch.id}" has different signers from the first letter. Send it as its own package.` }, 400)
+
+      const signerIds: string[] = JSON.parse(first)
+      if (!signerIds.length) return json({ error: 'no signer contacts on these LOEs' }, 400)
+      const { data: cs } = await db.from('contacts').select('id,first_name,middle_name,last_name,email,phone,secondary_phone').in('id', signerIds)
+      const signers = signerIds.map((id) => {
+        const c = (cs || []).find((x: any) => x.id === id)
+        if (!c) return null
+        const name = [c.first_name, c.middle_name, c.last_name].filter(Boolean).join(' ').trim()
+        return { person_contact_id: c.id, name, email: c.email || null, phone: c.phone || c.secondary_phone || null, role: 'borrower' }
+      }).filter(Boolean) as any[]
+      if (!signers.length) return json({ error: 'could not resolve signer details' }, 400)
+      if (!signers.some((s) => s.email || s.phone)) return json({ error: 'signers have no email or phone to send to' }, 400)
+
+      const documentIds: string[] = []
+      for (let i = 0; i < loes.length; i++) {
+        const l = loes[i]
+        const title = (l.title && String(l.title).trim()) || l.topic || 'Letter of Explanation'
+        const { bytes, fields, pageCount, pageSizes } = await renderLoePdf(title, l.body, signers.map((s) => s.name))
+
+        /* storage_path is written on the SAME insert that puts the object in the
+         * bucket. esign_documents is what the storage reconcile registry matches
+         * bucket objects against, so an upload without its row is exactly the
+         * orphan shape — the object exists and nothing references it. */
+        const path = `loe/${l.contact_id || 'nocontact'}/${crypto.randomUUID()}.pdf`
+        const up = await db.storage.from('esign').upload(path, bytes, { contentType: 'application/pdf', upsert: false })
+        if (up.error) return json({ error: `upload failed for "${title}": ${up.error.message}` }, 500)
+
+        const { data: doc, error: docErr } = await db.from('esign_documents').insert({
+          name: `${title}.pdf`, storage_path: path, page_count: pageCount, page_sizes: pageSizes,
+          source: 'upload', contact_id: l.contact_id ?? null, created_by: adm.userId ?? null, sort_order: i,
+        }).select('id').single()
+        if (docErr) {
+          // Do not leave the object behind if its row failed — that IS the orphan.
+          await db.storage.from('esign').remove([path])
+          return json({ error: `could not record document for "${title}": ${docErr.message}` }, 500)
+        }
+        documentIds.push(doc.id)
+
+        const fieldRows = fields.map((f) => ({
+          document_id: doc.id, signer_index: f.signer_index, type: 'signature',
+          page: f.page, x: f.x, y: f.y, w: f.w, h: f.h, required: true, fill_by: 'signer',
+        }))
+        const { error: fErr } = await db.from('esign_fields').insert(fieldRows)
+        if (fErr) return json({ error: `could not place signature fields on "${title}": ${fErr.message}` }, 500)
+      }
+
+      const packageTitle = String(body.document_title || '').trim() || `${loes.length} letters of explanation`
+      const r = await fetch(`${URL}/functions/v1/esign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SERVICE}`, 'apikey': SERVICE },
+        body: JSON.stringify({
+          action: 'create', document_ids: documentIds, contact_id: loes[0].contact_id, signers,
+          document_title: packageTitle, send_sms: sendSms, order_mode: 'parallel',
+          email_subject: `Please sign: ${packageTitle}`,
+        }),
+      })
+      const out = await r.json().catch(() => ({}))
+      if (!r.ok || out?.error) return json({ error: out?.error || 'esign create failed', detail: out }, r.status || 500)
+
+      await db.from('loe_requests').update({ envelope_id: out.envelope_id, status: 'sent', sent_at: new Date().toISOString() }).in('id', loeIds)
+      return json({ ok: true, envelope_id: out.envelope_id, documents: documentIds.length, letters: loeIds.length, signers: out.signers })
+    }
+
+    if (!loe_id) return json({ error: 'loe_id required' }, 400)
 
     const { data: loe } = await db.from('loe_requests').select('*').eq('id', loe_id).maybeSingle()
     if (!loe) return json({ error: 'LOE not found' }, 404)
