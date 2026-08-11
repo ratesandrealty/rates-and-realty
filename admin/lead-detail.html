@@ -28,7 +28,7 @@
     .pac-icon{display:none!important;}
     .pac-logo::after{display:none!important;}
   </style>
-  <script src="/admin/js/auth-guard.js?v=bdb245db91"></script>
+  <script src="/admin/js/auth-guard.js?v=69c5616a5f"></script>
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
   <!-- Loaded after auth-guard so window._supabaseClient exists when fnFetch reads it. -->
   <script src="/admin/js/fn-call.js?v=85d03d2a98"></script>
@@ -41,8 +41,8 @@
        runtime, and removes any load-order question on the page where the dialer
        matters most. Both mounts are idempotent (window._rrDialerLoaded plus the
        script-src check in auth-guard), so this does not double-load. -->
-  <script src="/admin/js/dialer.js?v=523ca7eead"></script>
-  <script src="/admin/js/crm-comms.js?v=077bc202a3"></script>
+  <script src="/admin/js/dialer.js?v=440cb69075"></script>
+  <script src="/admin/js/crm-comms.js?v=d37133d86b"></script>
   <script src="/admin/js/notif-bell.js?v=ce05693d65"></script>
   <script>
 
@@ -7490,8 +7490,18 @@ async function sendInlineReply(btn) {
   const text = (textarea.value || '').trim();
   if (!text) return;
   const cid = contactId || leadId;
-  const phone = (contactData && (contactData.phone || contactData.secondary_phone) || '').replace(/\D/g, '');
-  if (!phone && !_isVaSession()) { showToast('No phone number on file', true); return; }
+  /* CHECK THE RAW VALUE, NOT ITS DIGITS. This read `.replace(/\D/g,'')` first,
+     which turns a masked '(•••) •••-••28' into '28' and loses the only evidence
+     that it was a mask — _smsDest would then have built '+128'. RRPhone.dialable
+     is given the untouched value so it can still tell.
+     _smsDest's VA rule is deliberately kept: a va's SMS from this surface
+     resolves to null regardless, and that is a separate, older control. */
+  const _rawPhone = (contactData && (contactData.phone || contactData.secondary_phone)) || '';
+  const _pchk = (window.RRPhone && window.RRPhone.dialable)
+    ? window.RRPhone.dialable(_rawPhone)
+    : { ok:false, message:'Phone helper not loaded — reload the page and try again.' };
+  if (!_pchk.ok && !_isVaSession()) { showToast(_pchk.message, true); return; }
+  const phone = _pchk.ok ? window.RRPhone.digits(_pchk.e164).replace(/^1/, '') : '';
   btn.disabled = true; btn.textContent = '…';
   try {
     const res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/sms-service', {
@@ -38414,6 +38424,13 @@ async function loadVoicemailLibrary() {
 
 async function dropVoicemail(vmUrl) {
   closeVmPicker();
+  /* window._callPhone is whatever opened the call modal, which on a va's page
+     is mask_phone(phone). Dropping a voicemail at a redaction is the same
+     defect as dialling one, and this path posts straight to Twilio. */
+  var _vm = (window.RRPhone && window.RRPhone.dialable)
+    ? window.RRPhone.dialable(window._callPhone)
+    : { ok:false, message:'Phone helper not loaded — reload the page and try again.' };
+  if (!_vm.ok) { if (typeof showToast === 'function') showToast(_vm.message, true); return; }
   if (typeof showToast === 'function') showToast('Dropping voicemail...');
   /* Signed-in user, not the anon key. This function sits OUTSIDE the browser-
      calling IIFE, so it cannot use _voiceFetch and calls fn-call.js directly —
@@ -38424,7 +38441,7 @@ async function dropVoicemail(vmUrl) {
     }
     var res = await window.fnFetch('twilio-voice', {
       method: 'POST',
-      body: JSON.stringify({ action: 'voicemail_drop', to: window._callPhone, voicemail_url: vmUrl, contact_id: window._callContactId })
+      body: JSON.stringify({ action: 'voicemail_drop', to: _vm.e164, voicemail_url: vmUrl, contact_id: window._callContactId })
     });
     var data = await res.json();
     if (data.success) {

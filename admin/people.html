@@ -9,10 +9,10 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="/admin/js/supabase-client.js?v=5e7926468b"></script>
-<script src="/admin/js/auth-guard.js?v=bdb245db91"></script>
+<script src="/admin/js/auth-guard.js?v=69c5616a5f"></script>
 <script src="/admin/js/fn-call.js?v=85d03d2a98"></script>
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
-  <script src="/admin/js/crm-comms.js?v=077bc202a3"></script>
+  <script src="/admin/js/crm-comms.js?v=d37133d86b"></script>
 <style>
 :root {
   --gold: #c9a84c; --gold2: #e4b84e; --bg: #0a0a0a; --surface: #111;
@@ -2079,7 +2079,16 @@ async function updateStageInline(contactId, status) {
   showToast('Stage updated to ' + status);
 }
 
-function callPerson(phone, id, name) { if (typeof crmCall === 'function') crmCall(id || null, phone, name || ''); else if (phone) window.location.href = 'tel:' + phone; }
+/* crmCall is guarded; the tel: FALLBACK was not — and window.location.href is a
+   navigation, so the capture-phase mask guard in rr-phone.js (which watches
+   clicks on <a href="tel:">) never sees it. Checked here for that reason. */
+function callPerson(phone, id, name) {
+  if (typeof crmCall === 'function') { crmCall(id || null, phone, name || ''); return; }
+  if (!phone) return;
+  var c = (window.RRPhone && window.RRPhone.dialable) ? window.RRPhone.dialable(phone) : { ok:false, message:'Phone helper not loaded.' };
+  if (!c.ok) { if (typeof showToast === 'function') showToast(c.message, true); else alert(c.message); return; }
+  window.location.href = 'tel:' + c.e164;
+}
 function emailPerson(email, id, name) { if (typeof crmEmail === 'function') crmEmail({ to_email: email, to_name: name || '', contact_id: id || null }); else if (email) window.location.href = 'mailto:' + email; }
 
 function bulkEnrollCampaign() { window.location.href = 'drip-builder'; }

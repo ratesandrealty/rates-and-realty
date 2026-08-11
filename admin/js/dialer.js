@@ -193,11 +193,23 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
     if (modal) modal.addEventListener('click', function(e) { if (e.target === modal) closeModal(); });
   }
 
+  /* DELEGATES TO RRPhone. The local version ended `return '+' + d`, which is
+     what dialled '+28' when handed a masked '(•••) •••-••28' — mask_phone keeps
+     the last two digits and this stripped the rest. There is no fallback now:
+     RRPhone.dialable() refuses and says why, and startCall() shows that reason
+     instead of placing a call that cannot connect.
+     Kept as a thin wrapper rather than removed so the two remaining callers
+     read the same as before; it returns null where it used to invent a number. */
   function toE164(p) {
-    var d = (p || '').replace(/\D/g, '');
-    if (d.length === 10) return '+1' + d;
-    if (d.length === 11 && d[0] === '1') return '+' + d;
-    return '+' + d;
+    return (window.RRPhone && window.RRPhone.toE164) ? window.RRPhone.toE164(p) : null;
+  }
+  function dialCheck(p) {
+    if (window.RRPhone && window.RRPhone.dialable) return window.RRPhone.dialable(p);
+    /* rr-phone.js is mounted by auth-guard alongside this file. If it somehow
+       has not loaded, REFUSE — the whole point is that an unchecked value must
+       not reach a dial path, and "the helper is missing" is not a reason to
+       dial one. */
+    return { ok: false, reason: 'helper_missing', message: 'Phone helper not loaded — reload the page and try again.' };
   }
   function fmtTime(secs) {
     var m = Math.floor(secs / 60), s = secs % 60;
@@ -213,11 +225,13 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
     if (s < 86400) return Math.floor(s/3600) + 'h';
     return Math.floor(s/86400) + 'd';
   }
+  /* One of four per-page formatters that had drifted; now the shared one.
+     The behaviour that changed: a MASKED value used to be stripped to its two
+     surviving digits and returned unchanged only by accident of length —
+     RRPhone.format() passes it through explicitly, so the mask still reads as
+     a mask. */
   function formatDisplayPhone(p) {
-    var d = (p || '').replace(/\D/g, '');
-    if (d.length === 10) return '(' + d.slice(0,3) + ') ' + d.slice(3,6) + '-' + d.slice(6);
-    if (d.length === 11 && d[0] === '1') return '(' + d.slice(1,4) + ') ' + d.slice(4,7) + '-' + d.slice(7);
-    return p || '';
+    return (window.RRPhone && window.RRPhone.format) ? window.RRPhone.format(p) : (p || '');
   }
 
   function startTimer() {
@@ -626,6 +640,26 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       alert('No phone number for this contact');
       return;
     }
+    /* REFUSE BEFORE THE DEVICE IS EVEN FETCHED. A masked number reaching here
+       used to become '+28' and be dialled; now the VA is told the number is
+       hidden for her role, which is something she can act on, instead of
+       watching a call fail silently and leave a row stuck at 'ringing'. */
+    var chk = dialCheck(currentContact.phone);
+    if (!chk.ok) {
+      renderReady();
+      var st = document.getElementById('cmStatusText');
+      if (st) st.textContent = (chk.reason === 'masked') ? 'Number hidden for your role' : 'Number cannot be dialled';
+      var acts = document.getElementById('cmActions');
+      if (acts) {
+        var note = document.createElement('div');
+        note.id = 'cmDialRefusal';
+        note.style.cssText = 'margin-top:10px;padding:8px 10px;border-radius:8px;font-size:11.5px;line-height:1.45;'
+          + 'background:rgba(229,72,77,.12);border:1px solid rgba(229,72,77,.4);color:#F0A0A0;text-align:center;';
+        note.textContent = chk.message;
+        acts.appendChild(note);
+      }
+      return;
+    }
     getDevice().then(function(dev) {
       renderRinging();
       /* Ref is an opaque correlation token, NOT a call id and NOT a credential.
@@ -642,7 +676,10 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       /* Record travels with the dial. The SERVER decides what that means:
        twilio-voice gates canRecord() on it, which drops the record= attribute
        AND the disclosure together. Anything but an explicit 'off' records. */
-      return dev.connect({ params: { To: toE164(currentContact.phone), Ref: currentCallRef, Record: _recOn ? 'on' : 'off' } });
+      /* chk.e164 — the value the guard above ALREADY approved. Re-deriving it
+         here would be a second chance to disagree with the check that let the
+         call through, which is exactly how a guard gets bypassed later. */
+      return dev.connect({ params: { To: chk.e164, Ref: currentCallRef, Record: _recOn ? 'on' : 'off' } });
     }).then(function(conn) {
       if (!conn) return;
       activeCall = conn;

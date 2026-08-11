@@ -423,13 +423,25 @@
       rt.src = '/admin/js/rr-time.js?v=7306de6cb2';
       document.head.appendChild(rt);
     }
+    /* One phone helper, app-wide, for the same reason as RRTime: four separate
+     * per-page formatters had already drifted, and — the part that mattered —
+     * nothing anywhere checked whether the value it was about to dial was a
+     * mask. window.RRPhone.dialable() is now the single place that decides.
+     * Mounted alongside RRTime and BEFORE the dialer, because dialer.js asks it
+     * on the first Call. */
+    function mountRRPhone() {
+      if (window.RRPhone || document.querySelector('script[src*="/admin/js/rr-phone.js"]')) return;
+      const rp = document.createElement('script');
+      rp.src = '/admin/js/rr-phone.js?v=044d32fd52';
+      document.head.appendChild(rp);
+    }
     /* The dialer — modal + Twilio.Device — app-wide, so the FAB's Call row has
      * something to open. It mounts a hidden #rr-dial-fab trigger that the FAB
      * gates on, and lazy-loads the Twilio SDK only when someone actually dials. */
     function mountDialer() {
       if (window._rrDialerLoaded || document.querySelector('script[src*="/admin/js/dialer.js"]')) return;
       const dl = document.createElement('script');
-      dl.src = '/admin/js/dialer.js?v=523ca7eead';
+      dl.src = '/admin/js/dialer.js?v=440cb69075';
       document.head.appendChild(dl);
     }
     function mountActionFab() {
@@ -439,11 +451,12 @@
       document.head.appendChild(af);
     }
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function () { mountFnCall(); mountAttachmentViewer(); mountRRTime(); mountStaffChat(); mountHelpButton(); mountTaskCapture(); mountDialer(); mountActionFab(); });
+      document.addEventListener('DOMContentLoaded', function () { mountFnCall(); mountAttachmentViewer(); mountRRTime(); mountRRPhone(); mountStaffChat(); mountHelpButton(); mountTaskCapture(); mountDialer(); mountActionFab(); });
     } else {
       mountFnCall();
       mountAttachmentViewer();
       mountRRTime();
+      mountRRPhone();
       mountStaffChat();
       mountHelpButton();
       mountTaskCapture();

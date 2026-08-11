@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="/admin/js/supabase-client.js?v=5e7926468b"></script>
-  <script src="/admin/js/auth-guard.js?v=bdb245db91"></script>
+  <script src="/admin/js/auth-guard.js?v=69c5616a5f"></script>
   <script src="https://sdk.twilio.com/js/voice/releases/2.11.0/twilio.min.js"></script>
   <style>
     :root{
@@ -514,11 +514,19 @@
      "click-to-call", which sent two separate investigations to the wrong file. */
   function getAgentPhone(){ try{ return (localStorage.getItem('pd_agent_phone')||'').trim(); }catch(e){ return ''; } }
   function setAgentPhone(v){ try{ localStorage.setItem('pd_agent_phone', v||''); }catch(e){} }
+  /* Shared formatter (admin/js/rr-phone.js, mounted by auth-guard) — one of the
+     four that had drifted. A masked value now passes through explicitly. */
   function fmtPhone(p){
-    var d=String(p||'').replace(/\D/g,'');
-    if(d.length===11 && d.charAt(0)==='1') d=d.slice(1);
-    if(d.length===10) return '('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6);
-    return p||'';
+    return (window.RRPhone && window.RRPhone.format) ? window.RRPhone.format(p) : (p||'');
+  }
+  /* THE GUARD EVERY DIAL AND DROP PATH ON THIS PAGE GOES THROUGH.
+     This page was the worst offender: it handed lead.phone to Device.connect()
+     RAW, with no formatting at all, so a masked '(•••) •••-••28' went straight
+     at Twilio. Refuses with a reason rather than placing a call that cannot
+     connect. Missing helper = refuse, never dial. */
+  function pdDialCheck(p){
+    if(window.RRPhone && window.RRPhone.dialable) return window.RRPhone.dialable(p);
+    return { ok:false, reason:'helper_missing', message:'Phone helper not loaded — reload the page and try again.' };
   }
   function promptAgentPhone(){
     var cur=getAgentPhone();
@@ -1081,9 +1089,13 @@
     var lead=_queue[_currentIdx]; if(!lead||!lead.phone){ showToast('No phone on file'); return; }
     if(!confirmHours(lead,'server_blocks')) return; // startCall: the browser dial path goes through twilio-voice's callingHours()
     if(!_voiceReady||!_device){ showToast('Browser calling unavailable'); return; }
+    /* Before the device, before the hours banner is replaced — a number that
+       cannot be dialled must not look like a call that was attempted. */
+    var _chk=pdDialCheck(lead.phone);
+    if(!_chk.ok){ showToast(_chk.message); return; }
     try{
       showCallBar('Ringing…');
-      _call=await _device.connect({params:{To:lead.phone, Record:(_pdRecOn?'on':'off')}});
+      _call=await _device.connect({params:{To:_chk.e164, Record:(_pdRecOn?'on':'off')}});
       _call.on('accept', function(){ startCallTimer(); });
       _call.on('disconnect', function(){ endCall(); });
       _call.on('error', async function(err){
@@ -1153,8 +1165,12 @@
   async function dropVM(url){
     var lead=_queue[_currentIdx]; if(!lead) return;
     if(!confirmHours(lead,'sends_anyway')) return; // dropVM: voicemail_drop posts straight to Twilio, NO server hours check
+    /* Same guard as the dial path. A voicemail drop to a mask is the same
+       defect wearing different clothes, and this one posts straight to Twilio. */
+    var _vchk=pdDialCheck(lead.phone);
+    if(!_vchk.ok){ showToast(_vchk.message); return; }
     try{
-      var r=await _authClient().functions.invoke('twilio-voice',{body:{action:'voicemail_drop', to:lead.phone, voicemail_url:url, contact_id:lead.contact_id}});
+      var r=await _authClient().functions.invoke('twilio-voice',{body:{action:'voicemail_drop', to:_vchk.e164, voicemail_url:url, contact_id:lead.contact_id}});
       if(r&&r.error) throw new Error((r.error&&r.error.message)||'drop failed');
       showToast('Voicemail dropped'); loadCounts(); advance(true);
     }catch(e){ showToast((e&&e.message)||'Voicemail failed'); }

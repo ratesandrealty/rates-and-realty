@@ -46,9 +46,25 @@
     return data;
   }
 
+  /* ── THE ONE GATE FOR EVERY OUTBOUND PATH IN THIS FILE ──────────────────
+     Call and SMS both take a phone straight from whatever rendered the button,
+     and on a va's page that value is mask_phone(phone) — '(•••) •••-••28'.
+     Sent as-is it becomes a call or a text aimed at a redaction. Refuse with
+     the reason; a missing helper refuses too, because "we could not check" is
+     not grounds to dial. */
+  function _phoneOk(toPhone){
+    var r = (window.RRPhone && window.RRPhone.dialable)
+      ? window.RRPhone.dialable(toPhone)
+      : { ok:false, message:'Phone helper not loaded — reload the page and try again.' };
+    if (!r.ok) _toast(r.message, true);
+    return r;
+  }
+
   /* ── CALL: click-to-call ── */
   window.crmCall = async function(contactId, toPhone, name, btn){
     if (!toPhone){ _toast('No phone on file', true); return; }
+    var _c = _phoneOk(toPhone); if (!_c.ok) return;
+    toPhone = _c.e164;
     var orig; if (btn){ orig = btn.innerHTML; btn.disabled = true; btn.innerHTML = '<span class="crm-spin"></span>'; }
     try {
       var d = await _post('click-to-call', { contact_id: contactId || null, to_phone: toPhone });
@@ -60,11 +76,19 @@
 
   /* ── SMS: raw send via sms-service ── */
   window.crmSendSms = function(contactId, toPhone, message){
-    return _post('sms-service', { trigger:'custom', to_phone: toPhone, contact_id: contactId || null, params: { message: message } });
+    /* REJECTS, rather than sending to a mask. Returns a rejected promise so
+       every existing caller's catch renders the reason — a resolved "nothing
+       happened" would be the silent failure this whole sweep is about. */
+    var c = _phoneOk(toPhone);
+    if (!c.ok) return Promise.reject(new Error(c.message));
+    return _post('sms-service', { trigger:'custom', to_phone: c.e164, contact_id: contactId || null, params: { message: message } });
   };
   /* SMS compose modal (fallback for pages without their own composer). */
   window.crmText = function(contactId, toPhone, name){
     if (!toPhone){ _toast('No phone on file', true); return; }
+    /* Checked BEFORE the composer opens — typing a message you cannot send is
+       worse than being told up front. */
+    if (!_phoneOk(toPhone).ok) return;
     _ensureStyles();
     _modal('💬 Text ' + (name || toPhone),
       '<textarea id="crmSmsBody" rows="4" placeholder="Type your message…" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #333;border-radius:8px;color:#eee;padding:10px;font-size:13px;font-family:inherit;resize:vertical;"></textarea>' +

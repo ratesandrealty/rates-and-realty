@@ -928,6 +928,52 @@ const SPECS = [
       ['document.querySelector("#lpEscrowFindBox .lpEscFileBtn").textContent', 'Filed ✓'],
     ],
   },
+  {
+    /* MASKED PHONES MUST NEVER REACH A DIAL PATH.
+     *
+     * mask_phone keeps the last two digits — '(•••) •••-••28' — and dialer.js's
+     * toE164 fell through to '+' + digits, so a VA pressing Call dialled '+28'.
+     * Six live contacts mask to that. It could not connect, nothing said why,
+     * and the row sat at 'ringing' for ever.
+     *
+     * BOTH DIRECTIONS, because a guard that refuses everything also stops the
+     * bug and would be worse than the bug. Real numbers must still dial. */
+    name: 'masked phones are refused by every dial path; real ones still dial',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'va',
+    evals: [
+      // The mask is recognised as a mask, not as a number.
+      ['RRPhone.isMasked("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u202228")', true],
+      ['RRPhone.isMasked("(714) 555-0142")', false],
+      // REFUSED, with a reason a VA can act on.
+      ['RRPhone.dialable("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u202228").ok', false],
+      ['RRPhone.dialable("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u202228").reason', 'masked'],
+      ['RRPhone.dialable("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u202228").message.indexOf("hidden for your role") >= 0', true],
+      // THE ORIGINAL BUG, asserted directly: never '+28'.
+      ['RRPhone.toE164("(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u202228")', null],
+      // Real numbers are untouched, in every shape the CRM stores.
+      ['RRPhone.toE164("7145550142")', '+17145550142'],
+      ['RRPhone.toE164("(714) 555-0142")', '+17145550142'],
+      ['RRPhone.toE164("17145550142")', '+17145550142'],
+      ['RRPhone.toE164("+17145550142")', '+17145550142'],
+      // No fallback for junk — this is the line that used to invent numbers.
+      ['RRPhone.dialable("28").ok', false],
+      ['RRPhone.toE164("28")', null],
+
+      /* THE DIALER ITSELF REFUSES, not just the helper. Opens the call modal on
+         a masked contact and presses Call; the refusal must be on screen and
+         the Twilio device must never be reached. */
+      ['(async function(){'
+        + ' window.openCallModal({ id:"'+FIXTURE+'", first_name:"ZZ-TEST", last_name:"Masked", phone:"(\\u2022\\u2022\\u2022) \\u2022\\u2022\\u2022-\\u202228" });'
+        + ' document.getElementById("cmStartBtn").click();'
+        + ' await new Promise(function(r){ setTimeout(r,500); });'
+        + ' var n=document.getElementById("cmDialRefusal");'
+        + ' return n ? (n.textContent.indexOf("hidden for your role")>=0 ? "refused with reason" : "refused, no reason") : "DIALLED"; })()',
+       'refused with reason'],
+      // The SDK was never even fetched — refusal happens before getDevice().
+      ['!!window._rrTwilioSdkP', false],
+    ],
+  },
   /* ── EMPTY SEARCH TELLS THE TRUTH ─────────────────────────────────────────
    * The reported bug: searching SC-27335-BU in Full mailbox said "Nothing in
    * Inbox" while that thread was visible in the same lead's filed list. The
