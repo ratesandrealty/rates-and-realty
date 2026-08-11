@@ -28,7 +28,7 @@
     .pac-icon{display:none!important;}
     .pac-logo::after{display:none!important;}
   </style>
-  <script src="/admin/js/auth-guard.js?v=2ce0523f20"></script>
+  <script src="/admin/js/auth-guard.js?v=fe7946aab7"></script>
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
   <!-- Loaded after auth-guard so window._supabaseClient exists when fnFetch reads it. -->
   <script src="/admin/js/fn-call.js?v=85d03d2a98"></script>
@@ -41,7 +41,7 @@
        runtime, and removes any load-order question on the page where the dialer
        matters most. Both mounts are idempotent (window._rrDialerLoaded plus the
        script-src check in auth-guard), so this does not double-load. -->
-  <script src="/admin/js/dialer.js?v=f8d6e18aa0"></script>
+  <script src="/admin/js/dialer.js?v=acf4c0a587"></script>
   <script src="/admin/js/crm-comms.js?v=077bc202a3"></script>
   <script src="/admin/js/notif-bell.js?v=ce05693d65"></script>
   <script>
@@ -10715,6 +10715,16 @@ async function lpRenderSnapshot(cid){
   const el = document.getElementById('lpSnapshotBody'); if(!el) return;
   let app = {};
   try { app = (typeof _fetchAppRowForContact==='function') ? (await _fetchAppRowForContact(cid))||{} : {}; } catch(_){}
+  /* ESCROW # — loan_orders.reference on the order_type='escrow' row. Read from
+     the BASE TABLE, not a masking view, so the VA sees the same value the admin
+     does; loan_orders RLS is `is_admin() OR is_lead_shared_with_me(contact_id)`,
+     which is the real gate and is the same one that let her open this lead. */
+  try {
+    const _eo = await _authClient().from('loan_orders').select('reference,status')
+      .eq('contact_id',cid).eq('order_type','escrow').maybeSingle();
+    _lpEscrowRef    = (_eo && _eo.data && _eo.data.reference) || '';
+    _lpEscrowStatus = (_eo && _eo.data && _eo.data.status) || '';
+  } catch(_){ _lpEscrowRef=''; _lpEscrowStatus=''; }
   const c = (typeof contactData!=='undefined'&&contactData)?contactData:{};
   const money = v => (v||v===0)?'$'+Number(v).toLocaleString():'—';
   const tcase = v => (!v || v==='—') ? (v||'—') : String(v).replace(/_+/g,' ').split(/\s+/).map(w=>({fha:'FHA',va:'VA',usda:'USDA',heloc:'HELOC',arm:'ARM'}[w.toLowerCase()] || (w.charAt(0).toUpperCase()+w.slice(1).toLowerCase()))).join(' ');
@@ -10772,12 +10782,26 @@ async function lpRenderSnapshot(cid){
     + '<div style="font-size:14px;color:#fff;font-weight:600;display:flex;align-items:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
     + (c.loan_number ? lpEsc(c.loan_number) : '<span style="color:rgba(255,255,255,.4);">—</span>') + _subBadge + '</div></div>';
 
+  /* ESCROW # — sits directly after LOAN #, so it starts the second row ahead of
+     LOCKED RATE. Deliberately NOT gated on _ro: visible AND editable for the VA
+     as well as the admin, the same call already made for LOAN #. The pencil is
+     the LENDER treatment reused, not a second editing affordance. */
+  const _escVal = _lpEscrowRef
+    ? lpEsc(_lpEscrowRef)
+    : '<span style="color:rgba(255,255,255,.4);">—</span>';
+  const escrowCell = '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">Escrow #</div>'
+    + '<div style="display:flex;align-items:center;gap:6px;font-size:14px;color:#fff;font-weight:600;">'
+    + '<span onclick="lpSnapEdit(\'escrow_ref\',event)" title="Click to edit" style="cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.18);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+_escVal+'</span>'
+    + '<span onclick="lpSnapEdit(\'escrow_ref\',event)" title="Edit escrow number" style="flex-shrink:0;cursor:pointer;color:rgba(255,255,255,.55);font-size:13px;">✎</span>'
+    + '</div></div>';
+
   el.innerHTML = cell('Borrower',lpEsc(name))
     + propCell
     + ecell('Loan Amount','loan_amount',money(c.loan_amount))
     + ecell('Type / Purpose','type_purpose',lpEsc(tcase(c.loan_type||c.closing_loan_type||'—')+' · '+tcase(c.loan_purpose||'—')))
     + lenderCell
     + loanNumCell
+    + escrowCell
     + lpLockedRateCellHtml(app, _ro)
     + ecell('Lock Expires','rate_lock_expiry',dd(app.rate_lock_expiry)+lockChip)
     + ecell('Pipeline','pipeline_status',lpEsc(c.pipeline_status||'—'))
@@ -11548,6 +11572,13 @@ const LP_TRACKER_COLORS = { grey:'#8a8a8a', red:'#f87171', yellow:'#E0B84C', gre
 const LP_VOE_OWNERS = [ {v:'',t:'Owner…'}, {v:'va',t:'VA'}, {v:'me',t:'Me'}, {v:'both',t:'Both'} ];
 let _lpOrders = {};           // order_type → single-row state
 let _lpVendorNames = {};      // vendor_id → "Name — Company"
+/* Escrow # shown in the Loan Snapshot. Held here rather than read off the DOM so
+   the editor prefills the STORED value, not the rendered em dash. _lpEscrowStatus
+   is carried because loan_order_set requires a status and must not advance one:
+   passing the existing value keeps `p_status is distinct from old` false, so no
+   spurious activity_events row is written just because someone typed a number. */
+let _lpEscrowRef = '';        // loan_orders.reference where order_type='escrow'
+let _lpEscrowStatus = '';     // that row's current status ('' when no row yet)
 let _lpVendTimers = {};       // key → search debounce
 let _lpVendCache = {};        // key → last vendor_directory_list rows
 let _lpVoes = [];             // VOE card list (multiple per loan)
@@ -17365,8 +17396,14 @@ async function lpScheduleLockReminders(){
      rate no longer creates duplicate ClickUp tasks from the browser. */
   return;
 }
+/* Snapshot fields a VA may edit as well as an admin. Everything else in the
+   snapshot is admin-only, which is why the gate below is a blanket early
+   return — but the escrow number is operational, not sensitive, and the VA is
+   usually the one who has it. Same reasoning as LOAN #, which reads straight
+   from contacts rather than contacts_secure so it is not masked for her. */
+const LP_SNAP_STAFF_KEYS = ['escrow_ref'];
 function lpSnapEdit(key, ev){
-  if (typeof _ldNonAdmin === 'function' && _ldNonAdmin()) return;
+  if (LP_SNAP_STAFF_KEYS.indexOf(key) < 0 && typeof _ldNonAdmin === 'function' && _ldNonAdmin()) return;
   try{ ev&&ev.stopPropagation&&ev.stopPropagation(); }catch(_){}
   const old=document.getElementById('lpSnapEditor'); if(old) old.remove();
   const cid=lpCid(); if(!cid) return;
@@ -17377,7 +17414,29 @@ function lpSnapEdit(key, ev){
   const lbl='font-size:10px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:.5px;';
   const c=(typeof contactData!=='undefined'&&contactData)?contactData:{};
   let bodyHtml='', commit;
-  if(key==='type_purpose'){
+  if(key==='escrow_ref'){
+    /* loan_orders.reference on the contact's order_type='escrow' row. No new
+       column, and loan_order_set UPSERTS — so the escrow order row is created
+       on first save if it does not exist yet. */
+    bodyHtml='<div style="'+lbl+'">Escrow #</div><input id="lpSnapEscrow" type="text" autocomplete="off" placeholder="Escrow / order number" style="'+inStyle+'">';
+    setTimeout(()=>{ const e=document.getElementById('lpSnapEscrow'); if(e){ e.value=(_lpEscrowRef||''); e.focus(); e.select(); } },10);
+    commit=async ()=>{
+      const e=document.getElementById('lpSnapEscrow');
+      const v=e?(e.value||'').trim():'';
+      /* '' NOT null on a clear. loan_order_set does
+         `reference = coalesce(p_reference, reference)`, so passing null LEAVES
+         THE OLD VALUE and the field silently refuses to clear. Empty string
+         writes through, and lpRenderSnapshot renders '' as the em dash. */
+      const r=await _authClient().rpc('loan_order_set',{
+        p_contact_id:cid, p_order_type:'escrow',
+        p_status:(_lpEscrowStatus||'not_ordered'),   // keep the existing status; never advance it
+        p_reference:v
+      });
+      if(r && r.error) throw r.error;
+      _lpEscrowRef=v;
+      lpRenderSnapshot(cid);
+    };
+  } else if(key==='type_purpose'){
     const tSel=document.getElementById('pricingLoanType'), pSel=document.getElementById('pricingLoanPurpose');
     bodyHtml='<div style="'+lbl+'">Loan Type</div><select id="lpSnapInT" style="'+inStyle+'">'+(tSel?tSel.innerHTML:'<option value=\"\">—</option>')+'</select>'
             +'<div style="'+lbl+'">Loan Purpose</div><select id="lpSnapInP" style="'+inStyle+'">'+(pSel?pSel.innerHTML:'<option value=\"\">—</option>')+'</select>';

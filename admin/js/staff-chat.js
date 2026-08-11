@@ -85,7 +85,14 @@
     if (anyUploading()) { scToast('Waiting for upload…'); return; }
     var atts = _pending.filter(function (p) { return !p._error && p.storage_path; })
       .map(function (p) { return { storage_path: p.storage_path, file_name: p.file_name, mime_type: p.mime_type, size_bytes: p.size_bytes, kind: p.kind }; });
-    if (!body && !atts.length) return;              // nothing to send
+    if (!body && !atts.length) {
+      /* Say WHICH nothing. An empty box is the user's own doing and needs no
+         message, but a tray holding only failed uploads looks like a message
+         ready to send — and returning silently there is indistinguishable from
+         a broken button. */
+      if (_pending.length) scToast('Those attachments failed to upload — remove them or try again');
+      return;
+    }
     try {
       var row = await rpc('staff_message_send', { p_thread: _active, p_body: body, p_attachments: atts });
       if (inp) inp.value = '';
@@ -267,6 +274,17 @@
 
   // ── attachments: upload / stage / signed-URL render ───────────────────────
   var MAX_BYTES = 100 * 1024 * 1024;
+  /* Generous: 100 MB over a slow uplink is legitimately minutes. This is a
+     backstop against a wait that never ends, not a performance budget. */
+  var UPLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+  function withTimeout(promise, ms, msg) {
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      var t = setTimeout(function () { if (!done) { done = true; reject(new Error(msg)); } }, ms);
+      promise.then(function (v) { if (!done) { done = true; clearTimeout(t); resolve(v); } },
+                   function (e) { if (!done) { done = true; clearTimeout(t); reject(e); } });
+    });
+  }
   function safeName(n) { return (String(n || 'file').replace(/[^\w.\-]+/g, '_').replace(/_+/g, '_').slice(0, 120)) || 'file'; }
   function kindOf(mime) {
     var m = (mime || '').toLowerCase();
@@ -288,7 +306,26 @@
     setTimeout(function () { t.classList.remove('show'); setTimeout(function () { t.remove(); }, 300); }, 3200);
   }
   function anyUploading() { return _pending.some(function (p) { return p._uploading; }); }
-  function updateSendState() { var b = document.querySelector('[data-sc-send]'); if (b) b.disabled = anyUploading(); }
+  /* NEVER DISABLE SEND. This used to be `b.disabled = anyUploading()`, and a
+   * disabled button is the one failure mode that produces NO signal at all: the
+   * browser fires no click, so there is no handler, no toast, no console error
+   * and no network call — the button simply stops working, at .5 opacity that
+   * reads as styling. "Send does nothing" is exactly what that looks like.
+   *
+   * It only needed one upload that never settles to become permanent. Both
+   * paths in stageFile clear _uploading, so the stuck case is an await that
+   * never returns — a large recording or a dropped file on a connection that
+   * drops mid-transfer, which is why UPLOAD_TIMEOUT_MS below exists as well.
+   *
+   * send() already refuses and SAYS SO ("Waiting for upload…"), so leaving the
+   * button live loses nothing and turns a dead control into a sentence. The
+   * class of bug is the point: a control that silently declines to work is
+   * worse than one that fails loudly, and the harness cannot see the difference
+   * unless the button is clickable. */
+  function updateSendState() {
+    var b = document.querySelector('[data-sc-send]');
+    if (b) { b.disabled = false; b.classList.toggle('sc-waiting', anyUploading()); }
+  }
   function renderTray() {
     var tray = document.getElementById('sc-attach-tray'); if (!tray) return;
     if (!_pending.length) { tray.innerHTML = ''; tray.style.display = 'none'; return; }
@@ -316,7 +353,15 @@
     try {
       var sb = await client();
       var path = _active + '/' + crypto.randomUUID() + '-' + safeName(file.name);
-      var up = await sb.storage.from('chat-attachments').upload(path, file, { contentType: item.mime_type, upsert: false });
+      /* BOUND THE WAIT. supabase-js puts no timeout on the upload fetch, so a
+         connection that drops mid-transfer leaves this await pending for as
+         long as the OS keeps the socket — minutes, sometimes indefinitely. The
+         item then sits _uploading forever and every send is refused. Losing the
+         upload is recoverable (the tray shows ⚠ and Remove); a composer that
+         never recovers is not. */
+      var up = await withTimeout(
+        sb.storage.from('chat-attachments').upload(path, file, { contentType: item.mime_type, upsert: false }),
+        UPLOAD_TIMEOUT_MS, 'Upload timed out — check your connection and try again');
       if (up.error) throw up.error;
       item.storage_path = path; item._uploading = false;
     } catch (e) {
@@ -1024,6 +1069,9 @@
       '.sc-cbtn{background:transparent;border:none;color:#9a9a9a;font-size:17px;cursor:pointer;padding:4px 5px;border-radius:6px;line-height:1;flex-shrink:0}',
       '.sc-cbtn:hover{color:#fff;background:rgba(255,255,255,.06)}',
       '.sc-send:disabled{opacity:.5;cursor:default}',
+      // Send stays CLICKABLE while an upload runs — see updateSendState. This
+      // only signals the wait; the refusal itself is spoken by send().
+      '.sc-send.sc-waiting{opacity:.7}',
       '.sc-attach-tray{display:none;flex-wrap:wrap;gap:6px;padding:8px 12px 0}',
       '.sc-tray-item{display:flex;align-items:center;gap:6px;max-width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:4px 6px 4px 8px;font-size:11px;color:#ddd}',
       '.sc-tray-item.is-error{border-color:rgba(229,72,77,.5);color:#f2a5a7}',

@@ -309,32 +309,49 @@ async function callingHours(toPhone: string): Promise<HoursVerdict> {
  * 14 contacts, so this is not hypothetical.
  *
  * Zero matches -> null, which is honest: it really is an ad-hoc number. */
+/* `matches` is ADDITIVE. contactId/note keep their exact meaning so the dial
+ * path is byte-for-byte unchanged — it reads neither field. It exists so the
+ * manual-attach UI can reuse THIS matcher rather than growing a second one that
+ * drifts from the last-10 rule and the multi-match refusal above.
+ *
+ * It carries id + names ONLY. No phone, no email, not even partially: this
+ * endpoint turns a phone number into a borrower identity, so anything extra in
+ * the body is a disclosure the caller did not need to make the choice. The
+ * disambiguator for two people with the same name is pipeline_status, never a
+ * contact detail. */
+type PhoneMatch = { id: string; first_name: string | null; last_name: string | null; pipeline_status: string | null };
 async function resolveContactByPhone(
   toPhone: string,
-): Promise<{ contactId: string | null; note: string | null }> {
+): Promise<{ contactId: string | null; note: string | null; matches: PhoneMatch[] }> {
   const last10 = (toPhone || '').replace(/\D/g, '').slice(-10);
-  if (last10.length !== 10) return { contactId: null, note: null };
+  if (last10.length !== 10) return { contactId: null, note: null, matches: [] };
   try {
     const { data } = await sb.from('contacts')
-      .select('id, first_name, last_name, phone')
+      .select('id, first_name, last_name, phone, pipeline_status')
       .or(`phone.ilike.%${last10}%,secondary_phone.ilike.%${last10}%`)
       .limit(10);
     const rows = (data as any[]) || [];
     /* ilike %digits% is a loose net — it also matches a longer number that
      * merely contains these ten. Narrow to an exact last-10 comparison. */
     const exact = rows.filter((r) => String(r.phone || '').replace(/\D/g, '').slice(-10) === last10);
-    if (exact.length === 1) return { contactId: exact[0].id, note: null };
+    // Built by hand, not by spreading r — a spread would carry `phone` straight
+    // into the response the moment the select above gains a column.
+    const matches: PhoneMatch[] = exact.map((r) => ({
+      id: r.id, first_name: r.first_name ?? null, last_name: r.last_name ?? null,
+      pipeline_status: r.pipeline_status ?? null,
+    }));
+    if (exact.length === 1) return { contactId: exact[0].id, note: null, matches };
     if (exact.length > 1) {
       const names = exact
         .map((r) => `${[r.first_name, r.last_name].filter(Boolean).join(' ').trim() || 'unnamed'} (${r.id})`)
         .join('; ');
       console.warn(`[twilio-voice] ${exact.length} contacts share ${last10} — not attaching: ${names}`);
-      return { contactId: null, note: `Not attached: ${exact.length} contacts share this number — ${names}` };
+      return { contactId: null, note: `Not attached: ${exact.length} contacts share this number — ${names}`, matches };
     }
-    return { contactId: null, note: null };
+    return { contactId: null, note: null, matches };
   } catch (e) {
     console.error('[twilio-voice] contact resolve failed:', String(e));
-    return { contactId: null, note: null };
+    return { contactId: null, note: null, matches: [] };
   }
 }
 
@@ -967,6 +984,42 @@ Deno.serve(async (req) => {
       if (!to) return err('Missing "to" phone number');
       const hours = await callingHours(formatPhone(to));
       return jsonRes(hours);
+    }
+
+    /* MANUAL ATTACH — resolve a number to candidate contacts so the dialer can
+     * attach an ad-hoc call a human recognises.
+     *
+     * Reuses resolveContactByPhone rather than matching here, so the last-10
+     * rule and the >1 refusal are the same code the automatic path uses. On more
+     * than one match it returns BOTH names and attaches nothing: the automatic
+     * path refuses because it cannot ask, and this one refuses to guess because
+     * it CAN — the human picks.
+     *
+     * Guarded by the blanket requireStaff above, which runs before req.json()
+     * and therefore covers this action by construction. That matters more here
+     * than for the dial actions: this one converts a phone number into a
+     * borrower's name, which is the enumeration shape people-admin had.
+     *
+     * RATE LIMITING — deliberately not added, and the reason is the caller set,
+     * not the volume. requireStaff means every request is an authenticated
+     * member of auth_user_roles, and there are TWO staff accounts on this
+     * project. An enumeration run is not anonymous here; it is attributable to
+     * one of two named people and shows up in this function's logs with
+     * uid= on every line. A limiter would add state that can wedge in exchange
+     * for slowing an attacker who already had to be handed a staff session — at
+     * which point they can read contacts directly through PostgREST anyway, with
+     * no limiter in front of it. If this endpoint ever loses requireStaff or the
+     * staff set grows past a handful, revisit that reasoning rather than
+     * inheriting this note. */
+    if (action === 'find_by_phone') {
+      if (!to) return err('Missing "to" phone number');
+      const r = await resolveContactByPhone(String(to));
+      /* Named fields only. No spread of the resolver's result — `note` embeds
+       * contact ids and names for the SERVER LOG and is not for a browser. */
+      return jsonRes({
+        matches: r.matches,
+        ambiguous: r.matches.length > 1,
+      });
     }
 
     if (action === 'make_call') {

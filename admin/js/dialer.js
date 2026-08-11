@@ -316,6 +316,114 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
     renderRecentMessages();
   }
 
+  /* ── MANUAL ATTACH ────────────────────────────────────────────────────────
+   * An ad-hoc pad call has contact_id null: resolveContactByPhone attaches on
+   * exactly one match and refuses on more than one, so a shared number and an
+   * unknown number both land here. This is how a human closes that gap.
+   *
+   * CONFIRMED against the live trigger, not assumed: tg_calls_log_advance_contact
+   * returns early while contact_id is null, so an ad-hoc call has NO
+   * activity_events row. calls_log_sync_activity fires AFTER UPDATE OF
+   * contact_id, finds no row for that calls_log_id, and INSERTS one. So attach
+   * CREATES the timeline entry — there is nothing to move. It also stamps
+   * contacts.last_contact_date and can advance New Lead → Contacted, which is
+   * correct but is a real write, so attaching is not a display-only act.
+   *
+   * WHAT IS SHOWN: names and pipeline stage. Never a phone or an email. Number
+   * search cannot run in the browser at all — contacts_secure gives a va
+   * mask_phone(phone), so a typed number could never match — so it goes to
+   * twilio-voice find_by_phone, which matches server-side and returns identity
+   * only. Name search stays on contacts_secure and stays masked as normal. */
+  var _attachBusy = false;
+  function attachPanelHtml() {
+    return '<div class="cm-divider"></div>' +
+      '<div class="cm-section-label">Not attached to a lead</div>' +
+      '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
+        '<input id="cmAttachQ" type="text" placeholder="Search name or number…" autocomplete="off" ' +
+          'style="flex:1;min-width:0;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);border-radius:7px;color:#eee;font-size:13px;padding:7px 9px;outline:none;">' +
+        '<button id="cmAttachGo" style="flex-shrink:0;background:rgba(201,168,76,.15);border:1px solid rgba(201,168,76,.5);color:#C9A84C;border-radius:7px;padding:0 12px;cursor:pointer;font-size:12px;font-weight:600;">Search</button>' +
+      '</div>' +
+      '<div id="cmAttachResults" style="font-size:12px;color:#888;"></div>';
+  }
+  function wireAttachPanel() {
+    var q = document.getElementById('cmAttachQ'), go = document.getElementById('cmAttachGo');
+    if (!q || !go) return;
+    go.addEventListener('click', runAttachSearch);
+    q.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); runAttachSearch(); } });
+  }
+  function attachResultsEl() { return document.getElementById('cmAttachResults'); }
+  function renderAttachCandidates(rows, srcLabel) {
+    var box = attachResultsEl(); if (!box) return;
+    if (!rows.length) { box.innerHTML = '<span style="color:#888;">No match. Try the other spelling, or search the number instead.</span>'; return; }
+    box.innerHTML =
+      (rows.length > 1
+        ? '<div style="color:#C9A84C;margin-bottom:6px;">' + rows.length + ' contacts match — pick the right one.</div>'
+        : '<div style="color:#666;margin-bottom:6px;">' + escapeHtml(srcLabel) + '</div>') +
+      rows.map(function (r) {
+        var nm = [r.first_name, r.last_name].filter(Boolean).join(' ').trim() || 'Unnamed contact';
+        /* pipeline_status is the ONLY disambiguator rendered. Two people with
+           the same name are told apart by stage, never by a contact detail. */
+        var stage = r.pipeline_status ? '<span style="color:#666;"> · ' + escapeHtml(r.pipeline_status) + '</span>' : '';
+        return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.06);">' +
+          '<span style="flex:1;min-width:0;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(nm) + stage + '</span>' +
+          '<button class="cm-attach-pick" data-cid="' + escapeHtml(r.id) + '" data-nm="' + escapeHtml(nm) + '" ' +
+            'style="flex-shrink:0;background:rgba(201,168,76,.15);border:1px solid rgba(201,168,76,.5);color:#C9A84C;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px;font-weight:600;">Attach</button>' +
+          '</div>';
+      }).join('');
+    Array.prototype.forEach.call(box.querySelectorAll('.cm-attach-pick'), function (b) {
+      b.addEventListener('click', function () { pickAttach(b.getAttribute('data-cid'), b.getAttribute('data-nm')); });
+    });
+  }
+  async function runAttachSearch() {
+    if (_attachBusy) return;
+    var q = document.getElementById('cmAttachQ'); if (!q) return;
+    var raw = (q.value || '').trim(); if (!raw) return;
+    var box = attachResultsEl(); if (box) box.innerHTML = '<span style="color:#888;">Searching…</span>';
+    _attachBusy = true;
+    try {
+      var digits = raw.replace(/\D/g, '');
+      if (digits.length >= 10) {
+        // NUMBER → server. The browser cannot do this: a va's contacts_secure
+        // phone is masked, so a typed number matches nothing there, silently.
+        var res = await _voiceFetch({ action: 'find_by_phone', to: digits });
+        /* Check the STATUS. _voiceFetch hands back a Response, so a 401/403 body
+           parses happily into an object with no .matches and would render as
+           "No match" — a refusal disguised as an empty result, which is the
+           failure the inbox panel note warns about. */
+        var jr = await res.json().catch(function () { return null; });
+        if (!res.ok) throw new Error((jr && (jr.error || jr.message)) || ('lookup refused (' + res.status + ')'));
+        renderAttachCandidates((jr && jr.matches) || [], 'Matched by number');
+      } else {
+        // NAME → contacts_secure, masked exactly as everywhere else.
+        var cl = (window._supabaseClient || null);
+        if (!cl) { if (box) box.innerHTML = '<span style="color:#E05454;">Not signed in — reload and try again.</span>'; return; }
+        var esc = raw.replace(/[,()*]/g, ' ');
+        var r = await cl.from('contacts_secure')
+          .select('id,first_name,last_name,pipeline_status')
+          .or('first_name.ilike.*' + esc + '*,last_name.ilike.*' + esc + '*')
+          .limit(8);
+        if (r && r.error) throw r.error;
+        renderAttachCandidates(r.data || [], 'Matched by name');
+      }
+    } catch (e) {
+      if (box) box.innerHTML = '<span style="color:#E05454;">Search failed: ' + escapeHtml((e && e.message) || 'error') + '</span>';
+    } finally { _attachBusy = false; }
+  }
+  function pickAttach(cid, nm) {
+    if (!cid) return;
+    /* Attach is local until Save & close: saveAndClose sends contact_id on
+       log_call, the server sets it on the calls_log row, and the trigger writes
+       the timeline entry. Nothing is written here, so cancelling costs nothing. */
+    currentContact = currentContact || {};
+    currentContact.id = cid;
+    currentContact.name = nm || currentContact.name;
+    var box = attachResultsEl();
+    if (box) box.innerHTML = '<span style="color:#3ddc84;">Will attach to ' + escapeHtml(nm || 'this lead') + ' on save.</span>';
+    var lbl = document.getElementById('cmAttachLabel');
+    if (lbl) lbl.textContent = 'Attaching to ' + (nm || 'lead');
+  }
+  function needsAttach() { return !(currentContact && currentContact.id); }
+
   function renderRecentMessages() {
     footer.innerHTML =
       '<div class="cm-divider"></div>' +
@@ -387,7 +495,11 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
     footer.innerHTML =
       '<div class="cm-divider"></div>' +
       '<div class="cm-section-label">Live notes</div>' +
-      '<textarea class="cm-notes" id="cmLiveNotes" placeholder="Type call notes — saved with call log..."></textarea>';
+      '<textarea class="cm-notes" id="cmLiveNotes" placeholder="Type call notes — saved with call log..."></textarea>' +
+      // DURING the call as well as after: the name is usually offered in the
+      // first ten seconds, and that is when it is easiest to file.
+      (needsAttach() ? attachPanelHtml() : '');
+    if (needsAttach()) wireAttachPanel();
   }
 
   function renderEnded() {
@@ -409,7 +521,11 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
         '<button class="cm-outcome-btn danger" data-outcome="not_interested">Not interested</button>' +
       '</div>' +
       '<textarea class="cm-notes" id="cmEndNotes" placeholder="Add call notes..." style="height: 56px; margin-bottom: 12px;">' + escapeHtml(liveNotes) + '</textarea>' +
+      // AFTER the call too — this is where an unattached call would otherwise be
+      // saved with contact_id null and never surface on anyone's timeline.
+      (needsAttach() ? attachPanelHtml() + '<div style="height:10px;"></div>' : '') +
       '<button class="cm-save" id="cmSaveBtn">Save & close</button>';
+    if (needsAttach()) wireAttachPanel();
     document.querySelectorAll('#cmOutcomeGrid .cm-outcome-btn').forEach(function(btn) {
       btn.addEventListener('click', function() {
         document.querySelectorAll('#cmOutcomeGrid .cm-outcome-btn').forEach(function(b) { b.classList.remove('selected'); });
@@ -426,10 +542,15 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
    * key (printed in this page's own source, identifying nobody) was the wrong
    * credential for it by a wide margin.
    *
-   * FRONTEND HALF ONLY — twilio-voice still has no guard on its JSON actions, so
-   * a mistake here shows up as a dialer that still works rather than an outage.
-   * No anon fallback: a fallback authenticates nobody and turns a clear "not
-   * signed in" into an unexplainable 401 once the guard lands. */
+   * THE GUARD HAS LANDED. twilio-voice calls requireStaff ONCE, before
+   * req.json(), so every JSON action is covered — including ones added later,
+   * find_by_phone among them. This comment used to say the opposite and was
+   * simply out of date; the sentence it replaced described the state of the
+   * function before the guard shipped.
+   *
+   * So there is no anon fallback and there must not be one: a fallback
+   * authenticates nobody, and against a guard that IS enforcing it turns a clear
+   * "not signed in" into an unexplainable 401. */
   function _voiceFetch(payload) {
     if (typeof window.fnFetch !== 'function') {
       return Promise.reject(new Error('fn-call.js is not loaded — cannot call twilio-voice as the signed-in user.'));

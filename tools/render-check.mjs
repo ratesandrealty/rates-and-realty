@@ -80,9 +80,13 @@ function fail(msg) { console.error('\nREFUSED: ' + msg); process.exit(2); }
  * than throwing: the harness is asserting on RENDERING, and a stub that throws
  * would produce console errors that the harness then reports as page failures —
  * turning gaps in the stub into false alarms about the page. */
-function stubSource(role, email, stubRow, rpcMap, fetchMap) {
+function stubSource(role, email, stubRow, rpcMap, fetchMap, rpcFns) {
+  const fnsSrc = '{' + Object.entries(rpcFns || {})
+    .map(([k, src]) => `${JSON.stringify(k)}: (${src})`).join(',') + '}';
   return `(() => {
     const RES = (data) => Promise.resolve({ data, error: null });
+    const RPC_STATE = {};
+    const RPC_FNS = ${fnsSrc};
     const q = () => { const t = RES([]);
       const h = { then: t.then.bind(t), catch: t.catch.bind(t), finally: t.finally.bind(t) };
       for (const m of ['select','insert','update','upsert','delete','eq','neq','gt','gte','lt','lte',
@@ -111,9 +115,19 @@ function stubSource(role, email, stubRow, rpcMap, fetchMap) {
          be asserted on. Unnamed RPCs still return [] — a page must not depend on
          the harness knowing every call it makes. */
       from: q,
-      rpc: (n) => (n === 'current_app_role' ? RES(${JSON.stringify(role)})
+      /* STATEFUL RPCs (spec.rpcFns). A fixed response per name cannot express
+         write-then-read: click Send, the page calls staff_message_send and then
+         re-fetches staff_thread_messages, and a constant reply hands back the
+         list from BEFORE the send — wiping the message the page correctly
+         rendered. The harness then reports a working page as broken, which is
+         the stub-under-delivers failure this file has already hit twice.
+         Each entry is (args, state) => data, sharing one mutable state object,
+         so a spec can model the write its assertion depends on. */
+      rpc: (n, args) => (n === 'current_app_role' ? RES(${JSON.stringify(role)})
+                 : (Object.prototype.hasOwnProperty.call(RPC_FNS, n)
+                    ? RES(RPC_FNS[n](args || {}, RPC_STATE))
                  : (Object.prototype.hasOwnProperty.call(${JSON.stringify(rpcMap || {})}, n)
-                    ? RES(${JSON.stringify(rpcMap || {})}[n]) : RES([]))),
+                    ? RES(${JSON.stringify(rpcMap || {})}[n]) : RES([])))),
       functions: { invoke: () => RES({}) },
       storage: { from: () => ({ list: () => RES([]), createSignedUrl: () => RES({ signedUrl: '' }),
                                 upload: () => RES({}), remove: () => RES([]) }) },
@@ -343,7 +357,96 @@ const SPECS = [
     present: ['.gm-rail', '[data-fd="INBOX"]'],
     absent: ['.gm-rail-scoped'],
   },
+  {
+    /* SEND MUST SEND. Rene reported Send doing nothing while the button rendered
+     * perfectly — the same shape as #shell being present and empty. Asserting
+     * that [data-sc-send] EXISTS passes on a dead button, so this spec types a
+     * body, clicks Send, and asserts the text reaches the message pane.
+     *
+     * The absent-assertion is paired with a present one on purpose: #sc-input
+     * must be there, or "the composer did not clear" and "the composer never
+     * mounted" are the same green.
+     *
+     * Boundary: this proves the BROWSER path — handler wired, send() reached,
+     * RPC called with the body, result rendered. It says nothing about
+     * staff_message_send's own SQL, RLS, or the notification upsert behind it;
+     * the stub answers for all three. Those are proven against the real DB. */
+    name: 'staff chat Send actually sends',
+    url: '/admin/chat.html',
+    role: 'admin',
+    rpcFns: {
+      staff_threads_list: `(a, st) => { st.msgs = st.msgs || [{ id: 'm1', sender_user_id: 'u2',
+        sender_email: 'teammate@ratesandrealty.com', body: 'Existing message', mine: false,
+        created_at: new Date().toISOString(), attachments: [] }];
+        return [{ thread_id: 't-render-check', is_group: false, title: 'Render check thread',
+          last_message_at: new Date().toISOString(), last_message: 'Existing message',
+          last_sender: 'teammate@ratesandrealty.com', unread: 0,
+          others: [{ user_id: 'u2', email: 'teammate@ratesandrealty.com' }] }]; }`,
+      // NEWEST FIRST, matching the documented contract — the page re-reverses it.
+      staff_thread_messages: `(a, st) => (st.msgs || []).slice().reverse()`,
+      staff_message_send: `(a, st) => { const row = { id: 'm-sent', sender_user_id: null,
+        sender_email: 'render-check@local', body: a.p_body, mine: true,
+        created_at: new Date().toISOString(), attachments: a.p_attachments || [] };
+        st.msgs = (st.msgs || []).concat([row]); return row; }`,
+      staff_thread_mark_read: `() => null`,
+    },
+    steps: [
+      { click: '[data-sc-thread]', waitMs: 1500 },
+      { fill: '#sc-input', value: 'RC-SEND-PROBE', waitMs: 300 },
+      { click: '[data-sc-send]', waitMs: 2500 },
+    ],
+    present: ['#sc-full-messages', '#sc-input'],
+    expectText: ['RC-SEND-PROBE'],
+    // The composer clears only on a send that reached the RPC.
+    values: { '#sc-input': '' },
+  },
+  {
+    /* The SAME assertion against the FLOATING panel, which is the mount Rene
+     * actually reported and the one on 34 pages — chat.html is the only page
+     * using the full mount. Same composer markup, different container and a
+     * tab/open state in front of it, so one passing does not prove the other. */
+    name: 'staff chat Send actually sends — floating panel',
+    url: '/admin/people',
+    role: 'admin',
+    rpcFns: {
+      staff_threads_list: `(a, st) => { st.msgs = st.msgs || [{ id: 'm1', sender_user_id: 'u2',
+        sender_email: 'teammate@ratesandrealty.com', body: 'Existing message', mine: false,
+        created_at: new Date().toISOString(), attachments: [] }];
+        return [{ thread_id: 't-render-check', is_group: false, title: 'Render check thread',
+          last_message_at: new Date().toISOString(), last_message: 'Existing message',
+          last_sender: 'teammate@ratesandrealty.com', unread: 0,
+          others: [{ user_id: 'u2', email: 'teammate@ratesandrealty.com' }] }]; }`,
+      staff_thread_messages: `(a, st) => (st.msgs || []).slice().reverse()`,
+      staff_message_send: `(a, st) => { const row = { id: 'm-sent', sender_user_id: null,
+        sender_email: 'render-check@local', body: a.p_body, mine: true,
+        created_at: new Date().toISOString(), attachments: a.p_attachments || [] };
+        st.msgs = (st.msgs || []).concat([row]); return row; }`,
+      staff_thread_mark_read: `() => null`,
+    },
+    steps: [
+      { click: '[data-sc-toggle]', waitMs: 1800 },
+      { click: '[data-sc-thread]', waitMs: 1500 },
+      { fill: '#sc-input', value: 'RC-SEND-PROBE', waitMs: 300 },
+      { click: '[data-sc-send]', waitMs: 2500 },
+    ],
+    present: ['#sc-messages', '#sc-input'],
+    expectText: ['RC-SEND-PROBE'],
+    values: { '#sc-input': '' },
+  },
 ];
+
+/* BREAK TEST for the two Send specs above. tools/fixtures/dead-send.html is a
+ * composer with a perfect [data-sc-send] and NO handler behind it. Run it and
+ * the two specs must fail on it — if they pass, they are presence-only again
+ * and prove nothing:
+ *
+ *   node tools/render-check.mjs --url "file://<repo>/tools/fixtures/dead-send.html" \
+ *        --expect "#sc-input" --min-text 50
+ *
+ * or paste the fixture path into a spec's url with the same steps. Verified
+ * 2026-08-10: both assertions fire (composer never cleared, text never
+ * appeared) while #sc-input and #sc-messages are both present — which is the
+ * exact #shell-present-and-empty shape presence-only assertions miss. */
 
 // ── CDP plumbing ────────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -477,7 +580,7 @@ async function runSpec(spec, opts) {
         }))});}catch(e){}` });
     } else {
       await b.send('Page.addScriptToEvaluateOnNewDocument', {
-        source: stubSource(spec.role || 'admin', 'render-check@local', spec.stubRow, spec.rpc, spec.fetchMap),
+        source: stubSource(spec.role || 'admin', 'render-check@local', spec.stubRow, spec.rpc, spec.fetchMap, spec.rpcFns),
       });
     }
 
@@ -496,6 +599,20 @@ async function runSpec(spec, opts) {
     await sleep(spec.settleMs || 2500);
 
     for (const step of spec.steps || []) {
+      /* fill: put text in a field before the click that consumes it. Sets .value
+         and fires input+change, because a page may read either the property or
+         the event — and a fill that silently matched nothing would make the
+         click that follows look like the failure. */
+      if (step.fill) {
+        const r = await b.send('Runtime.evaluate', {
+          expression: `(()=>{const e=document.querySelector(${JSON.stringify(step.fill)});if(!e)return 'MISSING';
+            e.focus(); e.value=${JSON.stringify(step.value ?? '')};
+            e.dispatchEvent(new Event('input',{bubbles:true}));
+            e.dispatchEvent(new Event('change',{bubbles:true}));return 'ok';})()`,
+          returnByValue: true,
+        });
+        if (r.result.result.value === 'MISSING') problems.push(`step: nothing matched ${step.fill} to fill`);
+      }
       if (step.click) {
         const r = await b.send('Runtime.evaluate', {
           expression: `(()=>{const e=document.querySelector(${JSON.stringify(step.click)});if(!e)return 'MISSING';e.click();return 'ok';})()`,

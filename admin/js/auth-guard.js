@@ -270,7 +270,7 @@
     function mountStaffChat() {
       if (document.querySelector('script[src*="/admin/js/staff-chat.js"]')) return;
       const sc = document.createElement('script');
-      sc.src = '/admin/js/staff-chat.js?v=83bd7ededb';
+      sc.src = '/admin/js/staff-chat.js?v=338e1ce162';
       document.head.appendChild(sc);
     }
     // Universal help-video ⓘ buttons (window.HelpTopic). Same app-wide, idempotent
@@ -362,7 +362,7 @@
     function mountDialer() {
       if (window._rrDialerLoaded || document.querySelector('script[src*="/admin/js/dialer.js"]')) return;
       const dl = document.createElement('script');
-      dl.src = '/admin/js/dialer.js?v=f8d6e18aa0';
+      dl.src = '/admin/js/dialer.js?v=acf4c0a587';
       document.head.appendChild(dl);
     }
     function mountActionFab() {
