@@ -2860,7 +2860,7 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
         <div class="lp-card"><div class="lp-h">📇 Transaction Contacts</div><div id="lpContactsBody" style="overflow-x:auto;"></div></div>
         <div class="lp-card"><div class="lp-h">🏠 Appraisal Order</div><div id="lpApOrderBody"></div></div>
         <div class="lp-card"><div class="lp-h">🔑 Appraisal Portal</div><div id="lpAppraisalPortalBody"></div></div>
-        <div class="lp-card"><div class="lp-h"><span data-help-topic="crm.lead.loe" data-help-title="Letters of Explanation">✍️ Letters of Explanation</span><button type="button" onclick="loeOpenEditor(null)" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">+ New LOE</button></div><div id="lpLoeBody"></div></div>
+        <div class="lp-card"><div class="lp-h"><span data-help-topic="crm.lead.loe" data-help-title="Letters of Explanation">✍️ Letters of Explanation</span><span style="display:flex;gap:6px;align-items:center;"><button type="button" id="loePackageBtn" onclick="loeOpenPackage()" style="display:none;font-size:11px;font-weight:600;border:1px solid rgba(201,168,76,0.4);border-radius:6px;padding:4px 10px;background:transparent;color:#C9A84C;cursor:pointer;font-family:inherit;">📦 Send several</button><button type="button" onclick="loeOpenEditor(null)" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">+ New LOE</button></span></div><div id="lpLoeBody"></div></div>
         <div class="lp-card"><div class="lp-h">👥 Related People</div><div id="lpRelatedBody"></div></div>
         <div class="lp-card" id="lpShareCard" style="display:none;"><div class="lp-h">🔐 Shared with <span style="font-weight:400;color:rgba(255,255,255,.35);font-size:11px;">— VA access</span></div><div id="lpShareBody"></div></div>
         <div class="lp-card"><div class="lp-h"><span data-help-topic="crm.lead.esign" data-help-title="E-Signature">🖊️ E-Signature Status</span><button type="button" onclick="openEsignSendModal()" style="font-size:11px;font-weight:700;border:none;border-radius:6px;padding:4px 11px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;cursor:pointer;font-family:inherit;">Send for signature</button></div><div id="lpEsignLinks"></div><div id="lpEsignBody"></div></div>
@@ -14362,7 +14362,8 @@ async function lpLoadLoe(cid){
     if(res.error) throw res.error;
     _loeRows=(res.data||[]).slice().sort(function(a,b){ return (_rrD(b.created_at)).getTime() - (_rrD(a.created_at)).getTime(); });
     body.innerHTML=_loeListHtml(_loeRows);
-  }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load letters. '+lpEsc((e&&e.message)||'')+'</div>'; }
+    _loeSyncPackageBtn();
+  }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load letters. '+lpEsc((e&&e.message)||'')+'</div>'; _loeSyncPackageBtn(); }
 }
 function loeRefresh(){ lpLoadLoe(_loeCid()); }
 
@@ -14589,6 +14590,162 @@ function loePreviewSend(){
   +'</div>';
   document.body.appendChild(ov);
   ov.addEventListener('click', function(e){ if(e.target===ov) loeCloseModal('loePreviewOverlay'); });
+}
+
+/* ══ MULTI-LOE: several letters, ONE envelope ═══════════════════════════════
+ *
+ * loe-send has carried action:'send_package' with loe_ids[] and nothing called
+ * it, so the only way to send three letters was three separate envelopes — the
+ * borrower gets three emails and signs three times for one loan condition.
+ *
+ * THE SIGNER RULE IS THE WHOLE DESIGN OF THIS PICKER. The server refuses a
+ * package whose letters do not share one signer set:
+ *
+ *     "<title>" has different signers from the first letter.
+ *     Send it as its own package.
+ *
+ * and that is correct — one envelope goes to one set of people, so mixing them
+ * would silently send letter 2 to letter 1's borrowers. But a refusal you only
+ * meet AFTER choosing is a bad way to learn a rule. So this groups the drafted
+ * letters BY SIGNER SET and lets you select within one group at a time. The
+ * server's 400 is then unreachable from this UI rather than merely handled —
+ * the guard stays, because this is not the only caller and never will be.
+ *
+ * loe_list_for_lead gained signer_contact_ids for exactly this; without it the
+ * browser cannot see the rule it has to mirror. */
+var _loePkgGroup = null;   // signature of the signer set currently selected
+
+function _loeSignerSig(r){
+  var ids = (r && Array.isArray(r.signer_contact_ids) && r.signer_contact_ids.length)
+    ? r.signer_contact_ids.slice()
+    : [(r && r.contact_id) || ''];
+  return ids.filter(Boolean).sort().join(',');
+}
+/* Names for a signer set, from the same suggestions source the composer uses.
+   Falls back to the raw count rather than blanking — a group heading that says
+   nothing is worse than one that says "2 signers". */
+function _loePkgLabel(sig, nameMap){
+  var ids = String(sig || '').split(',').filter(Boolean);
+  var names = ids.map(function(i){ return nameMap[i] || ''; }).filter(Boolean);
+  if (names.length) return names.join(' + ');
+  return ids.length ? (ids.length + ' signer' + (ids.length > 1 ? 's' : '')) : 'No signers';
+}
+/* Shown only when there is something to do with it: two or more drafted
+   letters. One letter is what the row Send button is for. */
+function _loeSyncPackageBtn(){
+  var b = document.getElementById('loePackageBtn'); if(!b) return;
+  var n = _loeRows.filter(function(r){ return r.status === 'drafted' && r.body && String(r.body).trim(); }).length;
+  b.style.display = n >= 2 ? 'inline-flex' : 'none';
+  b.title = n >= 2 ? ('Send ' + n + ' drafted letters as one signing package') : '';
+}
+
+async function loeOpenPackage(){
+  var drafted = _loeRows.filter(function(r){ return r.status === 'drafted' && r.body && String(r.body).trim(); });
+  if(drafted.length < 2){ _loeToast('Draft at least two letters first.', true); return; }
+
+  var nameMap = {};
+  try{
+    var sug = await _authClient().rpc('esign_signer_suggestions', { p_contact_id: _loeCid() });
+    ((sug && sug.data) || []).forEach(function(s){ if(s.person_contact_id) nameMap[String(s.person_contact_id)] = s.name || ''; });
+  }catch(_){ /* names are a nicety; the grouping is what matters */ }
+
+  var groups = {};
+  drafted.forEach(function(r){ var s=_loeSignerSig(r); (groups[s] = groups[s] || []).push(r); });
+  var sigs = Object.keys(groups);
+  _loePkgGroup = null;
+
+  var inp='width:100%;background:#1A1A1D;border:1px solid rgba(201,168,76,0.18);border-radius:6px;color:#E0DDD4;font-size:13px;padding:9px 11px;outline:none;box-sizing:border-box;font-family:inherit;';
+  var rowsHtml = sigs.map(function(sig){
+    var head = '<div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.06em;margin:12px 0 6px;">'
+      + 'Signed by ' + lpEsc(_loePkgLabel(sig, nameMap)) + '</div>';
+    return head + groups[sig].map(function(r){
+      var title = lpEsc(r.title || r.topic || LOE_CAT_LABEL[r.category] || 'Letter of Explanation');
+      var cat = lpEsc(LOE_CAT_LABEL[r.category] || r.category || '');
+      return '<label class="loe-pkg-row" data-sig="'+lpEsc(sig)+'" style="display:flex;align-items:center;gap:9px;padding:8px 9px;border:1px solid rgba(255,255,255,0.07);border-radius:7px;margin-bottom:6px;cursor:pointer;">'
+        + '<input type="checkbox" class="loe-pkg-cb" value="'+lpEsc(r.id)+'" data-sig="'+lpEsc(sig)+'" style="width:15px;height:15px;accent-color:#C9A84C;cursor:pointer;flex-shrink:0;">'
+        + '<span style="min-width:0;"><span style="font-size:12.5px;color:#E0DDD4;display:block;">'+title+'</span>'
+        + (cat ? '<span style="font-size:10px;color:#888;">'+cat+'</span>' : '') + '</span></label>';
+    }).join('');
+  }).join('');
+
+  _loeModalShell('loePkgOverlay', 'Send several letters as one package',
+      '<div id="loePkgList">' + rowsHtml + '</div>'
+    + '<div id="loePkgNote" style="font-size:11px;color:#C9A84C;margin:10px 0 4px;min-height:15px;"></div>'
+    + '<div style="margin:10px 0 12px;"><label style="font-size:11px;color:#888;display:block;margin-bottom:5px;">Package title (optional)</label>'
+    +   '<input id="loePkgTitle" type="text" placeholder="e.g. Letters of explanation for underwriting" style="'+inp+'"></div>'
+    + '<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#bbb;cursor:pointer;margin-bottom:14px;">'
+    +   '<input type="checkbox" id="loePkgSms" checked style="width:15px;height:15px;accent-color:#C9A84C;cursor:pointer;"> Also text the signer(s)</label>'
+    + '<div style="display:flex;gap:8px;justify-content:flex-end;">'
+    +   '<button type="button" onclick="loeCloseModal(\'loePkgOverlay\')" style="border:1px solid rgba(255,255,255,0.15);background:transparent;color:#888;font-size:13px;font-weight:600;cursor:pointer;padding:0 14px;height:38px;border-radius:7px;font-family:inherit;">Cancel</button>'
+    +   '<button type="button" id="loePkgSendBtn" onclick="loeSendPackage()" style="border:none;border-radius:7px;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:13px;font-weight:700;cursor:pointer;padding:0 18px;height:38px;font-family:inherit;">Send as one package</button>'
+    + '</div>', false);
+
+  Array.prototype.forEach.call(document.querySelectorAll('#loePkgList .loe-pkg-cb'), function(cb){
+    cb.addEventListener('change', _loePkgOnPick);
+  });
+  _loePkgOnPick();
+}
+
+/* Locks selection to ONE signer group. Rows from the other groups are disabled
+   and dimmed rather than hidden — hiding them would read as "those letters
+   vanished", and the point is to show WHY they cannot be in this package. */
+function _loePkgOnPick(){
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('#loePkgList .loe-pkg-cb'));
+  var picked = boxes.filter(function(b){ return b.checked; });
+  _loePkgGroup = picked.length ? picked[0].getAttribute('data-sig') : null;
+
+  boxes.forEach(function(b){
+    var other = _loePkgGroup !== null && b.getAttribute('data-sig') !== _loePkgGroup;
+    b.disabled = other;
+    var row = b.closest('.loe-pkg-row');
+    if(row){ row.style.opacity = other ? '0.35' : '1'; row.style.cursor = other ? 'not-allowed' : 'pointer'; }
+  });
+
+  var note = document.getElementById('loePkgNote');
+  var btn = document.getElementById('loePkgSendBtn');
+  /* The greying is explained WHENEVER it is visible, not only once two letters
+     are picked. The first version put the "pick at least two" guidance and the
+     signer explanation on separate branches, so selecting one letter greyed
+     three rows out and said nothing about why — which is the disappearing
+     Create Folder button again, in miniature. The two messages are independent
+     facts, so they are shown independently. */
+  var msg = (picked.length < 2)
+    ? 'Pick at least two letters. One letter goes out with the row’s own Send button.'
+    : picked.length + ' letters selected — one email, one signing session.';
+  if(boxes.some(function(b){ return b.disabled; })) {
+    msg += ' The greyed-out letters have different signers — one envelope goes to one set of people, so they need their own package.';
+  }
+  if(note) note.textContent = msg;
+  if(btn){
+    var ok = picked.length >= 2;
+    btn.disabled = !ok;
+    btn.style.opacity = ok ? '1' : '0.45';
+    btn.style.cursor = ok ? 'pointer' : 'not-allowed';
+  }
+}
+
+async function loeSendPackage(){
+  var ids = Array.prototype.slice.call(document.querySelectorAll('#loePkgList .loe-pkg-cb'))
+    .filter(function(b){ return b.checked; }).map(function(b){ return b.value; });
+  if(ids.length < 2){ _loeToast('Pick at least two letters.', true); return; }
+  var title = (((document.getElementById('loePkgTitle')||{}).value)||'').trim();
+  var sms = !!((document.getElementById('loePkgSms')||{}).checked);
+  _loeBusy('loePkgSendBtn', true, 'Sending…');
+  try{
+    var data = await _loeInvoke('loe-send', {
+      action: 'send_package', loe_ids: ids, send_sms: sms,
+      document_title: title || undefined,
+    });
+    loeCloseModal('loePkgOverlay');
+    _loeToast((data.letters || ids.length) + ' letters sent as one package ✓');
+    loeRefresh();
+  }catch(e){
+    /* The server's refusals are specific and worth showing verbatim — "has
+       different signers", "already sent", "has no drafted body" each name the
+       letter at fault. Keep the modal open so the selection is still there. */
+    _loeToast('Package send failed: ' + ((e && e.message) || 'unknown error'), true);
+    _loeBusy('loePkgSendBtn', false);
+  }
 }
 
 // ── Row actions: quick send / status / signed / void / delete ──

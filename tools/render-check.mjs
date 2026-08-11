@@ -526,6 +526,101 @@ const SPECS = [
       ['document.getElementById("driveFolderBtn").title.includes("that is not a missing button")', true],
     ],
   },
+  {
+    /* MULTI-LOE. loe-send has carried action:'send_package' with loe_ids[] and
+     * nothing called it, so three letters meant three envelopes and the
+     * borrower signed three times for one loan condition.
+     *
+     * Three drafted letters: two share a signer set, the third does not. The
+     * spec picks the two, and asserts BOTH halves of the design —
+     *   · send_package fired with exactly those two loe_ids (calls[] + body), and
+     *   · the odd-signer letter was DISABLED rather than silently accepted.
+     * The second is the one worth having. The server refuses mixed signer sets,
+     * so a picker that lets you select them is not broken until you send, and
+     * then it is an error message instead of a rule you could see. */
+    name: 'multi-LOE package sends several letters as one envelope',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    rpc: {
+      esign_signer_suggestions: [
+        { name: 'ZZ-TEST Fixture Borrower', email: 'zz-test.fixture@example.invalid',
+          role: 'borrower', source: 'Primary borrower', person_contact_id: FIXTURE },
+      ],
+      loe_list_for_lead: [
+        { id: 'aaaaaaaa-0000-4000-8000-000000000001', contact_id: FIXTURE, status: 'drafted',
+          category: 'large_deposit', title: 'Large deposit March', body: 'Letter one body',
+          signer_contact_ids: [FIXTURE], created_at: '2026-08-11T10:00:00Z' },
+        { id: 'aaaaaaaa-0000-4000-8000-000000000002', contact_id: FIXTURE, status: 'drafted',
+          category: 'credit_inquiry', title: 'Credit inquiry April', body: 'Letter two body',
+          signer_contact_ids: [FIXTURE], created_at: '2026-08-11T09:00:00Z' },
+        /* Different signer set — the server would refuse this in the same
+           package, so the picker must not offer it alongside the other two. */
+        { id: 'aaaaaaaa-0000-4000-8000-000000000003', contact_id: FIXTURE, status: 'drafted',
+          category: 'employment_gap', title: 'Joint letter with co-borrower', body: 'Letter three body',
+          signer_contact_ids: [FIXTURE, '11111111-1111-4111-8111-111111111111'],
+          created_at: '2026-08-11T08:00:00Z' },
+      ],
+    },
+    steps: [
+      { click: '#tab-btn-processing', waitMs: 3000 },
+      { click: '#loePackageBtn', waitMs: 2000 },
+      { click: '.loe-pkg-cb[value="aaaaaaaa-0000-4000-8000-000000000001"]', waitMs: 400 },
+      { click: '.loe-pkg-cb[value="aaaaaaaa-0000-4000-8000-000000000002"]', waitMs: 400 },
+      { click: '#loePkgSendBtn', waitMs: 2500 },
+    ],
+    calls: ['loe-send'],
+    absent: ['#loePkgOverlay'],
+    evals: [
+      // Exactly the two same-signer letters, and the package action.
+      ['(function(){var c=(window.__RC_CALLS||[]).filter(function(x){return x.fn==="loe-send";}).pop();'
+        + 'return c&&c.body?c.body.action+":"+(c.body.loe_ids||[]).length:"(no call)";})()',
+       'send_package:2'],
+      ['(function(){var c=(window.__RC_CALLS||[]).filter(function(x){return x.fn==="loe-send";}).pop();'
+        + 'return c&&c.body&&(c.body.loe_ids||[]).indexOf("aaaaaaaa-0000-4000-8000-000000000003")>=0;})()',
+       false],
+    ],
+  },
+  {
+    /* The lock itself, asserted before the send rather than through it. Same
+     * three letters; pick ONE, and the odd-signer row must go disabled while
+     * its same-signer sibling stays selectable. Without this the spec above
+     * would still pass on a picker that simply happened not to be clicked. */
+    name: 'multi-LOE picker locks to one signer set',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    rpc: {
+      esign_signer_suggestions: [
+        { name: 'ZZ-TEST Fixture Borrower', email: 'zz-test.fixture@example.invalid',
+          role: 'borrower', source: 'Primary borrower', person_contact_id: FIXTURE },
+      ],
+      loe_list_for_lead: [
+        { id: 'aaaaaaaa-0000-4000-8000-000000000001', contact_id: FIXTURE, status: 'drafted',
+          category: 'large_deposit', title: 'Large deposit March', body: 'Letter one body',
+          signer_contact_ids: [FIXTURE], created_at: '2026-08-11T10:00:00Z' },
+        { id: 'aaaaaaaa-0000-4000-8000-000000000002', contact_id: FIXTURE, status: 'drafted',
+          category: 'credit_inquiry', title: 'Credit inquiry April', body: 'Letter two body',
+          signer_contact_ids: [FIXTURE], created_at: '2026-08-11T09:00:00Z' },
+        { id: 'aaaaaaaa-0000-4000-8000-000000000003', contact_id: FIXTURE, status: 'drafted',
+          category: 'employment_gap', title: 'Joint letter with co-borrower', body: 'Letter three body',
+          signer_contact_ids: [FIXTURE, '11111111-1111-4111-8111-111111111111'],
+          created_at: '2026-08-11T08:00:00Z' },
+      ],
+    },
+    steps: [
+      { click: '#tab-btn-processing', waitMs: 3000 },
+      { click: '#loePackageBtn', waitMs: 2000 },
+      { click: '.loe-pkg-cb[value="aaaaaaaa-0000-4000-8000-000000000001"]', waitMs: 500 },
+    ],
+    // Nothing sent — this spec is entirely about what the picker allows.
+    callsAbsent: ['loe-send'],
+    evals: [
+      ['document.querySelector(\'.loe-pkg-cb[value="aaaaaaaa-0000-4000-8000-000000000003"]\').disabled', true],
+      ['document.querySelector(\'.loe-pkg-cb[value="aaaaaaaa-0000-4000-8000-000000000002"]\').disabled', false],
+      // Send stays refused at one letter — that is the row button's job.
+      ['document.getElementById("loePkgSendBtn").disabled', true],
+    ],
+    expectText: ['different signers'],
+  },
   /* ── EMPTY SEARCH TELLS THE TRUTH ─────────────────────────────────────────
    * The reported bug: searching SC-27335-BU in Full mailbox said "Nothing in
    * Inbox" while that thread was visible in the same lead's filed list. The
