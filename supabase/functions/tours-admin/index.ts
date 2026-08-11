@@ -6,6 +6,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -168,6 +169,30 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   const ok = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, "Content-Type": "application/json" } });
   const err = (m: string, s = 400) => new Response(JSON.stringify({ error: m }), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
+
+  /* ── GUARD ────────────────────────────────────────────────────────────────
+   *
+   * Widest blast radius of the remaining senders, because it is the only one
+   * where the CALLER picks the recipient. `send_to_lead` and `cancel` text
+   * contact.phone for whatever contact_id the body names, using the service key,
+   * passing quiet_hours_bypass:"user_initiated" — so an anonymous caller could
+   * text any borrower in the CRM, at any hour, straight past the quiet-hours
+   * guard. Everything else here (create_tour, add_stop, …) writes borrower rows.
+   *
+   * NO allowInternal: every caller is a browser. All three were sending the ANON
+   * KEY, which is printed in the page and identifies nobody; they now send the
+   * signed-in user's session token and shipped FIRST, so a token mistake showed
+   * as a page that still worked rather than an outage.
+   *
+   * tour-builder.js is also loaded by two PUBLIC pages, but never mounted there
+   * — detectAdmin() only adds a CSS class and the UI is tb-admin-only, so every
+   * path that reaches this function belongs to a signed-in admin. Checked before
+   * writing this, because guarding it otherwise would have broken the public
+   * site.
+   *
+   * BEFORE req.json(). */
+  const _auth = await requireStaff(req, { what: "Tours" });
+  if (!_auth.ok) return err(_auth.msg || "not authorized", _auth.status || 401);
 
   try {
     const body = await req.json();

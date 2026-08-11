@@ -33,6 +33,14 @@ verify_jwt = false
 # false on the deployed copy but it was never pinned, so the next deploy of it
 # would break scheduled email exactly the same way.
 [functions.send-scheduled-emails]
+# Stays false: pg_cron job 3 cannot present a JWT at all.
+#
+# GUARDED 2026-08-11: requireStaff(req, { allowInternal: true }), before any body
+# parsing. This is the LAST HOP for every scheduled and campaign email —
+# campaign-send-now only queues email_log rows and this drains them — so open, it
+# let anyone flush the queue on demand. Job 3 was re-headered to
+# internal_call_headers() FIRST and observed returning 200 while this still
+# accepted anything.
 verify_jwt = false
 
 # Twilio posts here with no auth header either — SMS for +18668919394 and
@@ -542,9 +550,15 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.tours-admin]
-# Pinned at the value that is LIVE right now (false), NOT a change. Unguarded
-# in-function — belongs to the 64 in docs/OPEN-FINDINGS-2026-08-07.md. Pinning is
+# Pinned at the value that is LIVE right now (false), NOT a change. Pinning is
 # stability only and grants nothing; the anon key is a project-signed JWT.
+#
+# GUARDED 2026-08-11: requireStaff() in index.ts, before req.json(). It is no
+# longer one of the 64. Previously open with the service role, and the widest of
+# the senders because the CALLER picks the recipient — send_to_lead and cancel
+# text contact.phone for whatever contact_id the body names, with
+# quiet_hours_bypass="user_initiated". Its three browser callers were sending the
+# anon key and now send the signed-in user's session token.
 verify_jwt = false
 
 [functions.refi-watch]

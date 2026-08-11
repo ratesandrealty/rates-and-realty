@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -19,6 +20,28 @@ const cors = {
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+
+  /* ── GUARD ────────────────────────────────────────────────────────────────
+   *
+   * The LAST HOP for every scheduled and campaign email: campaign-send-now only
+   * writes email_log rows with status='scheduled', and this drains them. Open,
+   * it let anyone flush the whole queue on demand — sending marketing at any
+   * hour regardless of what it was scheduled for.
+   *
+   * allowInternal, and only that path matters: the sole caller is pg_cron job 3
+   * (every minute), which has no session and cannot hold the service key. It now
+   * sends x-internal-secret via internal_call_headers(). The job was re-headered
+   * FIRST and observed returning 200 (net._http_response id 382819, 06:37:00Z)
+   * while this still accepted anything, so a wrong header would have shown as a
+   * job that still worked — net.http_post never reads the response, which is how
+   * this function's SMS twin sat returning UNAUTHORIZED_NO_AUTH_HEADER for days.
+   *
+   * BEFORE any body parsing. */
+  const _auth = await requireStaff(req, { allowInternal: true, what: 'Sending scheduled email' });
+  if (!_auth.ok) {
+    return new Response(JSON.stringify({ error: _auth.msg || 'not authorized' }),
+      { status: _auth.status || 401, headers: { ...cors, 'Content-Type': 'application/json' } });
+  }
 
   try {
     // 1. Fetch scheduled emails that are now due

@@ -139,11 +139,25 @@ var allTours = [];
 var sortKey = 'scheduled_start';
 var sortDir = -1;
 
+/* The caller's SESSION token, never the anon key. tours-admin requires a real
+   staff session now — it can send an SMS to any borrower whose contact_id it is
+   handed, bypassing quiet hours, so "a key printed in this page" is not an
+   acceptable credential for it. */
+async function _toursToken() {
+  try {
+    var c = window._supabaseClient;
+    if (!c && window.supabase && window.APP_CONFIG) c = window.supabase.createClient(SB, SK);
+    if (!c) return '';
+    var r = await c.auth.getSession();
+    return (r && r.data && r.data.session && r.data.session.access_token) || '';
+  } catch (e) { return ''; }
+}
 async function toursAdmin(action, payload) {
   try {
+    var _tk = await _toursToken();
     var r = await fetch(SB + '/functions/v1/tours-admin', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SK },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + _tk },
       body: JSON.stringify(Object.assign({ action: action }, payload || {})),
     });
     return await r.json();

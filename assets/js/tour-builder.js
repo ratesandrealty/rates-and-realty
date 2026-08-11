@@ -66,13 +66,32 @@
     });
   }
 
+  /* SESSION token, not the anon key.
+     This file is loaded on two PUBLIC pages (property-detail, search-homes) as
+     well as the three admin ones, but it is never mounted there — detectAdmin()
+     only adds a CSS class, and the builder UI is tb-admin-only. So every path
+     that actually reaches api() belongs to a signed-in admin, who has a session.
+     A public visitor sends no token and gets a 401 from a UI they cannot see. */
+  function tbToken() {
+    try {
+      var c = window._supabaseClient;
+      if (!c && typeof window.supabase !== 'undefined') c = window.supabase.createClient(SUPABASE_URL, ANON_KEY);
+      if (!c) return Promise.resolve('');
+      return c.auth.getSession().then(function (r) {
+        return (r && r.data && r.data.session && r.data.session.access_token) || '';
+      }).catch(function () { return ''; });
+    } catch (e) { return Promise.resolve(''); }
+  }
+
   function api(action, payload, endpoint) {
     var ep = endpoint || 'tours-admin';
-    return fetch(SUPABASE_URL + '/functions/v1/' + ep, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + ANON_KEY },
-      body: JSON.stringify(Object.assign({ action: action }, payload || {})),
-    }).then(function (r) { return r.json(); }).catch(function (e) { return { error: e.message }; });
+    return tbToken().then(function (tk) {
+      return fetch(SUPABASE_URL + '/functions/v1/' + ep, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tk },
+        body: JSON.stringify(Object.assign({ action: action }, payload || {})),
+      }).then(function (r) { return r.json(); });
+    }).catch(function (e) { return { error: e.message }; });
   }
 
   // Direct PostgREST select on contacts (people-admin lacks search_contacts).
