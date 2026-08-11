@@ -728,3 +728,49 @@ Once confirmed: add `download` to the guarded set in `gdrive-proxy` (remove the
 `action !== "download"` exemption), redeploy, prove by refusal, and **update the
 `[functions.gdrive-proxy]` note in config.toml, which currently records the
 exemption as deliberate.**
+
+---
+
+# gdrive-proxy fully closed (2026-08-11)
+
+`download` guarded; the `action !== "download"` exemption is gone. Every action
+now runs `requireStaff` first.
+
+Verified by refusal — all ten actions, unauthenticated:
+
+```
+download create-folder create-borrower-folder upload-file rename
+list-folders list-files get-folder resolve-folder trash-file     -> 401
+download with the anon key                                       -> 401
+download&download=1 (the attachment form)                        -> 401
+```
+
+Stale comments corrected in the same pass, because a "this is fine on purpose"
+note that is no longer true is worse than none: the in-file header no longer
+says "EXCEPT download", the top-of-file action list now states that every action
+requires a staff session or the service key, the `--no-verify-jwt` deploy note is
+replaced by "verify_jwt is not the control, requireStaff is", and the
+`[functions.gdrive-proxy]` block in config.toml is rewritten from "PARTIALLY
+GUARDED … STILL OPEN" to the closed state with the caller list.
+
+## The second half of frontend-first — what is and is not proven
+
+**Proven post-guard:** the shipped page still sends the credential. Read off the
+LIVE bytes rather than the repo — `_gpDownloadFile` sends
+`Authorization: Bearer <session>`, calls `action=download&download=1`, and
+revokes the object URL on a delay.
+
+**Proven post-guard, by execution:** n8n Lender Folder Creator returned SUCCESS
+against the guarded function (6693), so a valid credential does satisfy
+requireStaff here — the guard refuses the anonymous and accepts the legitimate.
+
+**NOT proven by me:** an actual download from the lead page since the guard
+landed. Rene confirmed both buttons BEFORE the exemption was removed, which
+proves the fetch+blob conversion works; it does not prove the round trip now
+that the server checks. I have no session token, so I cannot close that myself.
+
+**One more click needed, and it is small:** Documents tab → open a document →
+**Download**; and Conditions tab → a condition with an attachment → **Download**.
+Same two buttons as before. If either now says "Download failed: missing
+authorization" or "invalid session", the guard is refusing a caller that should
+pass and the exemption should go back while it is diagnosed.

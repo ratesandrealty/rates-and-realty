@@ -620,20 +620,27 @@ verify_jwt = false
 [functions.gdrive-proxy]
 # Pinned at the value that is LIVE (false) — NOT a change. It was never pinned,
 # so a routine deploy would have flipped it to true and broken every caller.
+# verify_jwt is NOT the control here and never was; requireStaff() is.
 #
-# GUARDED 2026-08-11: requireStaff() on EVERY action except `download`.
-# Before that it had no auth of any kind, and its writes use rene@'s USER OAuth
-# token — so an unauthenticated caller could create, rename, upload and TRASH
-# files in his Drive. trash-file was closed first, on its own, because it has no
-# caller anywhere and no undo.
+# FULLY GUARDED as of 2026-08-11: requireStaff() runs before every action —
+# download, create-folder, create-borrower-folder, upload-file, rename,
+# list-folders, list-files, get-folder, resolve-folder, trash-file. Verified by
+# refusal: all ten return 401 with no credential, and with the anon key.
 #
-# `download` IS EXEMPT, deliberately. Two call sites hand the URL to the browser
-# as an <a href> (lead-detail.html:8858, :19266), and a navigation cannot carry
-# an Authorization header. Closing it needs a short-lived signed URL or a
-# one-time query token — a design change, not a guard. STILL OPEN.
+# Before that it had no caller authentication at all, and its writes use rene@'s
+# USER OAuth token — so anyone who knew the URL could create, rename, upload,
+# download and TRASH files in his Drive. trash-file was closed first and alone:
+# no caller anywhere, and no undo.
 #
-# No frontend-first staging was needed for the rest: every other caller was
-# already sending a session or the service key. Verified caller by caller, and
-# an earlier count that grepped for a literal "Authorization" was WRONG — most
-# sites pass a `gp` header object, one of them as a function parameter.
+# `download` was the last one and was exempt for a real reason, now removed:
+# two call sites handed the URL to the browser as an <a href>, and a navigation
+# cannot carry an Authorization header. Both now go through _gpDownloadFile() in
+# lead-detail.html — authenticated fetch, blob, synthetic <a download> — which
+# is the pattern that file already used three times. No signed URL, no second
+# credential type, no expiry. Frontend shipped and was confirmed working before
+# the exemption was removed.
+#
+# Callers, all authenticated: lead-detail.html (session), admin-dashboard.js
+# (session), gdrive-sync (service key), n8n Lender Folder Creator (service_role
+# credential — proven still working post-guard, execution 6693).
 verify_jwt = false
