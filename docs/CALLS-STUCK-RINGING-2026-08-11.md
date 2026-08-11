@@ -1,5 +1,31 @@
 # Calls stuck at `ringing` — 7 of 17 in 30 days
 
+> **RESOLVED 2026-08-11, except the live break test.** The outbound `<Dial>` now
+> carries `action=` and a per-leg `statusCallback=`; `leg_status` resolves
+> `ParentCallSid` before `CallSid`. All 8 non-terminal rows (the 7 plus one
+> `initiated`) were backfilled from Twilio's own call records — 7 → `completed`,
+> 1 → `no-answer` — and `calls_log` now holds **zero** rows at `ringing` in 30
+> days. §3, the masked-number dial, was fixed separately at the source.
+>
+> **STILL OUTSTANDING: the deliberate break.** Placing a call that rings
+> unanswered needs a browser holding a Twilio Device, which this session has no
+> way to drive; `make_call` sits behind the blanket staff guard and opening it
+> to an internal caller would put a call-placing action behind a database
+> secret, which is exactly the widening that guard exists to prevent. So the
+> callbacks are deployed and unproven-in-anger. What to do, and what to expect:
+>
+> 1. Dial **+1 714 555 0142** from the lead-detail dialer or the FAB pad. That
+>    exchange is NANPA-reserved for fictional use in every area code, and 714
+>    maps to `America/Los_Angeles` so the calling-hours guard behaves normally
+>    rather than taking the unknown-area-code branch.
+> 2. Let it ring out. Do not answer.
+> 3. `select status, duration from calls_log order by created_at desc limit 1;`
+>
+> **Pass:** a terminal status — `no-answer`, `busy`, `failed` or `completed`.
+> **Fail:** still `ringing`, which would mean the callback is not arriving and
+> the row is once again waiting for something that never comes.
+
+
 Read-only investigation, 2026-08-11. Nothing here is fixed. Two separate
 defects, plus a third found on the way that is worse than either.
 
