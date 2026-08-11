@@ -368,3 +368,70 @@ job.
 Worth doing in the same pass, since the draft does not address it: the webhook is
 unauthenticated. That, not the missing guard, is the way an overwrite could still
 be caused deliberately.
+
+---
+
+# Contact Folder Creator: draft PUBLISHED and proven (2026-08-11)
+
+`activeVersionId` moved `f6edb36e` (11 May) → `e3f31e57` (15 June). Proven by
+execution, not by the publish response:
+
+| run | fixture state | outcome |
+|---|---|---|
+| 6689 | no folder | folder created, `15fS1PzNx4zM8Xfwt8mDbMBpNCjF8Yqw4` written back |
+| 6690 | folder already set | **id and updated_at UNCHANGED** — the PATCH matched no rows |
+
+Run 6690 is the guard. On the 11 May version that PATCH had no
+`&gdrive_folder_id=is.null`, so it would have overwritten the id and stranded the
+first folder. The success path does not record the request URL in n8n (only the
+error path does), so the guard was proven by behaviour rather than by reading the
+header back.
+
+**Test artifact, deliberately left:** run 6690 created a second Drive folder
+("ZZ-TEST Fixture GUARD TEST") that nothing points at. That is inherent to the
+design — the workflow still creates before it PATCHes, and only the overwrite is
+prevented. It cannot be trashed through `gdrive-proxy`, which uses the service
+account, because n8n created it with rene@'s OAuth. Cleanup is a Drive-UI job.
+The fixture now holds `15fS1PzNx4zM8Xfwt8mDbMBpNCjF8Yqw4`; clear it to re-run
+this test.
+
+**Note this is now the shape of every legitimate re-click**: create a folder,
+then decline to record it. Preventing the wasted folder needs a check BEFORE the
+create, which the draft does not add.
+
+## Authenticating the webhook — a header credential is the WRONG fix here
+
+The instruction was to ship the two callers sending a credential, then require it
+at the webhook. **Both callers are browsers**, so any credential they send is in
+page source — which is the anon-key mistake this project has already documented
+three times. n8n Header Auth on a browser-called webhook authenticates nothing;
+it just publishes a second public string.
+
+The correct shape, and it is a bigger change than a header:
+
+1. `lead-detail.html:6119` and `components/admin-dashboard.js:2640` stop calling
+   n8n directly. They call an edge function with the user's SESSION TOKEN.
+2. That edge function does `requireStaff(req)`, then calls the n8n webhook
+   server-side with the shared secret read from the vault — the `cron_task_key`
+   pattern, unchanged, with the secret held server-side where it belongs.
+3. Only then does the n8n webhook require the header.
+
+Frontend-first still applies, and the order is the same: callers first, confirmed
+working, then the webhook starts refusing.
+
+Worth asking before building: the edge function in step 2 would be a thin proxy
+whose only job is to hold a secret. `gdrive-proxy` already creates folders and
+already has a guard. Routing folder creation through it directly would remove the
+n8n hop entirely rather than authenticate it — fewer moving parts, one fewer
+place a credential lives, and it deletes this whole class of problem instead of
+guarding it.
+
+NOT BUILT. Raising it rather than shipping a header that would look like
+authentication and provide none.
+
+## Separate, not fixed here
+
+`Contact Folder Creator` and `Lender Folder Creator` both call
+`gdrive-proxy?action=create-folder` with **no credential**. That is a different
+question from the inbound webhook and is already recorded above — guarding
+`gdrive-proxy` breaks both silently.
