@@ -11932,6 +11932,18 @@ async function lpLoadSectionDocsAll(){
   }catch(e){ console.warn('[lpLoadSectionDocsAll]', e&&e.message); }
 }
 /* ═══ HOI multi-quote-request system ═══
+   CONSENT: borrowers consent to their information being shared with HOI
+   agencies before any request goes out (confirmed by Rene, 2026-08-11). That is
+   why this body carries name, address, purchase price, date of birth, email and
+   phone. It is the basis for sending it, so if that ever stops being true this
+   template is the thing that has to change.
+
+   Note for anyone extending it: hoi_quote_prefill is SECURITY DEFINER and
+   returns the borrower's REAL email and phone, so this modal shows unmasked
+   contact details to a va whose lead pages otherwise mask them. That is
+   consistent with what the modal already exposed (date of birth is more
+   sensitive than either) — but it is a deliberate exception, not an oversight.
+
    Send one HOI quote request to MANY insurance companies (borrower/property pre-filled from the CRM,
    all editable), track each request, then pick the winner → auto-saves as the HOI Agent contact.
    Uses hoi_quote_prefill / hoi_quote_log / hoi_quote_list RPCs + email-service 'send'. Status/quote and
@@ -11951,7 +11963,14 @@ function _lpHoiBody(afn){
     +'Address: '+_lpHoiVal('lpHoiAddress')+'\n'
     +'Purchase Price: '+_lpHoiVal('lpHoiPrice')+'\n'
     +'Borrower(S): '+_lpHoiVal('lpHoiBorrower')+'\n'
-    +'Birth Date: '+_lpHoiVal('lpHoiDob')+'\n\n'
+    +'Birth Date: '+_lpHoiVal('lpHoiDob')+'\n'
+    /* Borrower contact details. Rene confirms borrowers consent to their
+       information being shared with HOI agencies before any request goes out —
+       so these go in the body deliberately, not by oversight. Both are editable
+       above, and blank fields still render their label so the agent can see
+       what was not supplied rather than guessing it was withheld. */
+    +'Email: '+_lpHoiVal('lpHoiEmail')+'\n'
+    +'Phone: '+_lpHoiVal('lpHoiPhone')+'\n\n'
     +'*Please confirm receipt of this email*';
 }
 function _lpHoiSignatureHtml(){
@@ -12001,6 +12020,8 @@ function lpHoiEnsureModal(){
       +'<div style="font-size:11px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">Client info — editable, sent to all</div>'
       +'<label style="'+LBL+'">Subject</label><input id="lpHoiSubject" style="'+INP+'">'
       +'<label style="'+LBL+'">Address</label><input id="lpHoiAddress" oninput="lpHoiUpdatePreview()" style="'+INP+'">'
+      +'<label style="'+LBL+'">Borrower email</label><input id="lpHoiEmail" type="email" oninput="lpHoiUpdatePreview()" style="'+INP+'">'
+      +'<label style="'+LBL+'">Borrower phone</label><input id="lpHoiPhone" oninput="lpHoiUpdatePreview()" style="'+INP+'">'
       +'<label style="'+LBL+'">Purchase Price</label><input id="lpHoiPrice" oninput="lpHoiUpdatePreview()" style="'+INP+'">'
       +'<label style="'+LBL+'">Borrower(s)</label><input id="lpHoiBorrower" oninput="lpHoiUpdatePreview()" style="'+INP+'">'
       +'<label style="'+LBL+'">Birth Date</label><input id="lpHoiDob" oninput="lpHoiUpdatePreview()" style="'+INP+'">'
@@ -12071,9 +12092,22 @@ async function lpHoiOpenComposer(){
   _lpHoiPrefill=pf;
   try{ const m=await _authClient().rpc('hoi_quote_meta'); if(!m.error) _lpHoiMeta=m.data||{}; }catch(e){ console.warn('[hoi_quote_meta]', e&&e.message); }
   const set=(i,v)=>{ const e=document.getElementById(i); if(e) e.value=v||''; };
-  const addr=[pf.address, pf.city, [pf.state,pf.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  /* THE DOUBLED ADDRESS.
+     property_address is a Google Places FORMATTED address and is already
+     complete; contacts.address is a bare street that needs city/state/zip
+     appended. The old join appended them to BOTH, because hoi_quote_prefill
+     coalesced the two into one field and the caller could not tell which it had
+     — producing "…, CA 93551, USA, Palmdale, CA 93551".
+     The RPC now returns them separately, so this chooses rather than guesses.
+     Nothing is de-duped out of the finished string. */
+  const addr = pf.address_full
+    ? pf.address_full
+    : [pf.address_street || pf.address, pf.city, [pf.state, pf.zip].filter(Boolean).join(' ')]
+        .filter(Boolean).join(', ');
   const full=pf.borrower_full||[pf.borrower_first,pf.borrower_last].filter(Boolean).join(' ');
   set('lpHoiAddress', addr);
+  set('lpHoiEmail', pf.borrower_email);
+  set('lpHoiPhone', pf.borrower_phone);
   set('lpHoiPrice', _lpHoiFmtPrice(pf.purchase_price));
   set('lpHoiBorrower', full);
   set('lpHoiDob', _lpHoiFmtDate(pf.date_of_birth));
