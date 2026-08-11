@@ -6,12 +6,12 @@
 // Body opts: { dry_run?:bool, lookback_days?:int (default 14), max_messages?:int (default 60) }
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { requireStaff } from '../_shared/require-staff.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID')!
 const CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET')!
-const POLL_SECRET = Deno.env.get('VOE_POLL_SECRET') || ''
 
 const SELF_ADDRESSES = ['rene@ratesandrealty.com','processing@ratesandrealty.com','reneduarte.homeside@gmail.com']
 const J = { 'Content-Type': 'application/json' }
@@ -62,9 +62,42 @@ function walk(part: any, acc: { text: string, html: string }){ if (!part) return
 async function rpc(name: string, args: any){ const r = await fetch(rest('rpc/' + name), { method: 'POST', headers: svc(), body: JSON.stringify(args || {}) }); const t = await r.text(); try { return JSON.parse(t) } catch { return t } }
 
 serve(async (req) => {
-  if (POLL_SECRET) {
-    const s = req.headers.get('x-cron-secret') || ''
-    if (s !== POLL_SECRET) return new Response(JSON.stringify({ ok: false, error: 'unauthorized' }), { status: 401, headers: J })
+  /* ── GUARDED. THIS FUNCTION WAS COMPLETELY OPEN. ──────────────────────────
+   *
+   * What was here:
+   *
+   *     if (POLL_SECRET) {
+   *       const s = req.headers.get('x-cron-secret') || ''
+   *       if (s !== POLL_SECRET) return 401
+   *     }
+   *
+   * VOE_POLL_SECRET was never set, so `if (POLL_SECRET)` was false and the
+   * whole check was skipped. verify_jwt = false on top of that, so ANY
+   * unauthenticated POST ran a full Gmail poll of rene@'s mailbox and wrote
+   * email_log rows. A gate that disables itself when its secret is missing
+   * fails OPEN, and reads in a grep exactly like a gate that works — which is
+   * how it survived: docs/EDGE-FUNCTION-CAPABILITY-MAP.md recorded it as
+   * "shared secret compare", and docs/CRON-REHEADER recorded it as needing
+   * x-cron-secret. Both described the code, not its behaviour.
+   *
+   * PROVEN, not inferred: cron job 37 sent Content-Type ONLY — no secret of any
+   * kind — and returned 200 with real output on every ten-minute run. That is
+   * only possible with the gate off.
+   *
+   * requireStaff FAILS CLOSED: no header, wrong secret, and unset secret are
+   * all refusals.
+   *
+   * allowInternal — the only caller is pg_cron job 37, every ten minutes, which
+   * cannot hold a session. No browser caller; grepped repo-wide, the sole hits are this
+   * file, config.toml and two docs.
+   *
+   * CALLER FIRST: job 37 was re-headered to internal_call_headers() BEFORE this
+   * guard shipped, and proven by its own natural run — net._http_response
+   * 386458 at 23:00:02Z, 200, authenticated_as rene@ratesandrealty.com. */
+  const auth = await requireStaff(req, { allowInternal: true, what: 'Polling VOE inbound mail' })
+  if (!auth.ok) {
+    console.error('[voe-inbound-poll] REJECTED:', auth.status, auth.msg)
+    return new Response(JSON.stringify({ ok: false, error: auth.msg || 'unauthorized' }), { status: auth.status || 401, headers: J })
   }
   let body: any = {}
   try { body = await req.json() } catch {}
