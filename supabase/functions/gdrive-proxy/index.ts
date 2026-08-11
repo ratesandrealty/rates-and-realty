@@ -109,6 +109,44 @@ Deno.serve(async (req: Request) => {
     const url = new URL(req.url);
     const action = url.searchParams.get("action") || "";
 
+    /* ── CALLER AUTHENTICATION FOR EVERY ACTION EXCEPT download ────────────
+     *
+     * Until 2026-08-11 this function had none at all, with verify_jwt = false,
+     * and its writes use rene@'s USER OAuth token — so an unauthenticated
+     * caller could create, rename, upload and trash files in his Drive.
+     *
+     * `download` IS DELIBERATELY EXCLUDED, and this is the honest reason rather
+     * than an oversight: two call sites hand the URL to the browser as an
+     * <a href> (lead-detail.html:8858 and :19266, the "Download" link and the
+     * attachment link). A navigation cannot carry an Authorization header, so
+     * guarding download would break both — and break them as a 401 page, not a
+     * silent failure, but break them all the same. Closing it needs a different
+     * mechanism: a short-lived signed URL, or a one-time token in the query
+     * string. That is a design change, not a guard, and it is NOT done here.
+     *
+     * Everything else was already sending the session token, which is why this
+     * needed no frontend-first staging. Verified caller by caller before
+     * writing it:
+     *   lead-detail.html   13 fetch sites, all authenticated (several via the
+     *                      `gp` header object, one of which is a function
+     *                      PARAMETER — an earlier count that grepped for a
+     *                      literal "Authorization" missed those and wrongly
+     *                      reported 10 unauthenticated sites)
+     *   admin-dashboard.js create-borrower-folder, session token
+     *   gdrive-sync        resolve-folder, Bearer SERVICE_KEY
+     *   n8n Lender Folder Creator  create-folder, service_role credential
+     *
+     * No allowInternal: nothing reaches this from Postgres. The one server
+     * caller presents the service key, which requireStaff already accepts.
+     *
+     * trash-file keeps its own check below as well — it was guarded first, on
+     * its own, and a destructive action should not depend on a shared gate
+     * staying correct. */
+    if (action !== "download") {
+      const _a = await requireStaff(req, { what: "Drive access" });
+      if (!_a.ok) return err(_a.msg || "not authorized", _a.status || 401);
+    }
+
     /* ── create-borrower-folder ────────────────────────────────────────────
      *
      * Replaces the n8n "Contact Folder Creator" workflow, which was:
