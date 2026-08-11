@@ -981,20 +981,7 @@ Deno.serve(async (req) => {
      * and its control is the request signature. verify_jwt stays as pinned
      * (false) for the same reason — flipping it would 401 every Twilio webhook
      * at the gateway before this function ever ran. */
-    /* ONE ACTION MAY ALSO ARRIVE FROM POSTGRES, and opts in from the URL
-     * because this check runs before req.json() and the body is not readable
-     * yet. backfill_call_status is invoked by net.http_post, which cannot hold
-     * the service key — see require-staff note 3.
-     *
-     * Gating on the query string is not a weakening. allowInternal only decides
-     * whether the x-internal-secret HEADER is consulted; without a secret that
-     * verify_cron_secret() accepts it falls straight through to the normal
-     * paths, so anyone can put this in a URL and still get 401. And the action
-     * itself re-checks with requireStaff({ roles:['admin'], allowInternal }),
-     * so the blanket keeps covering every action including ones added later —
-     * which is the invariant this guard exists for. */
-    const wantsInternal = reqUrl.searchParams.get('action') === 'backfill_call_status';
-    const staff = await requireStaff(req, { what: 'The dialer', allowInternal: wantsInternal });
+    const staff = await requireStaff(req, { what: 'The dialer' });
     if (!staff.ok) {
       console.error('[twilio-voice] REJECTED json action:', staff.status, staff.msg);
       return err(staff.msg || 'unauthorized', staff.status || 403);
@@ -1258,8 +1245,8 @@ Deno.serve(async (req) => {
      * Kept rather than deleted after the one-off: the fix stops NEW rows
      * sticking, and if a callback is ever lost again this is how the row gets
      * its truth back. dry_run reports without writing. */
-    if (action === 'backfill_call_status' || reqUrl.searchParams.get('action') === 'backfill_call_status') {
-      const admin = await requireStaff(req, { roles: ['admin'], allowInternal: true, what: 'Backfilling call status' });
+    if (action === 'backfill_call_status') {
+      const admin = await requireStaff(req, { roles: ['admin'], what: 'Backfilling call status' });
       if (!admin.ok) return err(admin.msg || 'unauthorized', admin.status || 403);
       if (!ACCOUNT_SID || !AUTH_TOKEN) return err('Twilio not configured', 500);
       const dryRun = body.dry_run === true;
