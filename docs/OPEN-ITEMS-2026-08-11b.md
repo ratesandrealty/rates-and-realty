@@ -150,3 +150,71 @@ then raise exception 'staff only'; end if;` to the four directly-useful ones, an
 `revoke execute ... from authenticated` on the two trigger functions.
 
 **Not applied. This is a report.**
+
+---
+
+# Added 2026-08-11 (later) — n8n callers, and the watchdog blocker
+
+## n8n workflows that call edge functions with NO credential
+
+Found by opening HTTP nodes, not descriptions. Neither is reachable by grepping
+this repo, which is why the caller sweeps kept missing them.
+
+| workflow | calls | credential sent |
+|---|---|---|
+| Contact Folder Creator `1ZhDyTy1gZP2g4qQ` | `gdrive-proxy?action=create-folder` | **none** — Content-Type only |
+| Lender Folder Creator `35OAO1zJqCZsKMsM` | `gdrive-proxy?action=create-folder` | **none** — Content-Type only |
+
+**Guarding `gdrive-proxy` breaks both silently** — same shape as the CRON_KEY
+rotation. Frontend-first there means fixing these two n8n nodes BEFORE the guard.
+
+## Anon key hardcoded in an n8n Code node
+
+`Lender Prospect Follow-Up Reminders` `4MneV3U3vMmNftO8` embeds the public anon
+key as a literal in its "Filter Due" Code node to read
+`clickup_automation_config`. Public by design, so not a leak — but it is a
+second place the key lives, and it will outlive any rotation of it.
+
+Its evidence row is `lenders.last_follow_up_reminder_at`.
+
+## Still unopened
+
+`Borrower Stage Foldering` `3MgNXjZrcCm7c8gy` and
+`Google Calendar Two-Way Sync` `4T6MeKgMbeYtdtUb`. Nine of eleven have now been
+read at node level; these two have not.
+
+## THE WATCHDOG BLOCKER: no n8n API key exists
+
+The n8n execution-history check cannot be built as scoped. `gdrive-health-monitor`
+would have to call the n8n REST API, which needs an `X-N8N-API-KEY`, and there
+is no such key in `vault.secrets`, in `app_config`, or in the repo.
+
+The data itself is there and is exactly what the check needs — via MCP:
+
+```
+critical-date-reminders  f1udN0aJRWAb1wqw  daily 22:00Z  success Aug 5,6,7,8,9,10
+```
+
+and the HTTP nodes have no `onError: continue`, so a 401 from a guarded edge
+function turns the execution status to `error`. **n8n execution status is a
+faithful signal** — it just is not reachable from an edge function today.
+
+Three ways forward, in preference order:
+
+1. **Mint an n8n API key, store it in the vault** (`n8n_api_key`, same shape as
+   `cron_task_key`), and have the monitor poll
+   `GET /api/v1/executions?workflowId=…&limit=1` per workflow, red when the last
+   execution is older than N intervals or its status is not `success`. This is
+   the design as scoped and the only one that sees a failed run directly.
+   NOT DONE: creating an API key in a production automation platform is an
+   outward-facing credential change, and it is Rene's to authorise.
+2. **Watch evidence rows instead** — no key needed, but ambiguous for exactly the
+   workflows that matter: `refi-watch` legitimately writes nothing when no client
+   is 0.50% above market, so "no row" cannot be distinguished from "did not run".
+3. **Wire `Sync Failure Alert` to all 11 workflows** and fix its HTTP node, which
+   posts to `email-service` with Content-Type only and would 401. This is worth
+   doing regardless, but it is n8n alerting on itself — if n8n is down or the
+   workflow is unwired, it is silent, which is the situation today.
+
+(1) and (3) are complements, not alternatives: (3) reports a failure n8n noticed,
+(1) notices a workflow that stopped running at all.
