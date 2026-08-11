@@ -433,6 +433,25 @@ const SPECS = [
     expectText: ['RC-SEND-PROBE'],
     values: { '#sc-input': '' },
   },
+  /* NO ESCROW # SPEC, and that is a gap rather than an oversight — recorded here
+   * so nobody concludes the Loan Snapshot is covered.
+   *
+   * Two attempts, both abandoned. Under the STUB the processing tab never
+   * renders its cards. With a REAL va token on a lead she can open, #tab-processing
+   * IS visible and she gets her four allowed tabs, yet neither the new "Escrow #"
+   * nor the PRE-EXISTING "Loan #" nor even the STATIC "Loan Snapshot" heading
+   * appears in the page text. Static markup being absent while its container
+   * reports visible means the cause sits inside the processing tab and is
+   * upstream of anything the escrow work touched.
+   *
+   * That last point is the one worth keeping: the paired assertion is what made
+   * it diagnosable. Asserting "Escrow #" alone would have read as "the new field
+   * is broken". Asserting the pre-existing sibling alongside it said "the whole
+   * card is missing", which is a different bug with a different owner.
+   *
+   * Escrow # is therefore NOT harness-verified. It needs a human to open the
+   * Loan Snapshot on a real lead — which is what this repo's own rule about
+   * having a person confirm a frontend change already asks for. */
 ];
 
 /* BREAK TEST for the two Send specs above. tools/fixtures/dead-send.html is a
@@ -758,6 +777,22 @@ if (adhocUrl) {
   const filter = argv.filter((a) => !a.startsWith('--') && argv[argv.indexOf(a) - 1] !== '--token')[0];
   specs = filter ? SPECS.filter((s) => s.name.includes(filter)) : SPECS;
   if (!specs.length) fail(`no spec matching "${filter}". Known: ${SPECS.map((s) => s.name).join(' | ')}`);
+  /* tokenOnly: skipped without --token, and the skip is PRINTED. Some panes
+     cannot be reached by the stub at all — the processing tab needs a lead the
+     signed-in user can actually load, and .single() returning no row makes the
+     page bail before the tabs exist. Leaving such a spec in the default suite
+     would make it permanently red, which trains people to ignore red; deleting
+     it would lose the coverage silently. This is the third option, and it is
+     announced on every run for the same reason allowConsole exclusions are. */
+  if (!token) {
+    const skipped = specs.filter((s) => s.tokenOnly);
+    specs = specs.filter((s) => !s.tokenOnly);
+    if (skipped.length) {
+      console.log(`SKIPPED without --token (${skipped.length}): ${skipped.map((s) => s.name).join(' | ')}`);
+      console.log('  These assert on panes the stub cannot reach. Run with --token to cover them.\n');
+    }
+    if (!specs.length) fail(`every spec matching "${filter}" is tokenOnly. Re-run with --token <file>.`);
+  }
 }
 
 const tmp = process.env.TEMP || process.env.TMPDIR || '.';
