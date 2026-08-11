@@ -9,6 +9,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireStaff } from '../_shared/require-staff.ts'
 
 type SbClient = ReturnType<typeof createClient>
 
@@ -263,9 +264,38 @@ serve(async (req) => {
   /* No fallback. An unset or unreadable secret REFUSES rather than admitting
      everything — the previous `env || 'literal'` meant the env var was never set
      and nobody noticed, because the fallback always matched. */
-  const ok = !!expected && providedSecret === expected
-  if (!ok) {
-    return new Response(JSON.stringify({ error: 'Forbidden — missing or invalid x-cron-secret' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
+  const legacyOk = !!expected && providedSecret === expected
+
+  /* ── MIGRATION STEP 1 OF 2 (2026-08-11): accepts BOTH secrets. ─────────────
+   *
+   * Moving off x-cron-secret onto the project-standard x-internal-secret. This
+   * project has three cron-secret conventions — x-cron-secret, x-cron-key,
+   * x-internal-secret — and that is how the CRON_KEY rotation missed three
+   * workflows. One convention, not three.
+   *
+   * WHY BOTH, AND WHY THIS ORDER. The function and its cron jobs cannot change
+   * atomically: a deploy takes ~30s and pg_cron lives in the database. Guard
+   * first and jobs 20/21 fail until re-headered; re-header first and they fail
+   * until the deploy lands. Either way there is a window where the ONLY caller
+   * is refused. Accepting both removes the window entirely:
+   *
+   *   1. deploy this (both accepted)         <- behaviour-neutral, jobs unaffected
+   *   2. prove the legacy path still works
+   *   3. re-header jobs 20 and 21
+   *   4. prove the new path works
+   *   5. delete the legacy branch below      <- the actual migration
+   *
+   * STILL FAILS CLOSED. An unset vault secret makes `expected` null, so
+   * legacyOk is false, and requireStaff refuses anything without a valid
+   * x-internal-secret. Neither branch admits an unauthenticated caller — which
+   * is the trap voe-inbound-poll fell into, where `if (POLL_SECRET)` turned a
+   * missing secret into no check at all. */
+  if (!legacyOk) {
+    const auth = await requireStaff(req, { allowInternal: true, what: 'Running proactive follow-ups' })
+    if (!auth.ok) {
+      console.error('[proactive-followups] REJECTED:', auth.status, auth.msg)
+      return new Response(JSON.stringify({ error: 'Forbidden — missing or invalid credentials' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
+    }
   }
 
   const mode = (url.searchParams.get('mode') || 'digest').toLowerCase()
