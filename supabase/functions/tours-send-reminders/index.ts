@@ -8,6 +8,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -59,6 +60,23 @@ async function buildBody(msg: any, batch: any, contact: any, publicUrl: string):
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+  /* ── GUARDED. THIS FUNCTION SENDS SMS. ────────────────────────────────────
+   * Same shape and same reasoning as bot-process-queue: verify_jwt = false and
+   * no check at all, so an unauthenticated POST sent tour reminders from the
+   * business line. Only caller is pg_cron job 13, every five minutes, which cannot hold the
+   * service key, so allowInternal rather than a session check. No browser
+   * caller — the frontend was grepped first.
+   *
+   * Job re-headered to internal_call_headers() and CONFIRMED WORKING before
+   * this guard landed: net._http_response id 386179, 200
+   * {"message":"No reminders due","processed":0}. It had been sending the anon
+   * key, which requireStaff rejects. */
+  const auth = await requireStaff(req, { allowInternal: true, what: "Sending tour reminders" });
+  if (!auth.ok) {
+    console.error("[tours-send-reminders] REJECTED:", auth.status, auth.msg);
+    return new Response(JSON.stringify({ error: auth.msg || "unauthorized" }),
+      { status: auth.status || 401, headers: { ...cors, "Content-Type": "application/json" } });
+  }
   try {
     const { data: queued } = await sb.from("showing_messages")
       .select("*")

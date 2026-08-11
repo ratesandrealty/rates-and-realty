@@ -5,6 +5,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -18,6 +19,31 @@ const cors = {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+  /* ── GUARDED. THIS FUNCTION SENDS SMS. ────────────────────────────────────
+   *
+   * verify_jwt = false and no in-function check of any kind: an unauthenticated
+   * POST made the AI bot process its queue and text borrowers from the business
+   * line. One of eleven senders in that state; docs/OPEN-ENDPOINTS-2026-08-11.md.
+   *
+   * allowInternal, NOT a session check: the ONLY caller is pg_cron job 11
+   * (every minute), and net.http_post cannot hold the service key — see
+   * require-staff note 3. There is no browser caller; the whole frontend was
+   * grepped before this was written.
+   *
+   * THE JOB WAS RE-HEADERED FIRST, and confirmed working, before this guard
+   * existed. It had been sending the ANON key, which requireStaff rejects, so
+   * guarding first would have been a silent outage on a minutely job. Order
+   * matters: with the function still open, a bad header shows up as a job that
+   * still works, which is a nuisance; the other way round it is a bot that
+   * stops answering borrowers and nothing says why. Verified by reading
+   * net._http_response — 200 {"message":"No queued replies due"} — not by the
+   * job's own 'succeeded', which only ever means the request was queued. */
+  const auth = await requireStaff(req, { allowInternal: true, what: "Processing the bot queue" });
+  if (!auth.ok) {
+    console.error("[bot-process-queue] REJECTED:", auth.status, auth.msg);
+    return new Response(JSON.stringify({ error: auth.msg || "unauthorized" }),
+      { status: auth.status || 401, headers: { ...cors, "Content-Type": "application/json" } });
+  }
   const ok = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, "Content-Type": "application/json" } });
 
   // Pull pending items whose scheduled time has passed
