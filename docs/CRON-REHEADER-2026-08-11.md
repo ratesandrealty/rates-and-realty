@@ -40,6 +40,19 @@ success at the `cron.job_run_details` level (`succeeded` = *queued*); only
 
 All four restored byte-exactly and verified `command = snapshot.command`.
 
+**Rollback confirmed by execution**, not only by string comparison:
+
+| job | run | result |
+|---|---|---|
+| 24 `market-rate` | 22:00Z | **200** `rate_30yr:6.79, rate_15yr:6.28, rate_fha:6.31` — rates written |
+| 37 `voe-inbound-poll` | 22:00 / 22:10 / 22:20 / 22:30 / 22:40Z | **200** `authenticated_as: rene@ratesandrealty.com` every ten minutes |
+| 21 `proactive-followups-urgent` | next 00:00Z (`0 */6 * * *`) | awaiting |
+| 20 `proactive-followups-digest` | next 15:00Z (`0 15 * * *`) | awaiting |
+
+The two `proactive-followups` jobs hold the snapshot command byte-for-byte, so
+what runs next is what ran successfully at 18:00Z and 15:00Z before the change.
+Neither has run since the rollback; that is the last outstanding confirmation.
+
 Making them consistent would mean either teaching `require-staff` to accept
 `x-cron-secret` as well, or migrating those functions to `x-internal-secret` —
 a change to a *working* guard, which is not worth doing as a side effect of
@@ -58,20 +71,27 @@ anon key was previously sitting in `cron.job` in cleartext.
 | 33 | `news-feed` | no auth header | **200** `upserted:10` (probe) |
 | 36 | `gdrive-sync` | anon key | **200** `No pending docs` (natural run 22:40) |
 | 9 | `chunk-guidelines-large` | no auth header | ran 22:35 + 22:40, made no HTTP call — its command only POSTs when a guideline is pending |
+| 4 | `send-listing-alerts` | no auth header | **200** `processed:1, sent:0, skipped:1 (not_due)` (natural runs 22:00, 22:30) |
+| 6 | `gdrive-health-monitor` | anon key | **200** full health JSON, `drive_write_credential_ok:true` (natural run 22:07) |
+| 15 | `clickup-bridge` | no auth header | **200** `synced:301, lists:1, errors:[]` (natural runs 22:00, 22:30, 22:45) |
+| 19 | `google-token-refresh` | anon key | **200** `Token refreshed. Valid for 1 hour.` (natural run 22:30) |
 | 2 | `weekly-backup` | no auth header | awaiting natural run (Sun 08:00) |
-| 4 | `send-listing-alerts` | no auth header | awaiting natural run (*/30) |
 | 5 | `gdrive-sync-guideline` | anon key | awaiting natural run (03:30) |
-| 6 | `gdrive-health-monitor` | anon key | awaiting natural run (hourly :07) |
 | 12 | `lead-scorer` | anon key | awaiting natural run (12:00) |
-| 15 | `clickup-bridge` | no auth header | awaiting natural run (*/15) |
 | 18 | `lead-scorer` | anon key | awaiting natural run (12:00) |
-| 19 | `google-token-refresh` | anon key | awaiting natural run (*/30) |
 
 **Not probed, deliberately.** `weekly-backup` writes a full backup to Drive with
 rene@'s token that `gdrive-proxy` cannot clean up; `gdrive-health-monitor` has 9
 send sites and no dry-run; `lead-scorer`, `gdrive-sync-guideline` and
 `send-listing-alerts` do real work off-schedule. None has a dry-run or read-only
 path, so per the rule they wait for a natural run rather than being forced.
+
+Two of those five have since had their natural run and are now proven above:
+`send-listing-alerts` (22:00 and 22:30, both `sent:0` — the one audience was
+`not_due`) and `gdrive-health-monitor` (22:07, full health JSON, all green, so
+none of its nine send sites fired). Waiting rather than forcing cost nothing and
+proved the same thing. `weekly-backup`, `gdrive-sync-guideline` and `lead-scorer`
+still wait.
 
 **What "proven" means here, precisely:** these 12 functions are unguarded, so
 nothing yet *reads* `x-internal-secret`. A 200 proves the job still works with
