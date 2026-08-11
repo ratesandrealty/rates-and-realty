@@ -10,11 +10,32 @@ const SB_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const MS_KEY = Deno.env.get('MAILERSEND_API_KEY');
 const sb = createClient(SB_URL, SB_KEY);
 
-// Cloudflare Turnstile bot protection. Fails open if the secret is unset.
+/* Cloudflare Turnstile bot protection on the BORROWER-FACING login.
+ *
+ * This used to read `if (!TURNSTILE_SECRET) return true` — a bot check that
+ * reported PASSED when it had not run. TURNSTILE_SECRET_KEY is in fact set
+ * (digest 4078a665…, 2026-06-13), verified from the deployed secret list rather
+ * than by throwing a login at the endpoint, so the branch never fired and the
+ * portal has been protected throughout. The shape was still wrong.
+ *
+ * THREE OUTCOMES, NOT TWO — the same rule this repo already applies to health
+ * checks: passed, failed, and COULD NOT RUN. The third must never read as the
+ * first. It now fails CLOSED and says which of the three it was.
+ *
+ * The distinction is not pedantry, it decides what the caller is told. An
+ * unconfigured secret rendered as "Verification failed. Please refresh and try
+ * again." would send a borrower to retry something that cannot succeed, while
+ * the real fault — a missing secret — appears nowhere. So `unconfigured`
+ * returns 503 with its own message and a console.error, and only a genuine
+ * Turnstile rejection returns 403. */
 const TURNSTILE_SECRET = Deno.env.get('TURNSTILE_SECRET_KEY');
-async function verifyTurnstile(token: string | undefined, ip: string | null): Promise<boolean> {
-  if (!TURNSTILE_SECRET) return true;
-  if (!token) return false;
+type TurnstileResult = { ok: boolean; unconfigured?: boolean };
+async function verifyTurnstile(token: string | undefined, ip: string | null): Promise<TurnstileResult> {
+  if (!TURNSTILE_SECRET) {
+    console.error('[portal-auth] TURNSTILE_SECRET_KEY is not set — REFUSING. Bot protection cannot run; this is a configuration fault, not a failed challenge.');
+    return { ok: false, unconfigured: true };
+  }
+  if (!token) return { ok: false };
   try {
     const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
       method: 'POST',
@@ -22,8 +43,8 @@ async function verifyTurnstile(token: string | undefined, ip: string | null): Pr
       body: new URLSearchParams({ secret: TURNSTILE_SECRET, response: token, remoteip: ip || '' })
     });
     const d = await r.json();
-    return !!d.success;
-  } catch { return false; }
+    return { ok: !!d.success };
+  } catch { return { ok: false }; }
 }
 
 // Admin exemption: a valid GoTrue session (only admins have these) bypasses Turnstile / authorizes admin actions.
@@ -188,6 +209,13 @@ async function safeUpsertContact(p: { email?: string; phone?: string; first_name
 
 const respond = (data: any, status = 200) => new Response(JSON.stringify(data), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
+/* Keeps both Turnstile call sites to one line while keeping "failed" and
+ * "could not run" distinguishable to the caller. 503 is deliberate: the fault
+ * is ours, and it must not read to a borrower as something a refresh fixes. */
+const turnstileRefusal = (t: TurnstileResult) => t.unconfigured
+  ? respond({ error: 'Sign-in is temporarily unavailable. Please try again shortly.', code: 'VERIFICATION_UNAVAILABLE' }, 503)
+  : respond({ error: 'Verification failed. Please refresh and try again.' }, 403);
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
   try {
@@ -222,7 +250,12 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'signup') {
-      if (!(await verifyAdminJwt(body.admin_jwt)) && !(await verifyTurnstile(body.turnstileToken, req.headers.get('cf-connecting-ip')))) return respond({ error: 'Verification failed. Please refresh and try again.' }, 403);
+      /* Admin JWT still short-circuits and never reaches Turnstile — an admin
+       * creating an account is exempt, exactly as before. */
+      if (!(await verifyAdminJwt(body.admin_jwt))) {
+        const t = await verifyTurnstile(body.turnstileToken, req.headers.get('cf-connecting-ip'));
+        if (!t.ok) return turnstileRefusal(t);
+      }
       const { email, first_name, last_name, phone, password } = body;
       if (!email || !first_name) return respond({ error: 'Email and first name required' }, 400);
       const ec = email.toLowerCase().trim();
@@ -246,7 +279,8 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'login') {
-      if (!(await verifyTurnstile(body.turnstileToken, req.headers.get('cf-connecting-ip')))) return respond({ error: 'Verification failed. Please refresh and try again.' }, 403);
+      const t = await verifyTurnstile(body.turnstileToken, req.headers.get('cf-connecting-ip'));
+      if (!t.ok) return turnstileRefusal(t);
       const { email, password } = body;
       if (!email || !password) return respond({ error: 'Email and password required' }, 400);
       const ec = email.toLowerCase().trim();
