@@ -644,3 +644,26 @@ verify_jwt = false
 # (session), gdrive-sync (service key), n8n Lender Folder Creator (service_role
 # credential — proven still working post-guard, execution 6693).
 verify_jwt = false
+
+# ── SENDERS 1–2 OF 7, guarded 2026-08-11 ────────────────────────────────────
+# Both were verify_jwt=false with NO in-function check: an unauthenticated POST
+# made the AI bot text borrowers, or fired tour reminders, from the business
+# line. Same shape as send-scheduled-sms above, and closed the same way.
+[functions.bot-process-queue]
+# Stays false. Caller is pg_cron job 11 (every minute) via net.http_post, which
+# cannot present a JWT — true would return UNAUTHORIZED_NO_AUTH_HEADER on every
+# run, the outage recorded at the top of this file. Pinned at the LIVE value so
+# a later unpinned deploy cannot silently flip it.
+#
+# THE ACCESS CONTROL is requireStaff(req, { allowInternal: true }) in index.ts,
+# before any work. Job 11 was re-headered to internal_call_headers() and
+# observed returning 200 {"message":"No queued replies due"} while the function
+# was still open — so a header mistake showed as a job that still worked.
+verify_jwt = false
+
+[functions.tours-send-reminders]
+# Stays false, same reasoning: pg_cron job 13, every five minutes.
+# THE ACCESS CONTROL is requireStaff(req, { allowInternal: true }) in index.ts.
+# Job re-headered first and observed returning 200
+# {"message":"No reminders due","processed":0} — net._http_response id 386179.
+verify_jwt = false
