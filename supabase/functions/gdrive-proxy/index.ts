@@ -102,9 +102,11 @@ async function driveFetch(path: string, init?: RequestInit): Promise<Response> {
   return await fetch(`https://www.googleapis.com/drive/v3${withSharedDrives(path)}`, { ...init, headers });
 }
 
-/* Borrowers root in Drive. Was a literal in the n8n Contact Folder Creator
- * workflow, which this action replaces. */
-const BORROWERS_ROOT = "11OLUA6Fu3tNrzWP8O1v_pFjl-UGbzos6";
+/* BORROWERS_ROOT (11OLUA6Fu3tNrzWP8O1v_pFjl-UGbzos6) used to live here, as the
+ * parent create-borrower-folder hung new folders from. It is gone with the
+ * bare-folder path: Borrower Stage Foldering parents them under
+ * Borrowers/{Stage}/{Partner or Rene's Clients} from its own stage map, and a
+ * second copy of a Drive id nothing reads is how the two drift apart. */
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
@@ -198,37 +200,109 @@ Deno.serve(async (req: Request) => {
         }, 200);
       }
 
-      const name = [contact.first_name, contact.last_name].filter(Boolean).join(" ").trim()
-        || `Contact ${contactId.slice(0, 8)}`;
-      const r = await driveFetch("/files?fields=id,name,webViewLink,parents", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder", parents: [BORROWERS_ROOT] }),
-      });
-      const created = await r.json();
-      if (!r.ok || !created?.id) return err(created?.error?.message || `create-folder HTTP ${r.status}`, 500);
+      /* ── THE BUTTON HANDS OFF TO BORROWER STAGE FOLDERING ─────────────────
+       *
+       * It used to create ONE bare folder at BORROWERS_ROOT and stamp
+       * gdrive_folder_id itself. That did not merely do half the job — IT
+       * PERMANENTLY PREVENTED THE OTHER HALF.
+       *
+       * Workflow 3MgNXjZrcCm7c8gy branches on "Borrower Folder Exists?", which
+       * is true whenever contacts.gdrive_folder_id is set. The true branch is
+       * Get Current Parents -> Move Borrower Folder and it ENDS there. The
+       * eleven subfolders hang off the FALSE branch only. So the moment this
+       * endpoint stamped the id, the only branch that ever creates subfolders
+       * could never run for that borrower again, and no later stage change
+       * repaired it — each one just moved the empty folder to a new stage.
+       * The folder was also parented at BORROWERS_ROOT rather than
+       * Borrowers/{Stage}/{Partner or Rene's Clients}, and the PATCH fired
+       * neither foldering trigger (they watch pipeline_status and
+       * referral_partner_id, not this column).
+       *
+       * So the button now POSTs the SAME webhook the DB trigger posts, with
+       * the same {record: <contact row>} shape, and lets one path build
+       * partner folder + borrower folder + subfolders in the right place.
+       * The subfolder list stays in exactly one place — that workflow — and is
+       * deliberately NOT copied here.
+       *
+       * THE CREDENTIAL IS WHY THIS IS THE RIGHT HAND-OFF, not just the tidy
+       * one. The workflow's Drive nodes use googleDriveOAuth2Api — rene@'s user
+       * OAuth through n8n's client. Building the same tree here would use the
+       * service account (driveFetch -> getAccessToken mints an SA JWT), and
+       * CLAUDE.md records that SA-created structure silently guts the Drive
+       * write health probe, because a token holding only drive.file can still
+       * write into folders it created.
+       *
+       * The n8n webhook takes no credentials, which is what the retired
+       * "Contact Folder Creator" hop was criticised for. That is unchanged and
+       * is not reintroduced here: the browser still cannot reach it. It calls
+       * THIS endpoint, which is behind requireStaff, and the webhook is only
+       * ever posted server-side — same as the DB trigger already does. */
+      const { data: full, error: fErr } = await db.from("contacts")
+        .select("*").eq("id", contactId).maybeSingle();
+      if (fErr || !full) return err(`contact reload failed: ${fErr?.message || "not found"}`, 500);
 
-      const folderUrl = `https://drive.google.com/drive/folders/${created.id}`;
-      /* GUARD 1 — is.null. Survives the move from the n8n PATCH verbatim in
-       * meaning: fill it only while it is still empty. */
-      const { data: patched, error: pErr } = await db.from("contacts")
-        .update({ gdrive_folder_id: created.id, gdrive_folder_url: folderUrl })
-        .eq("id", contactId).is("gdrive_folder_id", null)
-        .select("id");
-      if (pErr) return err(`writeback failed: ${pErr.message}`, 500);
+      /* responseMode:lastNode — the webhook does not answer until the workflow
+       * finishes, which is what makes the writeback readable below. Measured at
+       * ~12s for the create path, so the timeout is generous but bounded: a
+       * hung n8n must not hold the request open until the platform kills it. */
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 45_000);
+      let hookStatus = 0;
+      try {
+        /* Same URL and same body shape as notify_borrower_foldering(). If one
+         * moves, move both — they are the two callers of this webhook. */
+        const hook = await fetch("https://ratesandrealty.app.n8n.cloud/webhook/borrower-stage-foldering", {
+          method: "POST", signal: ctl.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ record: full }),
+        });
+        hookStatus = hook.status;
+        await hook.text().catch(() => "");
+      } catch (e) {
+        clearTimeout(timer);
+        return err(`foldering webhook did not answer: ${String((e as Error)?.message || e)}`, 504);
+      }
+      clearTimeout(timer);
 
-      /* Lost the race: someone filled it between the check and the update. Say
-       * so rather than reporting success — the folder just created is now
-       * unreferenced, and silently claiming ok would hide it. */
-      if (!patched || !patched.length) {
-        const { data: now } = await db.from("contacts").select("gdrive_folder_id, gdrive_folder_url").eq("id", contactId).maybeSingle();
-        return json({
-          ok: true, already_existed: true, raced: true,
-          folder_id: now?.gdrive_folder_id, folder_url: now?.gdrive_folder_url,
-          unreferenced_folder_id: created.id,
-        }, 200);
+      /* THE WORKFLOW OWNS THE WRITEBACK — "Save Folder Id To Contact" PATCHes
+       * gdrive_folder_id itself. So this endpoint no longer writes that column
+       * at all, which also retires the old is.null race guard: there is only
+       * one writer again. Read the row back rather than trusting the 200, the
+       * same reason CLAUDE.md gives for reading n8n execution data instead of
+       * the tool's echo. */
+      const { data: after } = await db.from("contacts")
+        .select("gdrive_folder_id, gdrive_folder_url, pipeline_status")
+        .eq("id", contactId).maybeSingle();
+
+      if (!after?.gdrive_folder_id) {
+        /* THE WRITEBACK IS THE SIGNAL, NOT THE STATUS CODE — measured, not
+         * assumed. Route By Stage returns [] for any pipeline_status outside
+         * its map, and the workflow then does nothing, SUCCESSFULLY: execution
+         * 6717 is recorded `success` while the webhook answered HTTP 500,
+         * because responseMode:lastNode with responseData:firstEntryJson has no
+         * item to serialise. So a 500 here routinely means "nothing to do", and
+         * treating it as a failure would report an unmapped stage as an outage.
+         * Hence the status is reported for diagnosis and never branched on.
+         *
+         * The stage is named rather than the stage map being duplicated here —
+         * the map lives in the workflow, with the subfolder list. */
+        return err(
+          `Borrower Stage Foldering ran (webhook answered HTTP ${hookStatus}) but filed nothing. `
+          + `This contact's pipeline status is "${after?.pipeline_status ?? "unknown"}" — `
+          + `only the stages that workflow maps get a folder. Move the lead to a mapped stage and try again.`,
+          409,
+        );
       }
 
-      return json({ ok: true, created: true, folder_id: created.id, folder_url: folderUrl }, 200);
+      return json({
+        ok: true, created: true,
+        folder_id: after.gdrive_folder_id,
+        folder_url: after.gdrive_folder_url || `https://drive.google.com/drive/folders/${after.gdrive_folder_id}`,
+        // Says what was built, so the caller can tell this apart from the old
+        // single-folder behaviour without inspecting Drive.
+        foldered_by: "borrower-stage-foldering",
+        subfolders: true,
+      }, 200);
     }
 
     if (req.method === "GET") {

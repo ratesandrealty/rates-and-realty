@@ -256,6 +256,42 @@ AFTER UPDATE trigger MOVED the existing `activity_events` row (same id 7ca4d5c0,
 `contact_id` rewritten) rather than inserting a second one — the `v_ae_id is
 null` branch is what inserts, and it was not taken.
 
+### Repointing a post-merge row: NOT a `contact_merge_moves` entry
+
+The three `email_log` rows were moved to `ce753903` on 2026-08-11, in one
+transaction, recorded in `audit_log` as operation `GHOST_REPOINT` with the full
+before-state of each row.
+
+**They were deliberately NOT added to `contact_merge_moves`, and the reason is
+arithmetic before it is philosophy.** That ledger's row count is tied to the
+merge's own report: merge `bc562bb8` reports `rows_moved: 268` and the ledger
+holds 296 — 268 moved plus 28 skipped. Adding three more makes the report untrue
+about its own merge, and `rows_moved` is what anybody auditing that merge reads
+first.
+
+The behavioural reason is worse. `contact_merge_undo` replays every `moved` row
+in the ledger back onto the LOSER. These three postdate the merge, so replaying
+them would push an inbound lender email back onto a record that no surface
+displays — recreating precisely the invisibility this repoint fixed, inside the
+function whose job is to make things safe again.
+
+Recording them with `moved = false` was considered and rejected for the same
+count reason, and because that flag already means "we tried and the update
+raised" — `skip_reason` holds `sqlerrm`. Overloading it to mean "moved later,
+on purpose, do not undo" makes both readings unreliable.
+
+**Stated plainly, because it is a real gap rather than a solved problem: undo
+semantics for rows created AFTER a merge are undefined.** If `bc562bb8` were
+ever reversed, these three sit on `ce753903` while `93724c8a` becomes live again
+holding `reneduarte.homeside@gmail.com` as its primary address — so a case could
+be made that they belong to it. Nothing decides that today, and nothing should
+guess. An undo of a merge this old needs a human looking at what has happened
+since, and `GHOST_REPOINT` in `audit_log` is what that person needs to find.
+
+`email_log` has no trigger on `contact_id`, so the repoint fired nothing — worth
+knowing in both directions: the survivor's `open_count`/`click_count` counters
+were not recalculated either.
+
 **But the trigger did NOT stamp the survivor**, and this is the part to remember
 when repointing anything else. `tg_calls_log_advance_contact` gates its
 `contacts` update on `v_first_contact` — INSERT with a contact, or UPDATE from
