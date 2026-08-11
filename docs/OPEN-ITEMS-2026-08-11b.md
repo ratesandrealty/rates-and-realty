@@ -591,3 +591,80 @@ not the service account. So an unauthenticated caller who knows the URL can toda
 
 `trash-file` is the one to close first when step 4 runs: highest damage, zero
 callers, so guarding it cannot break anything.
+
+---
+
+# gdrive-proxy guarded (2026-08-11) — and a correction to my own audit
+
+## trash-file first, on its own
+
+No caller anywhere — repo, 11 n8n workflows, 45 cron jobs — and no undo. Guarded
+alone, ahead of everything else, because there was no legitimate traffic to
+break and frontend-first therefore did not apply. Its existing guards constrain
+the TARGET (SA ownership, not inside a borrower tree); they never constrained the
+CALLER. It keeps its own `requireStaff` in addition to the shared gate: a
+destructive action should not depend on a shared check staying correct.
+
+## I WAS WRONG ABOUT THE TEN CALL SITES
+
+I previously reported 10 unauthenticated browser call sites in lead-detail and
+said the guard was blocked behind a ten-site frontend change. **That was an
+artefact of my method.** I counted by grepping each `fetch(...)` blob for a
+literal `Authorization`. Most sites pass a `gp` object —
+`{ Authorization: 'Bearer ' + token, apikey: … }` — and in
+`_cmaEnsureCmaFolder(root, gp, base)` it arrives as a **function parameter**, so
+the string never appears near the call at all.
+
+Re-audited by reading each site:
+
+| caller | sites | authenticated |
+|---|---|---|
+| `lead-detail.html` fetches | 13 | **13** |
+| `lead-detail.html` `<a href>` downloads | 2 | **0 — cannot be** |
+| `components/admin-dashboard.js` | 1 | 1 (session) |
+| `gdrive-sync` | 1 | 1 (service key) |
+| n8n Lender Folder Creator | 1 | 1 (service_role credential) |
+
+So no frontend change was needed. The guard shipped in one step.
+
+**The lesson is the same one as the n8n drafts:** a grep answered a question about
+behaviour, and it was wrong in the direction that would have caused a week of
+unnecessary work — or, worse, a "safe" decision not to guard at all.
+
+## Verified by execution
+
+```
+create-folder upload-file rename list-folders list-files
+get-folder resolve-folder trash-file    no credential -> 401 all eight
+create-folder                           anon key      -> 401
+download                                no credential -> 400 fileId required   (EXEMPT)
+n8n Lender Folder Creator, guard live   execution 6693 -> SUCCESS
+```
+
+The last line is the one that matters as much as the refusals: an authenticated
+caller still works, so the guard did not break the only server-side writer.
+
+## STILL OPEN: download
+
+`?action=download` answers anyone with a fileId. It streams any file the app's
+Drive account can read. Closing it is a design change — signed URL or one-time
+token — because two `<a href>` call sites cannot send a header. Not attempted.
+
+## Record, not fixed: Lender Folder Creator's PATCH has no is.null guard
+
+Same bug Contact Folder Creator had, still live, and it is now the ONLY
+folder-creator left in n8n. Re-running it against a real lender would overwrite
+`lenders.gdrive_folder_id` and strand the previous folder — which is why the two
+probe runs used an id matching no lender.
+
+Once this work settles, the same move applies: give `gdrive-proxy` a lender
+equivalent of `create-borrower-folder` (requireStaff, skip-if-exists, is.null
+writeback), point the `lenders` INSERT trigger at it, and retire the workflow.
+**Noted, not started.**
+
+## Drive-UI cleanup for Rene (gdrive-proxy cannot trash these — rene@ owns them)
+
+- `ZZ-TEST Fixture GUARD TEST` — Borrowers root, from execution 6690
+- `15fS1PzNx4zM8Xfwt8mDbMBpNCjF8Yqw4` — Borrowers root, run 6689, now unreferenced
+- `1Anb0EiqwMTyIxsOzQMO4j49DJ4xySntN` — Lenders root, "ZZ-TEST Lender Folder Creator probe"
+- `1JUhxPPispvoAA5Q8rsuyzmF7g7xHNZl6` — Lenders root, "ZZ-TEST guard regression probe"
