@@ -251,9 +251,18 @@ account. Consequences, both learned the hard way:
 - Nothing in the backup tree can be trashed through `gdrive-proxy` — its first
   guard requires SA ownership, and the SA cannot even read those files (the
   metadata fetch 404s). Cleanup there is a Drive-UI job.
-- pg_cron job 2 `weekly-crm-backup` is **disabled** pending the R2 sync, so
-  nothing is currently producing backups. `backup:last_verified` last moved
-  2026-08-01.
+- pg_cron job 2 `weekly-crm-backup` is **ACTIVE and running.** Corrected
+  2026-08-11 — this file said it was disabled pending the R2 sync and that
+  "nothing is currently producing backups". Both were false. Measured:
+  `active = true`, schedule `0 8 * * 0`, last run **2026-08-09 08:00Z**, and
+  `system_state:backup:last_verified` moved at `2026-08-09T08:00:02Z` carrying a
+  real verified payload (leads: 1046 rows, file id, `verified_bytes` read back
+  from Drive). The stated date of 2026-08-01 was also stale.
+
+  Worth noting *why* this went unnoticed: a doc claiming a job is off is not
+  self-correcting. Nothing contradicts it, because a job nobody believes is
+  running is a job nobody checks. The R2-sync caveats below still stand — what
+  was wrong was the claim that nothing runs.
 
 **The R2 sync must read site files FROM THE REPO, not over HTTP.** Fetching
 `https://beta.ratesandrealty.com/<path>` backs up whatever the edge happens to
@@ -398,9 +407,10 @@ order by ran_at desc;
 ```
 
 **30-day retention is trimmed by the monitor itself**, inside `recordRun()`, not
-by a separate cron job. Deliberately: pg_cron job 2 `weekly-crm-backup` sat
-disabled while everything downstream looked fine, and a retention job that gets
-disabled leaves a table growing forever with nobody watching. The cleanup cannot
+by a separate cron job. The reasoning stands on its own — a retention job that
+gets disabled leaves a table growing forever with nobody watching. (The example
+originally cited here, job 2 `weekly-crm-backup` sitting disabled, was not true;
+see the Backups section. The design argument does not depend on it.) The cleanup cannot
 outlive the thing that maintains it. `recordRun` also never throws — a monitor
 that dies because it could not write its own logbook is worse than one with a
 gap in the logbook.

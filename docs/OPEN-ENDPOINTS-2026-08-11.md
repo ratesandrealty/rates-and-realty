@@ -24,7 +24,7 @@ JWT printed in every page's source. As it happens the distinction is moot here �
 | no in-function auth the detector recognises | 65 |
 | …of those, LIVE `verify_jwt = false` | 63 |
 | …minus hand-verified false positives | **59 open** |
-| can SEND (SMS / email) | 11 |
+| can SEND (SMS / email) | ~~11~~ **9** — see the correction below |
 | spend AI credits per call | 16 |
 | write borrower data with the service role | 48 |
 
@@ -35,14 +35,35 @@ JWT printed in every page's source. As it happens the distinction is moot here �
 | `bot-process-queue` | SENDS-SMS,SERVICE-ROLE,WRITES-DB |
 | `campaign-send-now` | SENDS-SMS,SENDS-EMAIL,SERVICE-ROLE,WRITES-DB |
 | `contact-intelligence` | SENDS-SMS,SPENDS-AI,SERVICE-ROLE,WRITES-DB |
-| `lead-scorer` | SENDS-SMS,SERVICE-ROLE,WRITES-DB |
 | `listing-alert-actions` | SENDS-EMAIL,SERVICE-ROLE,WRITES-DB |
 | `loan-date-nudges` | SENDS-SMS,SERVICE-ROLE |
 | `send-scheduled-emails` | SENDS-EMAIL,SERVICE-ROLE |
 | `send-scheduled-sms` | SENDS-SMS,SERVICE-ROLE |
-| `sms-inbound-reconcile` | SENDS-SMS,SERVICE-ROLE,WRITES-DB |
 | `tours-admin` | SENDS-SMS,SERVICE-ROLE,WRITES-DB |
 | `tours-send-reminders` | SENDS-SMS,SERVICE-ROLE,WRITES-DB |
+
+#### CORRECTION 2026-08-11 — two of these were never senders
+
+`lead-scorer` and `sms-inbound-reconcile` were listed above as SENDS-SMS. They
+are not. Verified against source, not inferred:
+
+| function | actual Twilio capability |
+|---|---|
+| `lead-scorer` | **none.** Zero references to Twilio, `sms-service`, `email-service` or any send helper anywhere in the file. It READS `sms_log` to compute an engagement score. |
+| `sms-inbound-reconcile` | **read-only.** One Twilio call, a `GET` of `Messages.json` to list what arrived. Every write is a DB write. |
+
+The tag appears to come from a table-name heuristic — both touch `sms_log` —
+which is not the same question as whether a function can put a message on the
+wire.
+
+**This mattered because the tag set the priority order.** These two were worked
+as senders 3–4 of 7, ahead of functions that genuinely can send. Both still
+deserved their guards — `sms-inbound-reconcile` writes `sms_suppressions`, and a
+recorded opt-out is a compliance record — but on the strength of what they
+WRITE, not what they send. Re-derive the ordering from capability before using
+this list to schedule work again.
+
+Send count corrected from 11 to **9**.
 
 ### Spends AI credits on every call (no send capability)
 

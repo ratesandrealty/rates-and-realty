@@ -18,8 +18,25 @@ be refused, and only the first was on my mind:
 | refusal | example | what it looks like |
 |---|---|---|
 | in-function `requireStaff` | the ones being guarded | 401 from the function |
-| **in-function `x-cron-secret`** | `proactive-followups`, `voe-inbound-poll` | **403 "missing or invalid x-cron-secret"** |
+| **in-function `x-cron-secret`** | `proactive-followups` | **403 "missing or invalid x-cron-secret"** |
 | **gateway `verify_jwt = true`** | `market-rate` | **401 `UNAUTHORIZED_NO_AUTH_HEADER`** |
+
+> **CORRECTION 2026-08-11.** `voe-inbound-poll` was listed on the middle row and
+> did not belong there. Its cron job 37 sent **`Content-Type` only, no secret of
+> any kind**, and returned 200 with real output on every ten-minute run — which
+> is only possible with no working gate. Its `if (POLL_SECRET)` check was
+> skipped entirely because `VOE_POLL_SECRET` was never set: the function was
+> **wide open**, not protected. The 403 recorded against it here was
+> `proactive-followups`' error text, attributed to the wrong job.
+>
+> So job 37 never needed the rollback it was given. It has since been
+> re-headered to `internal_call_headers()` (proven: 386458, 23:00:02Z, 200) and
+> the function guarded with `requireStaff({ allowInternal: true })`.
+>
+> The lesson is not the typo. Four jobs were rolled back on the strength of
+> reading responses in a batch, and one of the four was misread — the same
+> class of error as the bulk re-header itself. **Attribute each response to its
+> job by id before drawing a conclusion from it.**
 
 `internal_call_headers()` sends `x-internal-secret` and **no Authorization
 header at all**. So it fails both of the bottom two — a different secret name,
@@ -35,8 +52,11 @@ success at the `cron.job_run_details` level (`succeeded` = *queued*); only
 |---|---|---|---|
 | 20 | `proactive-followups?mode=digest` | `x-cron-secret` | own guard, different secret name |
 | 21 | `proactive-followups?mode=urgent` | `x-cron-secret` | same |
-| 37 | `voe-inbound-poll` | `x-cron-secret` | same |
 | 24 | `market-rate` | a JWT | `verify_jwt = true` — the GATEWAY rejects before the function runs |
+
+~~37 `voe-inbound-poll`~~ — struck; see the correction above. It was never
+guarded, has since been migrated to `x-internal-secret`, and is now the only one
+of the four that is finished.
 
 All four restored byte-exactly and verified `command = snapshot.command`.
 
