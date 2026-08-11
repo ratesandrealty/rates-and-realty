@@ -109,6 +109,57 @@ real.
 **A harness that has only ever passed proves nothing.** Break it before trusting
 it, and break it again whenever its failure modes change.
 
+## n8n: an edit is NOT shipped until an execution proves it
+
+`update_workflow` returns success, echoes the new values back, and **the running
+workflow keeps the old ones**. `versionId` and `activeVersionId` are different
+fields and only the second executes. The success response is a claim about a
+DRAFT.
+
+This hid a live breakage for a day. The 2026-08-11 `CRON_KEY` rotation edited the
+`x-cron-key` header on three workflows and reported success on all three. It
+never took: a production run of `post-close-followups` sent
+`rnr-cron-9b1f7a3e8c2d460a85f4e6172c0d9b3e` — the value that had just been
+revoked — and got 401. `critical-date-reminders` would have failed the same way
+at 22:00Z that night, silently, because nothing watches n8n.
+
+It was found only by reading the EXECUTION DATA (`get_execution` with
+`includeData`), which shows the header actually sent. The update tool's response
+and `get_workflow_details` both showed the new key, because both read the draft.
+
+**The two kinds of change do NOT behave the same, and this is the part that
+misleads:**
+
+| change | applies |
+|---|---|
+| node parameters (headers, URLs, credentials, code) | **draft — needs `publish_workflow`** |
+| workflow settings (`errorWorkflow`, `callerPolicy`, timezone) | **immediately** |
+
+Measured, not assumed: `setWorkflowSettings({errorWorkflow})` on three workflows
+left `activeVersionId` unchanged when published afterwards, and the error
+workflow fired for a failure whose node change was still an unpublished draft.
+
+So after any node edit:
+
+```
+update_workflow  ->  publish_workflow  ->  execute and READ THE EXECUTION
+```
+
+and for anything that sends a credential, read the header off
+`get_execution(includeData:true)`. Not the tool's echo.
+
+**Error workflows fire for PRODUCTION executions only.** A manual run does not
+trigger them, so a manual test of failure alerting proves nothing. And an Error
+Trigger workflow needs no production trigger of its own — `triggerCount: 0` and
+"can only be executed in manual mode" describe direct invocation, not error
+handling. Do not add a schedule trigger to one: it would email an empty alert on
+every tick.
+
+**Unshipped drafts sit there indefinitely.** `Contact Folder Creator` has carried
+one since 2026-06-15 while the 2026-05-11 version runs — found while auditing
+this. Check `get_workflow_history`: more than one version, newest not active,
+means something someone believed they had changed is not live.
+
 ## Edge functions
 
 **Always deploy with `bash tools/deploy-function.sh <slug>`. Never a bare
