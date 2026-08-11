@@ -15418,28 +15418,72 @@ function _esignSetDropState(label, busy){
   if(dz){ dz.style.opacity=busy?'0.7':'1'; dz.style.pointerEvents=busy?'none':'auto'; }
 }
 
-function _esignHandlePdfFile(file){
-  if(!file) return;
-  if(file.type!=='application/pdf'){ showToast('Please choose a PDF file', true); return; }
-  _esignSetDropState('Uploading…', true);
-  var reader=new FileReader();
-  reader.onload=async function(){
-    try{
+function _esignReadAsBase64(file){
+  return new Promise(function(resolve, reject){
+    var reader=new FileReader();
+    reader.onload=function(){
       var dataUrl=String(reader.result||'');
-      var base64=dataUrl.indexOf(',')>-1 ? dataUrl.slice(dataUrl.indexOf(',')+1) : dataUrl;
-      var json=await _esignDocsPost({ action:'upload', name:file.name, contact_id:(typeof lpCid==='function'?lpCid():null), pdf_base64:base64 });
-      _esignSetDropState('⬆ Upload a PDF', false);
-      _esignAddPdfDoc({ document_id:json.document_id, name:json.name||file.name, page_count:json.page_count, field_count:0 });
-      _esignRenderDocs();
-      _esignOpenDocViewer(json.document_id, json.name||file.name, json.page_count); // auto-open editor
-    }catch(e){
-      _esignSetDropState('⬆ Upload a PDF', false);
-      showToast((e&&e.message)||'Upload failed', true);
-    }
-  };
-  reader.onerror=function(){ _esignSetDropState('⬆ Upload a PDF', false); showToast('Could not read file', true); };
-  reader.readAsDataURL(file);
+      resolve(dataUrl.indexOf(',')>-1 ? dataUrl.slice(dataUrl.indexOf(',')+1) : dataUrl);
+    };
+    reader.onerror=function(){ reject(new Error('Could not read '+file.name)); };
+    reader.readAsDataURL(file);
+  });
 }
+
+/* SEVERAL PDFs, ONE PACKAGE.
+ *
+ * Each file becomes its own esign_documents row on the same envelope, so each is
+ * signed separately — the same mechanism as the multi-LOE package, and the
+ * reason one signature cannot cover the set.
+ *
+ * THE DROP PATH CANNOT ORPHAN AN OBJECT, and not by care here: the browser has
+ * no bucket access at all. Every file goes through esign-docs `upload`, which
+ * uploads then inserts esign_documents with storage_path and, on insert failure,
+ * does storage.remove([path]). N files is N passes through that same gate, so
+ * multi-upload cannot reach the bucket by any route the single upload did not.
+ *
+ * SEQUENTIAL, not parallel: each file is base64 over HTTP and the server parses
+ * the PDF to count pages. Firing ten at once spikes both ends, and a per-file
+ * counter is only honest if the files actually go one at a time. */
+async function _esignHandlePdfFiles(fileList){
+  var files=[].slice.call(fileList||[]);
+  if(!files.length) return;
+  var notPdf=files.filter(function(f){ return f.type!=='application/pdf' && !/\.pdf$/i.test(f.name||''); });
+  files=files.filter(function(f){ return notPdf.indexOf(f)<0; });
+  if(notPdf.length) showToast(notPdf.length+' file'+(notPdf.length===1?'':'s')+' skipped — PDFs only', true);
+  if(!files.length){ _esignSetDropState('⬆ Upload PDFs', false); return; }
+
+  var done=[], failed=[];
+  for(var i=0;i<files.length;i++){
+    var f=files[i];
+    _esignSetDropState(files.length>1 ? ('Uploading '+(i+1)+' of '+files.length+'…') : 'Uploading…', true);
+    try{
+      var base64=await _esignReadAsBase64(f);
+      var json=await _esignDocsPost({ action:'upload', name:f.name, contact_id:(typeof lpCid==='function'?lpCid():null), pdf_base64:base64 });
+      _esignAddPdfDoc({ document_id:json.document_id, name:json.name||f.name, page_count:json.page_count, field_count:0 });
+      done.push({ id:json.document_id, name:json.name||f.name, pages:json.page_count });
+    }catch(e){
+      /* Keep going. One bad PDF in a drop of six should not discard the five
+         that uploaded — and the failures are named rather than counted. */
+      failed.push((f.name||'file')+': '+((e&&e.message)||'upload failed'));
+    }
+  }
+  _esignSetDropState('⬆ Upload PDFs', false);
+  _esignRenderDocs();
+
+  if(failed.length) showToast(failed.length+' failed — '+failed[0]+(failed.length>1?(' (+'+(failed.length-1)+' more)'):''), true);
+  if(!done.length) return;
+
+  /* Auto-open the field editor for the FIRST document only. Opening six editors
+     is unusable, and every document still needs at least one field: esign
+     refuses to send with "place at least one field on <name>", loudly, per
+     document — so the remaining ones cannot be forgotten silently. */
+  _esignOpenDocViewer(done[0].id, done[0].name, done[0].pages);
+  if(done.length>1) showToast(done.length+' documents added — place a signature on each before sending');
+}
+
+// Kept so any older single-file caller keeps working.
+function _esignHandlePdfFile(file){ if(file) _esignHandlePdfFiles([file]); }
 
 /* ── Multi-document list (templates + uploaded PDFs) ── */
 function _esignAddPdfDoc(item){
@@ -16158,11 +16202,21 @@ async function openEsignSendModal(){
           +'<button type="button" onclick="_esignAddTemplateDoc()" style="flex-shrink:0;height:34px;border:1px solid rgba(201,168,76,0.3);background:transparent;color:#C9A84C;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;padding:0 12px;">+ Add</button>'
         +'</div>'
         // PDF drop zone (doubles as click-to-pick button)
-        +'<div id="esignDropZone" role="button" tabindex="0" onclick="document.getElementById(\'esignPdfInput\').click()" style="border:1.5px dashed rgba(201,168,76,0.4);border-radius:8px;padding:14px 12px;text-align:center;cursor:pointer;color:#C9A84C;font-size:12px;font-weight:600;transition:background .12s,border-color .12s;">'
-          +'<span id="esignDropLabel">⬆ Upload a PDF</span>'
-          +'<div style="font-size:10px;color:#666;font-weight:400;margin-top:3px;">Drag &amp; drop or click to choose</div>'
+        /* DRAG-AND-DROP IS NOW REAL. The caption already said "Drag & drop or
+           click to choose" and only the click half existed — dropping a file
+           here did nothing, or navigated the tab away to the PDF. */
+        +'<div id="esignDropZone" role="button" tabindex="0" onclick="document.getElementById(\'esignPdfInput\').click()"'
+          +' ondragover="event.preventDefault();event.stopPropagation();this.style.background=\'rgba(201,168,76,0.10)\';"'
+          +' ondragleave="this.style.background=\'transparent\';"'
+          +' ondrop="event.preventDefault();event.stopPropagation();this.style.background=\'transparent\';_esignHandlePdfFiles(event.dataTransfer&&event.dataTransfer.files);"'
+          +' style="border:1.5px dashed rgba(201,168,76,0.4);border-radius:8px;padding:14px 12px;text-align:center;cursor:pointer;color:#C9A84C;font-size:12px;font-weight:600;transition:background .12s,border-color .12s;">'
+          +'<span id="esignDropLabel">⬆ Upload PDFs</span>'
+          +'<div style="font-size:10px;color:#666;font-weight:400;margin-top:3px;">Drop several at once, or click to choose</div>'
         +'</div>'
-        +'<input type="file" id="esignPdfInput" accept="application/pdf" style="display:none;" onchange="_esignHandlePdfFile(this.files&&this.files[0])">'
+        /* multiple: several PDFs become several documents in ONE package, each
+           signed separately. value is cleared so re-picking the same file fires
+           change again. */
+        +'<input type="file" id="esignPdfInput" accept="application/pdf" multiple style="display:none;" onchange="_esignHandlePdfFiles(this.files); this.value=\'\';">'
         // Document library manager (upload / edit fields / use / rename / delete)
         +'<button type="button" onclick="_esignOpenLibrary()" style="width:100%;margin-top:8px;height:34px;border:1px solid rgba(201,168,76,0.3);background:transparent;color:#C9A84C;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;padding:0 12px;">📚 Document library</button>'
         +'<div id="esignLibraryPicker" style="display:none;margin-top:8px;"></div>'
