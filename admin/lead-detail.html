@@ -10842,9 +10842,15 @@ function lpFocusOrderFromHash(){
       if (++tries < 12) return setTimeout(attempt, 250);   // ~3s, then give up quietly
       return;
     }
+    /* OPEN IT FIRST. VOE cards used to carry their detail inline, so focusing
+       one only meant drawing attention to it. They collapse now, and a deep
+       link that scrolls to a closed strip and glows at it has delivered
+       nothing — the order it was pointing at is still hidden. Expand (never
+       toggle: arriving at an open card and closing it is the opposite of
+       focusing it), then scroll, so the scroll measures the final height. */
+    var vk = el.getAttribute && el.getAttribute('data-voe-key');
+    if (vk && typeof lpVoeExpand === 'function') { try { lpVoeExpand(vk); } catch(_) {} }
     try { if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior:'smooth', block:'center' }); } catch(_) { }
-    /* Expand: VOE cards carry their detail inline, so "expanded" here means
-       drawing attention to it rather than opening a collapsed region. */
     var prev = el.style.boxShadow;
     el.style.transition = 'box-shadow .3s';
     el.style.boxShadow = '0 0 0 2px rgba(201,168,76,.85)';
@@ -12179,7 +12185,26 @@ const LP_ACT_STATE = {
   sent:     { t:'Sent',     ic:'↑',  fg:'#C9A84C', chipBg:'rgba(201,168,76,.10)',   chipFg:'#C9A84C', bd:'rgba(201,168,76,.5)',     rowBg:'rgba(255,255,255,.02)', w:2 },
   declined: { t:'Declined', ic:'✕',  fg:'#8f8f8f', chipBg:'rgba(255,255,255,.06)',  chipFg:'#9a9488', bd:'rgba(255,255,255,.18)',   rowBg:'rgba(255,255,255,.015)', w:2 },
   draft:    { t:'Draft',    ic:'✎',  fg:'#8f8f8f', chipBg:'rgba(255,255,255,.06)',  chipFg:'#9a9488', bd:'rgba(255,255,255,.18)',   rowBg:'rgba(255,255,255,.015)', w:2 },
+  /* ORDER STATES, same vocabulary as the activity rows so a VOE card and the
+     email trail inside it do not describe the world in two different palettes.
+     needs_revision is the only one that demands action without being a
+     failure, so it gets amber — loud enough to find, not red enough to read
+     as broken. */
+  ordered:      { t:'Ordered',   ic:'↑', fg:'#C9A84C', chipBg:'rgba(201,168,76,.10)', chipFg:'#C9A84C', bd:'rgba(201,168,76,.5)',  rowBg:'rgba(255,255,255,.02)', w:2 },
+  acknowledged: { t:'Acked',     ic:'◉', fg:'#C9A84C', chipBg:'rgba(201,168,76,.16)', chipFg:'#D9BC6A', bd:'rgba(201,168,76,.75)', rowBg:'rgba(201,168,76,.05)', w:2 },
+  needs_revision:{t:'Revision',  ic:'↺', fg:'#E0B84C', chipBg:'rgba(245,158,11,.20)', chipFg:'#F7C55A', bd:'#E0B84C',             rowBg:'rgba(245,158,11,.10)', w:3 },
+  not_ordered:  { t:'Not ordered', ic:'○', fg:'#8f8f8f', chipBg:'rgba(255,255,255,.06)', chipFg:'#9a9488', bd:'rgba(255,255,255,.18)', rowBg:'rgba(255,255,255,.015)', w:2 },
+  scheduled:    { t:'Scheduled', ic:'◷', fg:'#7BBCE8', chipBg:'rgba(90,160,224,.16)', chipFg:'#8FC8F0', bd:'#5AA0E0',             rowBg:'rgba(90,160,224,.08)', w:2 },
+  paid:         { t:'Paid',      ic:'✓', fg:'#50c878', chipBg:'rgba(80,200,120,.16)', chipFg:'#7CE0A0', bd:'#50c878',             rowBg:'rgba(80,200,120,.08)', w:2 },
 };
+/* An order status IS a state key — except 'received', which already exists and
+   means the same thing on both sides. Anything unrecognised falls back rather
+   than throwing, because a status added to LP_ORDER_STATUS later must degrade
+   to a plain chip instead of blanking the card. */
+function _lpOrderState(status){
+  const s = String(status || 'not_ordered').trim().toLowerCase();
+  return LP_ACT_STATE[s] ? s : 'not_ordered';
+}
 /* Direction is the FALLBACK, never the answer. An outbound row with no status
    is "sent"; an inbound one is "received". Reading direction first is what made
    a failed outbound email render identically to a delivered one. */
@@ -12595,8 +12620,53 @@ function _lpVoeFind(k){ return _lpVoes.find(x=>x.key===k); }
 function _lpToLocalDT(iso){ if(!iso) return ''; const d=new Date(iso); if(isNaN(d.getTime())) return ''; const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
 function _lpFmtDT(iso){ if(!iso) return ''; if(window.RRTime) return window.RRTime.dateTime(iso); return ''; }
 
+/* ── VOE PANEL: SEVERAL ORDERS VISIBLE AT ONCE ───────────────────────────────
+ *
+ * Multiple VOEs per borrower already worked at the data layer — the unique
+ * index carries WHERE order_type <> 'voe' — but the UI stacked every card at
+ * full height, so two employers became a wall you had to scroll past to reach
+ * anything below, and the state of each was a <select> you had to read.
+ *
+ * Three changes, and the collapse is the one that makes the other two useful:
+ *   · a GRID, so cards sit side by side when there is room
+ *   · a HEADER that carries the state chip, borrower and employer, so a card
+ *     answers "where is this one" without being opened
+ *   · a COLLAPSIBLE body, open by default when there is ONE card and closed
+ *     when there are several. One VOE is the common case and nothing changes
+ *     for it; the wall only ever appeared with several.
+ *
+ * Open state is held in _lpVoeOpen and survives re-render, because lpRenderVoe
+ * runs on every field change and a card that slammed shut mid-edit would be
+ * worse than the wall. */
+let _lpVoeOpen = {};          // key → true when a card body is expanded
+
+function lpVoeToggle(k){
+  _lpVoeOpen[k] = !_lpVoeOpen[k];
+  const body = document.getElementById('lpVoeBody-'+k);
+  const car  = document.getElementById('lpVoeCaret-'+k);
+  if(body) body.style.display = _lpVoeOpen[k] ? 'block' : 'none';
+  if(car)  car.textContent = _lpVoeOpen[k] ? '▾' : '▸';
+}
+/* Used by the deep link, which must not TOGGLE — arriving at an already-open
+   card and closing it is the opposite of focusing it. */
+function lpVoeExpand(k){
+  if(_lpVoeOpen[k]) return;
+  lpVoeToggle(k);
+}
 function lpRenderVoe(){
   const host=document.getElementById('lpVoeCards'); if(!host) return;
+  /* Default open only for a single card. Recomputed on each render for cards
+     nobody has touched; an explicit choice is kept. */
+  const many = _lpVoes.length > 1;
+  _lpVoes.forEach(function(v){ if(!(v.key in _lpVoeOpen)) _lpVoeOpen[v.key] = !many; });
+
+  host.style.display = _lpVoes.length ? 'grid' : 'block';
+  /* auto-fill + minmax: two or three across a wide processing pane, one on a
+     narrow one, with no breakpoint to keep in step with the layout. */
+  host.style.gridTemplateColumns = 'repeat(auto-fill, minmax(320px, 1fr))';
+  host.style.gap = '8px';
+  host.style.alignItems = 'start';
+
   host.innerHTML = _lpVoes.length ? _lpVoes.map(lpVoeCardHtml).join('') : '<div style="font-size:11px;color:#666;padding:4px 2px;">No VOEs yet. Click “+ Add VOE”.</div>';
   // Load each saved card's notes log + wire the @-mention picker into its note box.
   _lpVoes.forEach(function(v){ if(v.id){ lpNotesLoad(v.id); lpVoeLoadActivity(v.id, v.key); const ta=document.getElementById('lpNoteInput-'+v.id); if(ta && typeof attachMentionAutocomplete==='function') attachMentionAutocomplete(ta); } });
@@ -12619,13 +12689,42 @@ function lpVoeCardHtml(v){
   const vLabel = v.vendor_id ? (v.vendor_name||_lpVendorNames[v.vendor_id]||'Vendor selected') : 'Select vendor (optional)';
   const overdue = v.follow_up_at && st!=='received' && (new Date(v.follow_up_at).getTime()<Date.now());
   const txtF=(field,ph)=>'<input type="text" id="lpVoeF-'+k+'-'+field+'" placeholder="'+ph+'" value="'+lpEsc(v[field]||'')+'" onchange="lpVoeField(\''+k+'\',\''+field+'\',this.value)" style="'+inp+'">';
+  /* HEADER — what the card says when it is CLOSED, and the reason the grid
+     works: state chip, who, and which employer. Everything below is detail.
+     The employer falls back to the label and then to a placeholder, so a card
+     is never a blank strip you have to open to identify. */
+  const stKey = _lpOrderState(st);
+  const open = !!_lpVoeOpen[k];
+  const borName = (function(){
+    const b=_lpBorrowers.find(x=>String(x.contact_id)===String(v.borrower_contact_id||''));
+    return b ? (b.name||'Borrower') : '';
+  })();
+  const empShown = (v.employer_name||'').trim() || (v.label||'').trim() || 'Untitled VOE';
+  const overdueBadge = overdue
+    ? '<span style="flex-shrink:0;font-size:9px;font-weight:800;color:#F0A0A0;background:rgba(229,72,77,.16);border:1px solid rgba(229,72,77,.45);border-radius:999px;padding:1px 6px;">FOLLOW-UP DUE</span>'
+    : '';
+
   /* data-order-id is the deep-link target. Absent on an unsaved card, which is
      correct — nothing can link to an order that has no row yet. */
-  return '<div'+(v.id?' data-order-id="'+lpEsc(v.id)+'"':'')+' style="position:relative;border:1px solid '+(overdue?'#E5484D':'rgba(255,255,255,.08)')+';border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(255,255,255,.02);">'
+  return '<div'+(v.id?' data-order-id="'+lpEsc(v.id)+'"':'')+' data-voe-key="'+lpEsc(k)+'" style="position:relative;border:1px solid '+(overdue?'#E5484D':'rgba(255,255,255,.08)')+';border-radius:8px;padding:8px;background:rgba(255,255,255,.02);'+_lpActRowCss(stKey)+'">'
+    /* The whole header is the toggle. A caret alone is a small target in a
+       dense panel, and there is nothing else in this strip to click. */
+    +'<div onclick="lpVoeToggle(\''+k+'\')" style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">'
+      +'<span id="lpVoeCaret-'+k+'" style="flex-shrink:0;color:#8f8f8f;font-size:11px;width:10px;">'+(open?'▾':'▸')+'</span>'
+      +_lpActChip(stKey)
+      +'<span style="flex:1;min-width:0;">'
+        +'<span style="display:block;font-size:12px;font-weight:600;color:#e2e2e2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(empShown)+'</span>'
+        +(borName?'<span style="display:block;font-size:9.5px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(borName)+'</span>':'')
+      +'</span>'
+      +overdueBadge
+      +'<span id="lpVoeSaved-'+k+'" style="flex-shrink:0;font-size:10px;min-width:24px;text-align:right;"></span>'
+    +'</div>'
+    /* Everything below is the detail. display is set inline so a re-render
+       cannot lose an open card. */
+    +'<div id="lpVoeBody-'+k+'" style="display:'+(open?'block':'none')+';margin-top:7px;">'
     +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">'
       +'<select id="lpVoeBor-'+k+'" onchange="lpVoeBorrowerChange(\''+k+'\',this.value)" style="'+sel+'flex:1;min-width:0;">'+bopts+'</select>'
       +'<select onchange="lpVoeStatusChange(\''+k+'\',this.value)" style="'+sel+'">'+stOpts+'</select>'
-      +'<span id="lpVoeSaved-'+k+'" style="font-size:10px;min-width:36px;text-align:right;"></span>'
     +'</div>'
     +'<input type="text" id="lpVoeF-'+k+'-label" placeholder="Label (e.g. VOE - Acme W2)" value="'+lpEsc(v.label||'')+'" onchange="lpVoeField(\''+k+'\',\'label\',this.value)" style="'+inp+'margin-bottom:6px;">'
     +'<div style="display:flex;justify-content:flex-end;margin-bottom:4px;"><button type="button" onclick="lpVoeEmpOpen(\''+k+'\')" title="Every employer on this file — current and previous, every borrower" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.15);color:#bbb;border-radius:6px;font-size:10px;font-weight:600;padding:2px 8px;cursor:pointer;font-family:inherit;">⬇ Employer from file ▾</button></div>'
@@ -12649,6 +12748,7 @@ function lpVoeCardHtml(v){
         + (v.id ? '<button type="button" onclick="lpOrderEmail(\''+v.id+'\')" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#C9A84C;border-radius:6px;font-size:10px;font-weight:600;padding:3px 10px;cursor:pointer;font-family:inherit;">✉️ Email</button>' : '')
       + '</div>'
     + (v.id ? ('<div id="lpVoeAct-'+k+'" style="margin-top:6px;"></div>' + lpRenderNotesBlock(v.id)) : '<div style="font-size:9.5px;color:#666;margin-top:6px;">Set a borrower/status (or click “Send VOE Request”) to save this VOE and start its activity + notes.</div>')
+    +'</div>'   /* /lpVoeBody */
   +'</div>';
 }
 function lpVoeAdd(){ _lpVoes.push({ key:'vn'+(++_lpVoeSeq), id:null, status:'not_ordered' }); lpRenderVoe(); }

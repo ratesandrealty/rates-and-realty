@@ -1051,6 +1051,70 @@ const SPECS = [
       ['RRPhone.format(_lpPhoneForSave(RRPhone.format("8182727418")))', '(818) 272-7418'],
     ],
   },
+  {
+    /* VOE PANEL — SEVERAL ORDERS VISIBLE AT ONCE.
+     *
+     * Multiple VOEs per borrower already worked at the data layer (the unique
+     * index carries WHERE order_type <> 'voe'); the UI stacked every card at
+     * full height, so two employers became a wall and each card's state was a
+     * <select> you had to read.
+     *
+     * Drives the real lpRenderVoe() with three orders. The assertions that
+     * matter are the ones a "make it prettier" change would break: the body
+     * COLLAPSES when there are several (that is what stops the wall), a single
+     * card stays OPEN (the common case must not regress into needing a click),
+     * and the closed header still identifies the order — a collapsed strip you
+     * have to open to recognise is a worse wall than the tall one. */
+    name: 'VOE panel shows several orders at once, collapsed and stateful',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      ['(function(){'
+        + ' var h=document.getElementById("lpVoeCards");'
+        + ' if(!h){ h=document.createElement("div"); h.id="lpVoeCards"; document.body.appendChild(h); }'
+        + ' _lpVoeOpen={};'
+        + ' _lpBorrowers=[{contact_id:"b1",name:"Ana Borrower",is_primary:true}];'
+        + ' _lpVoes=[{key:"v1",id:"11111111-1111-4111-8111-000000000001",status:"received",employer_name:"Acme Corp",borrower_contact_id:"b1"},'
+        + '          {key:"v2",id:"11111111-1111-4111-8111-000000000002",status:"needs_revision",employer_name:"Globex",borrower_contact_id:"b1"},'
+        + '          {key:"v3",id:null,status:"not_ordered",employer_name:"",label:""}];'
+        + ' lpRenderVoe(); return document.querySelectorAll("#lpVoeCards [data-voe-key]").length; })()', 3],
+
+      // A GRID, so several fit across rather than stacking.
+      ['getComputedStyle(document.getElementById("lpVoeCards")).display', 'grid'],
+
+      // With several, bodies are CLOSED — this is what removes the wall.
+      ['document.getElementById("lpVoeBody-v1").style.display', 'none'],
+      ['document.getElementById("lpVoeBody-v2").style.display', 'none'],
+
+      // …and the closed header still identifies the order.
+      ['document.querySelector(\'[data-voe-key="v1"]\').textContent.indexOf("Acme Corp") >= 0', true],
+      ['document.querySelector(\'[data-voe-key="v1"]\').textContent.indexOf("Ana Borrower") >= 0', true],
+      // An untitled, unsaved card is still recognisable rather than a blank strip.
+      ['document.querySelector(\'[data-voe-key="v3"]\').textContent.indexOf("Untitled VOE") >= 0', true],
+
+      /* STATE READS WITHOUT OPENING, and the two differ — the same chip
+         vocabulary as the activity rows and the HOI panel. */
+      ['(function(){ var c=document.querySelector(\'[data-voe-key="v1"] span[style*="border-radius:999px"]\');'
+        + ' return c ? c.textContent.replace(/[^A-Za-z]/g,"").toUpperCase() : "none"; })()', 'RECEIVED'],
+      ['(function(){ var c=document.querySelector(\'[data-voe-key="v2"] span[style*="border-radius:999px"]\');'
+        + ' return c ? c.textContent.replace(/[^A-Za-z]/g,"").toUpperCase() : "none"; })()', 'REVISION'],
+      ['getComputedStyle(document.querySelector(\'[data-voe-key="v1"]\')).borderLeftColor !== '
+        + 'getComputedStyle(document.querySelector(\'[data-voe-key="v2"]\')).borderLeftColor', true],
+
+      // Clicking the header opens THAT card only.
+      ['(function(){ lpVoeToggle("v2");'
+        + ' return document.getElementById("lpVoeBody-v2").style.display + "|" + document.getElementById("lpVoeBody-v1").style.display; })()',
+       'block|none'],
+      // An open card survives a re-render — it runs on every field change.
+      ['(function(){ lpRenderVoe(); return document.getElementById("lpVoeBody-v2").style.display; })()', 'block'],
+
+      /* ONE card stays OPEN. The wall only ever happened with several, and
+         making the common case need a click would be a regression. */
+      ['(function(){ _lpVoeOpen={};'
+        + ' _lpVoes=[{key:"solo",id:"11111111-1111-4111-8111-000000000009",status:"ordered",employer_name:"Solo Inc",borrower_contact_id:"b1"}];'
+        + ' lpRenderVoe(); return document.getElementById("lpVoeBody-solo").style.display; })()', 'block'],
+    ],
+  },
   /* ── EMPTY SEARCH TELLS THE TRUTH ─────────────────────────────────────────
    * The reported bug: searching SC-27335-BU in Full mailbox said "Nothing in
    * Inbox" while that thread was visible in the same lead's filed list. The
