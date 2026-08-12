@@ -513,6 +513,44 @@ the call is answered". Verified against the recordings themselves: no transcript
 contains the disclosure text, and the whisper would be the first thing captured
 if capture began before it finished.
 
+### What makes recording lawful is now DIFFERENT PER DIRECTION
+
+Changed 2026-08-12, and the asymmetry is the whole point.
+
+| | basis | per-call announcement |
+|---|---|---|
+| **outbound** (dial path, `make_call`) | **consent captured at intake**, on the contact | **none** |
+| **inbound** | the announcement itself | **yes — `<Say>` to the caller + whisper to staff** |
+
+**Outbound plays nothing.** Rene obtains recording consent from every contact at
+intake, before they enter the database, so an outbound call goes to someone who
+has already agreed. Restating it on every call was redundant. The record lives on
+`contacts.recording_consent_at` / `_method` / `_by` (`verbal_intake` | `signed` |
+`portal`, closed set, two CHECK constraints, set through
+`set_recording_consent`, which stamps `_by` from `auth.uid()` server-side).
+
+**Inbound still announces, and must.** An inbound caller may not be in the
+database at all — a first-time caller, a wrong number, someone else's client —
+so there is no consent record to point at and the announcement IS the consent.
+`canRecord()` still fail-closes that path: no disclosure, no capture.
+
+**If you find yourself making the two paths consistent, stop.** You would be
+removing the only basis one of them has.
+
+**NOTHING WAS BACKFILLED.** All 1,047 contacts have `recording_consent_at IS
+NULL`. Rene very likely has consent from most of them, but stamping an assumption
+onto every row manufactures exactly the evidence the field exists to be — and a
+fabricated consent record is worse than an absent one. The sidebar renders
+"Recording consent: not on record" rather than a blank, so the absence is visible
+on the contacts where it matters.
+
+**The per-call recording toggle is gone** (same date, Rene's decision: always
+record, always transcribe). No switch in the dialer, the lead-detail modal or the
+power dialer; no `Record` param on `Device.connect`; `canRecord()` no longer
+takes a `wanted` flag. `calls_log.recording_disposition` is KEPT — a failed
+capture and a deliberate skip are different facts, and historical rows still say
+`off`. New outbound rows are stamped `recorded` at dial time.
+
 **Channel 1 is NOT always staff here.** Twilio puts the parent leg on channel 1
 and Conversational Intelligence assumes channel 1 is the Agent. True for the
 browser dialer; **backwards for inbound**, where the parent leg is the borrower

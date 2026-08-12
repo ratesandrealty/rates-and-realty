@@ -236,15 +236,42 @@
       if (repaint) repaint();
     } catch (e) { if (errEl) errEl.textContent = '⚠ ' + ((e && e.message) || 'Save failed'); }
   }
-  // Delete the video (video_url='') — keeps the topic row + title/description. Best-effort storage remove.
+  /* Delete the video — keeps the topic row + title/description.
+   *
+   * THIS USED TO LEAVE TWO THINGS BEHIND, and both were found by the storage
+   * monitor reporting a dangling videos.storage_path on 2026-08-12:
+   *
+   *   1. THE `videos` ROW SURVIVED. Only the storage object was removed, so the
+   *      row went on pointing at bytes that no longer existed — and because a
+   *      videos row is what makes /v/<slug> resolve, the public watch page kept
+   *      returning 200 while its /media 404'd. A link that plays nothing is the
+   *      exact failure loom-recorder's MIN_BYTES floor exists to prevent, so
+   *      leaving one behind here undid that guard from the other end. Measured
+   *      on slug 1d6fbbd15cd2425e, deleted 2026-08-10, still serving 2026-08-12.
+   *
+   *   2. video_slug SURVIVED TOO. help_topic_upsert clears video_url with an
+   *      explicit `case when p_video_url is not null then nullif(...)`, but
+   *      video_slug uses `coalesce(excluded.video_slug, help_topics.video_slug)`
+   *      — under which NULL means "leave it alone", not "clear it". So passing
+   *      null cleared nothing. '' is now the clear sentinel for both, matching
+   *      how video_url has always behaved.
+   *
+   * ORDER MATTERS: the slug is captured BEFORE the row is cleared, or there is
+   * nothing left to find the videos row by. */
   async function deleteVideo(key, draft, repaint) {
     if (!confirm('Remove this help video?')) return;
     var errEl = document.getElementById('ht-e-err');
     if (errEl) errEl.innerHTML = '<span class="ht-spin" style="border-top-color:#C9A84C"></span> Removing…';
     try {
       var cl = await client();
-      var r = await cl.rpc('help_topic_upsert', { p_key: key, p_title: null, p_description: null, p_video_url: '', p_video_slug: null, p_area: null });
+      var slug = draft.video_slug || (_cache[key] && _cache[key].video_slug) || '';
+      var r = await cl.rpc('help_topic_upsert', { p_key: key, p_title: null, p_description: null, p_video_url: '', p_video_slug: '', p_area: null });
       if (r.error) throw r.error;
+      /* Retire the videos row so /v/<slug> stops resolving. Best-effort and
+         non-fatal, like the storage remove below: the topic is already
+         detached, and failing the whole delete over the tidy-up would leave the
+         user unable to replace the video. */
+      if (slug) { try { await cl.rpc('video_retire', { p_slug: slug }); } catch (e2) { console.warn('[help] video_retire', slug, e2 && e2.message); } }
       var p = _htBucketPath(draft.video_url); if (p) { try { await cl.storage.from(BUCKET).remove([p]); } catch (_) {} }
       if (_cache[key]) { _cache[key].video_url = ''; _cache[key].video_slug = ''; }
       draft.video_url = ''; draft.video_slug = '';

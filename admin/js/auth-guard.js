@@ -345,7 +345,7 @@
     function mountHelpButton() {
       if (document.querySelector('script[src*="/admin/js/help-button.js"]')) return;
       const hb = document.createElement('script');
-      hb.src = '/admin/js/help-button.js?v=2f708afe07';
+      hb.src = '/admin/js/help-button.js?v=0256ab3b63';
       document.head.appendChild(hb);
     }
     // Universal task capture (📌 + Ctrl+Shift+K). Same reasoning as the two
@@ -441,7 +441,7 @@
     function mountDialer() {
       if (window._rrDialerLoaded || document.querySelector('script[src*="/admin/js/dialer.js"]')) return;
       const dl = document.createElement('script');
-      dl.src = '/admin/js/dialer.js?v=b525b1fa95';
+      dl.src = '/admin/js/dialer.js?v=cf4b1032f5';
       document.head.appendChild(dl);
     }
     function mountActionFab() {

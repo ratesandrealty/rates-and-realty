@@ -1,5 +1,8 @@
-// voe-inbound-poll v1 — VOE Phase 2 inbound Gmail capture.
-// Polls rene@ Gmail for HR VOE replies, matches them to loan_orders via
+// voe-inbound-poll v2 — VOE Phase 2 inbound Gmail capture.
+// Polls rene@ AND processing@ for HR VOE replies (v2, 2026-08-12: reply_to moved
+// to processing@ so Rene and the VA share one chain; rene@ stays in the sweep
+// until every VOE sent before the cutover is closed — those carry the old
+// reply_to and HR will answer there). Matches them to loan_orders via
 // voe_match_reply (token in To/Delivered-To, else from_email = hr_contact_email),
 // and logs each into email_log via voe_log_inbound (idempotent on gmail_message_id).
 // Deployed verify_jwt=false (project cron convention); optional x-cron-secret gate.
@@ -7,6 +10,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { requireStaff } from '../_shared/require-staff.ts'
+import { getMailboxToken } from '../_shared/gmail-dwd.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -119,16 +123,61 @@ serve(async (req) => {
     const queries: string[] = []
     for (const o of orders) {
       if (o.hr_contact_email) queries.push(`from:${o.hr_contact_email} newer_than:${lookback}`)
-      if (o.voe_reply_token) queries.push(`to:rene+${o.voe_reply_token}@ratesandrealty.com newer_than:${lookback}`)
+      /* Both plus-address forms. reply_to moved from rene@ to processing@ on
+         2026-08-12; requests sent before that carry the rene+ form and HR will
+         keep replying to it for as long as those orders stay open. */
+      if (o.voe_reply_token) {
+        queries.push(`to:rene+${o.voe_reply_token}@ratesandrealty.com newer_than:${lookback}`)
+        queries.push(`to:processing+${o.voe_reply_token}@ratesandrealty.com newer_than:${lookback}`)
+      }
     }
     queries.push(`newer_than:${lookback} -in:sent (subject:"verification of employment" OR subject:"employment verification")`)
     summary.queries = queries
 
-    const idset = new Map<string, string>()
-    for (const q of queries) {
-      const res = await gmailList(token, q, 25)
-      if ((res as any).error) { summary.errors.push((res as any).error); continue }
-      for (const m of res.messages) idset.set(m.id, m.threadId)
+    /* ── BOTH MAILBOXES, FOR THE CUTOVER ────────────────────────────────────
+     *
+     * VOE replies used to land in rene@ only, because reply_to was hardcoded to
+     * it — which meant the VA could not see or answer a reply even to a request
+     * she sent, since gmail-inbox refuses her rene@ by role. reply_to is now
+     * processing@, which both roles can reach.
+     *
+     * YOU CANNOT JUST FLIP IT. Every VOE already in flight went out with
+     * reply_to: rene@ and HR will reply there regardless of what we changed
+     * today, so a straight switch would silently stop matching replies to open
+     * orders. Both mailboxes are polled until the rene@ side goes quiet; drop it
+     * when no open order predates the cutover.
+     *
+     * DIFFERENT CREDENTIALS PER MAILBOX, deliberately. rene@ keeps the existing
+     * OAuth token path — it is the proven one and this is not the change to
+     * re-plumb it on. processing@ goes through the Gmail DWD service account,
+     * which is how every other function reaches that mailbox. */
+    const MAILBOXES = [
+      { mailbox: 'rene@ratesandrealty.com', token },
+      { mailbox: 'processing@ratesandrealty.com', token: '' },
+    ]
+    try {
+      MAILBOXES[1].token = await getMailboxToken('processing@ratesandrealty.com')
+    } catch (e) {
+      /* Losing processing@ must not cost the rene@ sweep. Reported, not thrown —
+         a poller that dies because one mailbox is unreachable stops matching the
+         replies it could still see. */
+      summary.errors.push('processing@ token: ' + ((e as Error)?.message || String(e)))
+    }
+    summary.mailboxes = MAILBOXES.filter((m) => m.token).map((m) => m.mailbox)
+
+    /* id -> { threadId, token, mailbox }. Gmail message ids are PER MAILBOX, so
+       the same physical reply carries a different id in each — the id alone
+       cannot tell you it is the same email. */
+    const idset = new Map<string, { threadId: string; token: string; mailbox: string }>()
+    for (const mb of MAILBOXES) {
+      if (!mb.token) continue
+      for (const q of queries) {
+        const res = await gmailList(mb.token, q, 25)
+        if ((res as any).error) { summary.errors.push(`${mb.mailbox}: ${(res as any).error}`); continue }
+        for (const m of res.messages) {
+          if (!idset.has(m.id)) idset.set(m.id, { threadId: m.threadId, token: mb.token, mailbox: mb.mailbox })
+        }
+      }
     }
     summary.ids_found = idset.size
 
@@ -141,20 +190,42 @@ serve(async (req) => {
       const todo = ids.filter((id) => !have.has(id))
       summary.already_logged_skipped = ids.length - todo.length
 
+      /* THE ONE THING POLLING TWO MAILBOXES BREAKS. The VOE composer CCs rene@
+         AND processing@, so a reply-all from HR is delivered to both — two
+         Gmail ids, two email_log rows, one actual email. Deduped here on the
+         RFC-822 Message-ID, which is the only identity an email carries that is
+         the same in both mailboxes.
+         SCOPED TO THIS RUN, honestly: two copies of one reply arriving in
+         different 10-minute poll windows would still double-log. That needs the
+         Message-ID persisted on email_log, which is a schema change this
+         temporary window does not justify — and the duplicate is cosmetic:
+         voe_log_inbound never auto-advances an order, so the cost is one extra
+         inbound row in the thread view. */
+      const seenRfc = new Set<string>()
+
       for (const id of todo) {
-        const msg = await gmailGet(token, id)
+        const ent = idset.get(id)!
+        const msg = await gmailGet(ent.token, id)
         if (!msg) { summary.errors.push('get ' + id + ' failed'); continue }
         summary.fetched++
         const headers = msg.payload && msg.payload.headers
         const fromEmail = parseEmail(hdr(headers, 'From'))
         if (fromEmail && SELF_ADDRESSES.includes(fromEmail)) continue
+        const rfcId = (hdr(headers, 'Message-ID') || hdr(headers, 'Message-Id') || '').trim()
+        if (rfcId) {
+          if (seenRfc.has(rfcId)) { summary.cross_mailbox_duplicates = (summary.cross_mailbox_duplicates || 0) + 1; continue }
+          seenRfc.add(rfcId)
+        }
         const toRaw = hdr(headers, 'To'); const dto = hdr(headers, 'Delivered-To'); const cc = hdr(headers, 'Cc')
         const subject = hdr(headers, 'Subject')
         const acc = { text: '', html: '' }
         walk(msg.payload, acc)
         const args: any = {
           p_gmail_message_id: id,
-          p_gmail_thread_id: msg.threadId || idset.get(id) || null,
+          /* ent.threadId, not idset.get(id) — the map now holds {threadId,
+             token, mailbox} per id, and the bare get() would have written a
+             JS object into a text column. */
+          p_gmail_thread_id: msg.threadId || ent.threadId || null,
           p_from_email: fromEmail,
           p_to_email: [toRaw, dto].filter(Boolean).join(' '),
           p_cc_email: cc,

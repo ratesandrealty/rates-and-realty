@@ -65,27 +65,42 @@ async function greetingConfig(): Promise<{ url: string; text: string }> {
   }
 }
 
-/* ── RECORDING DISCLOSURE ─────────────────────────────────────────────────────
+/* ── RECORDING DISCLOSURE — INBOUND ONLY ─────────────────────────────────────
  *
  * Every <Dial> in this file is recorded (the two live paths dual-channel since
- * 2026-08-08, make_call still mono — same start trigger either way) and until now
- * played no announcement. California is an all-party consent state and the VA
- * is in the Philippines, so this was recording people who had not been told.
- * E Mortgage Capital has approved recording WITH an announcement; the wording
- * below is theirs.
+ * 2026-08-08, make_call still mono — same start trigger either way). California
+ * is an all-party consent state and the VA is in the Philippines, so consent has
+ * to exist before audio is captured. There are two ways to have it, and this
+ * file now uses a different one per direction.
  *
- * WHERE THE ANNOUNCEMENT HAS TO GO, and why it is in two places per call:
+ * OUTBOUND — CONSENT CAPTURED AT INTAKE. Since 2026-08-12 the outbound paths
+ * play NO announcement. Rene obtains recording consent from every contact at
+ * intake, before they enter the database, and it is recorded on the contact
+ * (contacts.recording_consent_at / recording_consent_method). An outbound call
+ * goes to someone already in the database, so the basis is that record, not a
+ * sentence repeated on every call.
+ *
+ * INBOUND — PER-CALL ANNOUNCEMENT, STILL. An inbound caller may not be in the
+ * database at all: a first-time caller, a wrong number, someone else's client.
+ * There is no consent record to point at, so the announcement IS the consent and
+ * it stays. E Mortgage Capital approved the wording.
+ *
+ * THE ASYMMETRY IS THE DESIGN. If you find yourself making the two paths
+ * consistent, you are removing the only basis one of them has.
+ *
+ * WHERE THE INBOUND ANNOUNCEMENT GOES, and why it is in two places:
  *
  * A <Say> before <Dial> is heard ONLY by the parent leg — the party already on
- * the call. The party being dialled never hears it. So each recorded <Dial>
- * gets both:
+ * the call. The party being dialled never hears it. So the inbound <Dial> gets
+ * both:
  *
- *   1. <Say> before the <Dial>            -> the parent leg (inbound: the
- *                                            borrower who called us; outbound:
- *                                            the staff member's browser client)
- *   2. url= on the nested <Number>        -> a whisper on the CHILD leg, played
+ *   1. <Say> before the <Dial>            -> the parent leg, which on inbound is
+ *                                            THE BORROWER WHO CALLED US. This is
+ *                                            the compliance-critical one.
+ *   2. url= on the nested <Number>        -> a whisper on the CHILD leg, i.e.
+ *                                            the staff member being rung, played
  *                                            when they answer and BEFORE the two
- *                                            legs are bridged
+ *                                            legs are bridged.
  *
  * Both parties therefore hear it before any conversation audio is captured,
  * which is the consent requirement. See the note in the deploy report about why
@@ -398,25 +413,23 @@ async function resolveContactByPhone(
  * ran anyway. The endpoint returns a fixed disclosure sentence — no caller data,
  * no side effects, nothing an attacker gains by reading it aloud to themselves.
  * Dropping the signature removes a failure mode and protects nothing less. */
-/* ── THE TOGGLE GATES canRecord ITSELF, NOT THE record= ATTRIBUTE ────────────
+/* ── INBOUND ONLY, AND NO LONGER TAKES A TOGGLE ──────────────────────────────
  *
- * Both call paths derive TWO things from one boolean:
- *     const recAttr = rec.ok ? ' record="record-from-answer-dual" …' : '';
- *     const whisper = rec.ok ? ' url="…"' : '';
- * …plus the parent-leg <Say>. So refusing here removes the disclosure and the
- * capture TOGETHER, by construction rather than by a second check somebody
- * could later forget to keep in step.
+ * The per-call recording toggle was removed 2026-08-12 — Rene's decision is
+ * always record, always transcribe, no per-call choice — so the `wanted`
+ * parameter is gone with it. It used to make "recording is off" and "the
+ * announcement does not play" the same fact by construction, which mattered
+ * because a disclosure for a recording that is not happening is a false
+ * statement spoken on a call. With no toggle there is no such state to keep in
+ * step.
  *
- * That is the whole reason the toggle is applied at this function and not at
- * the TwiML. "Recording is off" and "the announcement does not play" must be
- * the same fact — a disclosure for a recording that is not happening is a false
- * statement, spoken on a call, and it would be the one sentence on the
- * transcript that nobody could explain afterwards.
- *
- * `wanted` false and canRecord failing are NOT the same outcome and are
- * reported differently on the row — see recording_disposition. */
-async function canRecord(noticeUrl: string, text: string, expectName?: string, wanted = true): Promise<{ ok: boolean; reason: string }> {
-  if (!wanted) return { ok: false, reason: 'recording turned OFF by the caller — no disclosure played, by design' };
+ * The remaining caller is the INBOUND branch, where the announcement is still
+ * the entire basis for recording, so the fail-closed rule above is unchanged
+ * there: no disclosure, no capture. The outbound paths no longer call this at
+ * all — they record unconditionally on the strength of consent captured at
+ * intake, and gating them on whether the notice endpoint answers would drop
+ * recordings for a reason that no longer applies to them. */
+async function canRecord(noticeUrl: string, text: string, expectName?: string): Promise<{ ok: boolean; reason: string }> {
   if (!text) return { ok: false, reason: 'notice text is empty' };
   try {
     const ctl = new AbortController();
@@ -835,28 +848,27 @@ Deno.serve(async (req) => {
          *
          * Mirrors what the inbound branch already does: log at call START, so a
          * call that ends before anyone presses Save still exists as a row. */
-        /* Disclosure to BOTH legs. The <Say> reaches the staff member on the
-         * browser client — which also makes it audible to them that it fired —
-         * and the url= whisper reaches the person being dialled on answer,
-         * before the bridge. */
-        /* The caller's identity comes from `from`, which Twilio sets to the
-           client identity the TOKEN was minted for — get_token derives that
-           from the verified session, so it cannot be spoofed by the browser.
-           Unknown identity yields '' and the company wording. */
-        const callerUid = uidFromClientIdentity(from);
-        const callerName = NOTICE_NAME_BY_UID[callerUid] || '';
-        const noticeText = await noticeConfig(callerName);
-        const variantTag = callerName ? await noticeVariantTag(callerUid) : '';
-        const noticeUrl = `${recordingCb}?action=record_notice${variantTag ? `&v=${variantTag}` : ''}`;
-        /* Record=off comes from the browser's Device.connect params, the same
-           channel as Ref and ContactId. Anything other than an explicit 'off'
-           means record: an unparseable or missing value must not silently
-           disable the disclosure, because silence is exactly what nobody would
-           notice. Default ON. */
-        const recWanted = (params.get('Record') || '').trim().toLowerCase() !== 'off';
-        const rec = await canRecord(noticeUrl, noticeText, callerName || undefined, recWanted);
-        const disposition = rec.ok ? 'recorded' : (recWanted ? 'unavailable' : 'off');
-        if (!rec.ok) console.error(`[twilio-voice] OUTBOUND NOT RECORDED (${disposition}) — ${rec.reason}`);
+        /* ── NO PER-CALL ANNOUNCEMENT ON OUTBOUND ────────────────────────────
+         *
+         * Removed 2026-08-12. THE BASIS FOR RECORDING IS NOW CONSENT CAPTURED AT
+         * INTAKE, recorded on the contact (contacts.recording_consent_at /
+         * _method), not a sentence read at the start of every call. Rene obtains
+         * it from every contact before they enter the database, so on an
+         * outbound call to a known contact the announcement restated something
+         * already agreed.
+         *
+         * INBOUND IS DELIBERATELY UNCHANGED and still announces — see the branch
+         * above. An inbound caller may not be in the database at all, so there is
+         * no prior consent to rely on and the per-call notice is the only basis
+         * there is. The two paths are asymmetric ON PURPOSE; do not "tidy" them
+         * back together.
+         *
+         * WHAT THIS CHANGES ABOUT canRecord: it is no longer consulted here. Its
+         * whole job was to fail the RECORDING closed when the disclosure could
+         * not be played, and there is no disclosure on this path any more — so
+         * gating capture on whether an unrelated endpoint answers would drop
+         * recordings for no reason at all. Outbound now always records. */
+        const disposition = 'recorded';
         /* DUAL. Identical start trigger to record-from-answer, so the notice
          * ordering below is unchanged. Here the parent leg is the staff
          * member's browser client, so channel 1 is staff — which does match
@@ -890,8 +902,7 @@ Deno.serve(async (req) => {
             console.error('[twilio-voice] outbound calls_log insert failed:', String(e));
           }
         }
-        const recAttr = rec.ok ? ` record="record-from-answer-dual" recordingStatusCallback="${recordingCb}"` : '';
-        const whisper = rec.ok ? ` url="${xmlEsc(noticeUrl)}"` : '';
+        const recAttr = ` record="record-from-answer-dual" recordingStatusCallback="${recordingCb}"`;
         /* RINGBACK — ringTone, not answerOnBridge alone.
          *
          * answerOnBridge was added first and did not fix it; Rene still heard
@@ -912,12 +923,9 @@ Deno.serve(async (req) => {
          * playing during the compliance whisper instead of cutting to silence.
          * The two attributes are complementary; neither is sufficient alone.
          *
-         * NEITHER TOUCHES THE DISCLOSURE ORDER. The <Say> runs to completion
-         * before <Dial> starts, and the whisper still runs on the child leg
-         * after it answers and before the bridge. ringTone only decides what
-         * the caller hears DURING the dial. If anything the pair tightens the
-         * ordering: the parent is not marked answered until the bridge, so
-         * record-from-answer begins after the child has heard the notice.
+         * (This pair used to also be described as protecting the disclosure
+         * ordering. There is no disclosure on this path any more, so that reason
+         * is gone; the ringback reason above is the whole reason now.)
          *
          * The inbound branch is deliberately left alone — its parent is a real
          * PSTN caller whose carrier does supply ringback, and it is not the
@@ -947,9 +955,8 @@ Deno.serve(async (req) => {
          * would post twice per call to write a status the row already has. */
         const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  ${rec.ok ? noticeSay(noticeText) : ''}
   <Dial callerId="${TWILIO_PHONE}" timeout="30" answerOnBridge="true" ringTone="us"${recAttr} action="${recordingCb}?phase=call_status" method="POST">
-    <Number${whisper} statusCallback="${recordingCb}?phase=leg_status" statusCallbackEvent="completed" statusCallbackMethod="POST">${dialTo}</Number>
+    <Number statusCallback="${recordingCb}?phase=leg_status" statusCallbackEvent="completed" statusCallbackMethod="POST">${dialTo}</Number>
   </Dial>
 </Response>`;
         console.log('[twilio-voice] dialing', dialTo, 'callerId=', TWILIO_PHONE, 'sid=', callSid, 'ref=', clientRef);
@@ -1113,15 +1120,12 @@ Deno.serve(async (req) => {
       const mcHours = await callingHours(formatPhone(to));
       if (!mcHours.allowed) return jsonRes({ success: false, blocked: 'calling_hours', ...mcHours }, 409);
       const auth = btoa(`${ACCOUNT_SID}:${AUTH_TOKEN}`);
-      /* Disclosure on both legs, same shape and same fail-closed rule as the
-       * other two recorded Dials. */
-      const mcNotice = await noticeConfig();
-      const mcNoticeUrl = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice?action=record_notice`;
-      const mcRec = await canRecord(mcNoticeUrl, mcNotice);
-      if (!mcRec.ok) console.error(`[twilio-voice] make_call NOT RECORDED — ${mcRec.reason}`);
-      const mcRecAttr = mcRec.ok ? ' record="record-from-answer"' : '';
-      const mcWhisper = mcRec.ok ? ` url="${xmlEsc(mcNoticeUrl)}"` : '';
-      const dialTwiml = `<Response>${mcRec.ok ? noticeSay(mcNotice) : ''}<Dial callerId="${TWILIO_PHONE}"${mcRecAttr}><Number${mcWhisper}>${formatPhone(to)}</Number></Dial></Response>`;
+      /* OUTBOUND — no announcement, for the same reason as the dial path above:
+       * the basis is consent captured at intake, not a per-call sentence.
+       * Still mono, and still the self-dial defect noted at the top of this
+       * file; removing the notice changes neither. */
+      const mcRecAttr = ' record="record-from-answer"';
+      const dialTwiml = `<Response><Dial callerId="${TWILIO_PHONE}"${mcRecAttr}><Number>${formatPhone(to)}</Number></Dial></Response>`;
       const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${ACCOUNT_SID}/Calls.json`, {
         method: 'POST',
         headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },

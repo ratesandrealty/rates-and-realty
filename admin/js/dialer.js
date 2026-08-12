@@ -284,88 +284,38 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
   }
   var msgIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
 
-  /* ── RECORDING TOGGLE ──────────────────────────────────────────────────────
-   * DEFAULT ON. The announcement is what makes recording lawful here, and it
-   * plays on every recorded call; the transcript and the AI summary are the
-   * product of the recording, so defaulting off would silently remove the
-   * feature people actually use. Off is a deliberate act, per call.
+  /* ── RECORDING INDICATOR — NO LONGER A CHOICE ──────────────────────────────
    *
-   * The state is remembered per user for the NEXT call but always re-shown, so
-   * "on because I chose it" and "on because it defaults" look identical at the
-   * moment it matters — which is the moment before dialling.
+   * THE PER-CALL TOGGLE WAS REMOVED 2026-08-12. Rene's decision: always record,
+   * always transcribe. Recording is no longer something to opt out of on a call,
+   * so there is no switch, no per-user localStorage preference, and no Record
+   * param on Device.connect — the server records every outbound call
+   * unconditionally.
    *
-   * VISIBLE DURING THE CALL, not just before it. Once dialling starts the
-   * control becomes a read-only badge in the same place, so the answer to "is
-   * this being recorded?" is on screen for the whole call rather than being
-   * something you had to notice earlier. It stops being editable at that point
-   * because nothing here can start or stop a capture mid-call — Twilio supports
-   * it, we do not call it, and a switch that silently does nothing mid-call is
-   * worse than no switch. */
-  var _recOn = true;
-  try {
-    var _rk = 'rr_call_record:' + ((window._adminUser && (window._adminUser.id || window._adminUser.email)) || 'anon');
-    var _rv = localStorage.getItem(_rk);
-    if (_rv === 'off') _recOn = false;
-  } catch (_) { /* storage blocked — default ON */ }
-  function _recPersist() {
-    try {
-      localStorage.setItem('rr_call_record:' + ((window._adminUser && (window._adminUser.id || window._adminUser.email)) || 'anon'),
-        _recOn ? 'on' : 'off');
-    } catch (_) {}
+   * WHAT REPLACES IT IS AN INDICATOR, NOT A CONTROL, and only during the call.
+   * The old badge answered "is this being recorded?" for the whole call and that
+   * is still worth showing; what is gone is the pre-call button and the
+   * off-state consequence warning, both of which described a state that can no
+   * longer occur.
+   *
+   * NOTHING IS SHOWN BEFORE DIALLING. A pre-call line saying "this will be
+   * recorded" is a notice, and a notice in the CALLER's own browser is read by
+   * the staff member, never by the borrower — it would look like a disclosure
+   * while informing the one party who already knows. The basis for recording is
+   * consent captured at intake, on the contact record; see the header of
+   * supabase/functions/twilio-voice/index.ts. */
+  function recBadgeHtml(live) {
+    if (!live) return '';
+    return '<div class="cm-rec-badge" title="This call is recorded. The transcript and AI summary come from that recording."'
+      + ' style="display:flex;align-items:center;justify-content:center;gap:6px;'
+      + 'margin:8px auto 0;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:700;width:max-content;'
+      + 'background:rgba(224,82,82,.14);border:1px solid rgba(224,82,82,.4);color:#F07878;">'
+      + '<span style="width:7px;height:7px;border-radius:50%;background:#E5484D;display:inline-block;"></span> Recording</div>';
   }
-  function recToggleHtml(live) {
-    var on = _recOn;
-    var tip = on
-      ? 'This call is announced and recorded. The transcript and AI summary come from that recording.'
-      : 'No announcement will play and nothing is captured — and so there is NO transcript and NO AI summary for this call.';
-    if (live) {
-      return '<div class="cm-rec-badge" title="' + tip + '" style="display:flex;align-items:center;justify-content:center;gap:6px;'
-        + 'margin:8px auto 0;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:700;width:max-content;'
-        + (on ? 'background:rgba(224,82,82,.14);border:1px solid rgba(224,82,82,.4);color:#F07878;'
-              : 'background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);color:#9a948a;') + '">'
-        + (on ? '<span style="width:7px;height:7px;border-radius:50%;background:#E5484D;display:inline-block;"></span> Recording'
-              : 'Not recorded — no transcript') + '</div>';
-    }
-    /* SMALL AND SECONDARY — one line, not three.
-       This was a pill plus two lines of caption, the "off" caption in gold, sitting
-       directly under the Call button. Three lines of coloured text beside the one
-       control that matters made the recording choice look like the primary
-       decision on the surface. It is not: it is a default the user rarely changes.
-       The full consequence text is still there, in title= — the same wording, one
-       hover away, and unchanged in meaning. */
-    return '<button type="button" id="cmRecToggle" title="' + tip + '" style="display:inline-flex;align-items:center;gap:6px;'
-      + 'margin:12px auto 0;padding:3px 9px;border-radius:999px;font-size:10px;font-weight:600;cursor:pointer;width:max-content;'
-      + 'background:transparent;border:1px solid ' + (on ? 'rgba(224,82,82,.32)' : 'rgba(255,255,255,.14)') + ';'
-      + 'color:' + (on ? '#C98080' : '#7f7a72') + ';">'
-      + (on ? '<span style="width:6px;height:6px;border-radius:50%;background:#E5484D;display:inline-block;"></span> Recording on'
-            : '<span style="width:6px;height:6px;border-radius:50%;border:1px solid #6b665c;display:inline-block;"></span> Recording off')
-      + '</button>'
-      /* ONE line, and ONLY in the OFF state.
-         The three lines this replaced included a caption under BOTH states. The
-         "on" caption was reassurance nobody needs on every call; the "off" one is
-         a real consequence — no announcement, no transcript, no AI summary — and
-         a render-check spec asserts it is VISIBLE, not merely hoverable. That
-         spec is right: hiding a data-loss warning in a title= is how it stops
-         being read. So the off-state warning stays on screen, compressed to a
-         single 10px line instead of two. */
-      + (on ? '' : '<div style="text-align:center;font-size:10px;line-height:1.35;margin-top:4px;color:#C9A84C;">'
-              + 'No announcement, no transcript, no AI summary.</div>');
-  }
-  /* rerender is a parameter because the DIAL PAD reuses this control and must
-     NOT call renderReady() — that repaints the whole action area and would
-     destroy the pad, the typed number with it. Defaults to renderReady() so
-     the contact modal is unchanged. */
-  function wireRecToggle(rerender) {
-    var b = document.getElementById('cmRecToggle');
-    if (b) b.addEventListener('click', function () {
-      _recOn = !_recOn; _recPersist(); (rerender || renderReady)();
-    });
-  }
-  /* Shared with the ad-hoc dial pad, which lives in its own IIFE below.
-     Exposed rather than duplicated: the wording here states the consequence of
-     OFF ("no announcement, no transcript, no AI summary"), and a second copy of
-     that sentence is a second chance for the two to drift apart. */
-  window._rrRecControl = { html: recToggleHtml, wire: wireRecToggle };
+  /* Kept as an exported shape rather than deleted outright: the ad-hoc dial pad
+     lives in its own IIFE below and still asks for this. `wire` is now a no-op
+     so a caller that still calls it does nothing instead of throwing. */
+  window._rrRecControl = { html: recBadgeHtml, wire: function () {} };
 
   function renderReady() {
     status.className = 'cm-status ready';
@@ -376,9 +326,8 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       '<div class="cm-action-group">' +
         '<button class="cm-btn call pulsing" id="cmStartBtn" aria-label="Start call">' + phoneIcon + '</button>' +
         '<span class="cm-btn-label">Call</span>' +
-      '</div>' + recToggleHtml(false);
+      '</div>' + recBadgeHtml(false);
     document.getElementById('cmStartBtn').addEventListener('click', startCall);
-    wireRecToggle();
     renderRecentMessages();
   }
 
@@ -530,7 +479,7 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       '<div class="cm-action-group">' +
         '<button class="cm-btn hangup" id="cmCancelBtn" aria-label="Cancel call">' + hangupIcon + '</button>' +
         '<span class="cm-btn-label">Cancel</span>' +
-      '</div>' + recToggleHtml(true);
+      '</div>' + recBadgeHtml(true);
     document.getElementById('cmCancelBtn').addEventListener('click', hangup);
     footer.innerHTML =
       '<div class="cm-divider"></div>' +
@@ -554,7 +503,7 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       '<div class="cm-action-group">' +
         '<button class="cm-btn secondary' + (speakerOn ? ' active' : '') + '" id="btnSpeaker" aria-label="Speaker">' + speakerIcon(speakerOn) + '</button>' +
         '<span class="cm-btn-label">Speaker</span>' +
-      '</div>' + recToggleHtml(true);
+      '</div>' + recBadgeHtml(true);
     document.getElementById('btnMute').addEventListener('click', toggleMute);
     document.getElementById('btnSpeaker').addEventListener('click', toggleSpeaker);
     document.getElementById('cmEndBtn').addEventListener('click', hangup);
@@ -575,7 +524,7 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
     timer.className = 'cm-timer';
     /* The badge survives into the ended state: the question "was that call
        recorded?" is asked most often just after hanging up. */
-    actions.innerHTML = recToggleHtml(true);
+    actions.innerHTML = recBadgeHtml(true);
     var liveNotes = (document.getElementById('cmLiveNotes') && document.getElementById('cmLiveNotes').value) || '';
     footer.innerHTML =
       '<div class="cm-divider"></div>' +
@@ -720,7 +669,9 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       /* chk.e164 — the value the guard above ALREADY approved. Re-deriving it
          here would be a second chance to disagree with the check that let the
          call through, which is exactly how a guard gets bypassed later. */
-      return dev.connect({ params: { To: chk.e164, Ref: currentCallRef, Record: _recOn ? 'on' : 'off' } });
+      /* No Record param. Every outbound call records; see the indicator note above
+         and the header of supabase/functions/twilio-voice/index.ts. */
+      return dev.connect({ params: { To: chk.e164, Ref: currentCallRef } });
     }).then(function(conn) {
       if (!conn) return;
       activeCall = conn;
@@ -921,18 +872,9 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
         + '<div class="cm-action-group" style="margin-top:14px;">'
         +   '<button class="cm-btn call" id="cmPadDial" aria-label="Call">'
         +     '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.37 1.9.72 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0122 16.92z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-        +   '</button><span class="cm-btn-label">Call</span></div>'
-        + '<div id="cmPadRec"></div>';
-
-      /* Repaints ONLY the toggle's own container. Passing renderReady here — the
-         default — would wipe the pad and the number typed into it. */
-      function paintPadRec() {
-        var box = document.getElementById('cmPadRec');
-        if (!box || !window._rrRecControl) return;
-        box.innerHTML = window._rrRecControl.html(false);
-        window._rrRecControl.wire(paintPadRec);
-      }
-      paintPadRec();
+        +   '</button><span class="cm-btn-label">Call</span></div>';
+      /* The pad used to carry a recording toggle here. Removed with the toggle
+         itself — there is no pre-call choice to offer on any surface now. */
 
       var input = document.getElementById('cmPadNum');
       var note = document.getElementById('cmPadNote');

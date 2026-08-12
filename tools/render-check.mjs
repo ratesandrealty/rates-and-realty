@@ -664,31 +664,32 @@ const SPECS = [
     absent: ['#esignSendOverlay'],
   },
   {
-    /* THE RECORDING CHOICE IS REACHABLE FROM THE DIAL PAD.
-     * Rene dialled from the pad, recording started on its own, and the only
-     * control on screen was the read-only live badge. The toggle was not
-     * missing — renderReady() has always rendered it — but the pad's go()
-     * reopens the modal and clicks Call in the same tick, so it was mounted and
-     * replaced by the badge before anyone could touch it.
+    /* THERE IS NO RECORDING CHOICE ANY MORE — this spec asserts its ABSENCE.
      *
-     * The second assertion is the one that would catch a lazy fix. The obvious
-     * way to add the toggle here is to reuse wireRecToggle() as-is, whose click
-     * handler calls renderReady() — which repaints the whole action area and
-     * takes the pad, and the number typed into it, with it. So the spec types a
-     * number, toggles recording, and requires the number to still be there. */
-    name: 'dial pad offers the recording choice BEFORE dialling',
+     * It used to assert the opposite: that the dial pad offered the toggle
+     * before dialling, and that toggling it did not wipe the typed number. The
+     * toggle was removed 2026-08-12 (always record, always transcribe), so the
+     * old spec would now fail on a control that is gone on purpose.
+     *
+     * PRESENT AND ABSENT ARE PAIRED, as everywhere else in this file: asserting
+     * only that #cmRecToggle is gone would pass just as happily if the pad never
+     * mounted at all. #cmPadNum and #cmPadDial being present is what makes the
+     * absence mean something.
+     *
+     * The typed number is still checked. That assertion was originally guarding
+     * against a rerender wiping the pad, and the pad is still rebuilt by the
+     * same code path — it is worth keeping for its own sake, not for the
+     * toggle's. */
+    name: 'dial pad offers NO recording choice — recording is unconditional',
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,
     role: 'admin',
     steps: [
       { click: '#rr-dial-fab', waitMs: 1200 },
       // 714-555-0142: real timezone, NANPA-reserved fictional exchange.
-      { fill: '#cmPadNum', value: '7145550142', waitMs: 200 },
-      { click: '#cmRecToggle', waitMs: 800 },
+      { fill: '#cmPadNum', value: '7145550142', waitMs: 600 },
     ],
-    present: ['#cmPadNum', '#cmPadDial', '#cmRecToggle'],
-    // Toggled OFF, and the consequence is spelled out rather than implied.
-    expectText: ['Recording off', 'No announcement, no transcript, no AI summary.'],
-    // The pad survived the toggle. Without the rerender parameter this is ''.
+    present: ['#cmPadNum', '#cmPadDial'],
+    absent: ['#cmRecToggle', '#cmPadRec'],
     values: { '#cmPadNum': '7145550142' },
   },
   {

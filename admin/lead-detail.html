@@ -28,7 +28,7 @@
     .pac-icon{display:none!important;}
     .pac-logo::after{display:none!important;}
   </style>
-  <script src="/admin/js/auth-guard.js?v=7e1ff38f96"></script>
+  <script src="/admin/js/auth-guard.js?v=e6608505ca"></script>
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
   <!-- Loaded after auth-guard so window._supabaseClient exists when fnFetch reads it. -->
   <script src="/admin/js/fn-call.js?v=85d03d2a98"></script>
@@ -41,7 +41,7 @@
        runtime, and removes any load-order question on the page where the dialer
        matters most. Both mounts are idempotent (window._rrDialerLoaded plus the
        script-src check in auth-guard), so this does not double-load. -->
-  <script src="/admin/js/dialer.js?v=b525b1fa95"></script>
+  <script src="/admin/js/dialer.js?v=cf4b1032f5"></script>
   <script src="/admin/js/crm-comms.js?v=d37133d86b"></script>
   <script src="/admin/js/notif-bell.js?v=ce05693d65"></script>
   <script>
@@ -1892,6 +1892,12 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
       <a id="sidebar-email-link" href="mailto:" onclick="event.preventDefault();navigator.clipboard.writeText(this.dataset.email||'').then(()=>showToast('Email copied!'))" style="display:none;align-items:center;gap:8px;color:#E8D5A3;text-decoration:none;padding:7px 12px;background:#1A1A1A;border-radius:8px;margin-bottom:5px;border:1px solid rgba(201,168,76,0.15);font-size:12px;cursor:pointer;">
         <span>✉️</span> <span id="sidebar-email-text">—</span>
       </a>
+      <!-- RECORDING CONSENT. Sits under the phone number on purpose: it is the
+           basis on which calls to that number are recorded, now that the
+           outbound announcement is gone. Renders "not on record" rather than
+           nothing when absent — a blank would read as "not applicable", and the
+           whole point is that its absence is a fact worth seeing. -->
+      <div id="sidebar-consent" style="font-size:11px;color:#8f8f8f;padding:5px 12px;"></div>
     </div>
     <!-- Quick Action Buttons -->
     <div style="display:flex;gap:6px;margin-top:8px;margin-bottom:8px;">
@@ -6506,6 +6512,7 @@ async function populateUI() {
     emailLink.dataset.email = contactData.email;
     document.getElementById('sidebar-email-text').textContent = contactData.email;
   }
+  ldRenderConsent();
 
   // Load portal info
   if (contactData.email) loadPortalInfo(contactData.email, contactData.borrower_id || contactData.crm_id);
@@ -13601,7 +13608,15 @@ async function _voeComposerSend(st){
   try{
     const body={ action:'send', to_email:to, to_name:hrName, first_name:((hrName||'').split(/\s+/)[0]||''), subject:subject, html:bodyHtml, contact_id:cid };
     if(ccEmails && ccEmails.length) body.cc=ccEmails;
-    body.reply_to='rene@ratesandrealty.com';   // plain broker inbox — inbound poller matches replies by HR sender address
+    /* PROCESSING@, NOT RENE@ (2026-08-12). This was rene@, which meant every HR
+       reply landed in a mailbox the VA is refused by role — she could not see or
+       answer a reply even to a VOE she had sent herself. processing@ is reachable
+       by both, so Rene and the VA follow up in ONE chain.
+       Still a plain address, not a plus-address: the poller matches primarily on
+       the HR sender address, and voe-inbound-poll now sweeps BOTH mailboxes so
+       requests sent before today — which carry reply_to: rene@ and will be
+       replied to there — keep matching. */
+    body.reply_to='processing@ratesandrealty.com';
     if(attachments) body.attachments=attachments;
     const resp=await _authClient().functions.invoke('email-service',{ body:body });
     const data=resp&&resp.data, error=resp&&resp.error;
@@ -18560,6 +18575,100 @@ async function lpScheduleLockReminders(){
    return — but the escrow number is operational, not sensitive, and the VA is
    usually the one who has it. Same reasoning as LOAN #, which reads straight
    from contacts rather than contacts_secure so it is not masked for her. */
+/* ── RECORDING CONSENT ───────────────────────────────────────────────────────
+ *
+ * Since 2026-08-12 outbound calls carry NO per-call announcement; the basis for
+ * recording them is consent obtained at intake. This is where that gets written
+ * down, so the claim has a record behind it rather than being a practice
+ * somebody remembers.
+ *
+ * ABSENCE IS RENDERED, NOT HIDDEN. "Recording consent: not on record" is the
+ * state most contacts are in — nothing was backfilled, deliberately — and a
+ * blank line would read as "not applicable" on exactly the contacts where it
+ * most needs looking at.
+ *
+ * The date is EDITABLE because consent is usually written down after the fact;
+ * forcing today onto an intake that happened last week would make the record say
+ * something untrue. `by` is never sent — set_recording_consent stamps it from
+ * auth.uid(), since a client-supplied attester is not an attestation. */
+const LD_CONSENT_METHODS = [
+  { v: 'verbal_intake', t: 'Verbal at intake' },
+  { v: 'signed',        t: 'Signed' },
+  { v: 'portal',        t: 'Portal' },
+];
+function _ldConsentLabel(m){
+  var f = LD_CONSENT_METHODS.filter(function(x){ return x.v === m; })[0];
+  return f ? f.t : (m || '');
+}
+function ldRenderConsent(){
+  var box = document.getElementById('sidebar-consent'); if(!box) return;
+  var at = contactData && contactData.recording_consent_at;
+  var m  = contactData && contactData.recording_consent_method;
+  if(at && m){
+    var d = new Date(at);
+    var when = isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US',{ timeZone:'America/Los_Angeles', month:'short', day:'numeric', year:'numeric' });
+    box.innerHTML = '<span style="color:#7ee2a3;">✓ Recording consent</span> · '
+      + lpEsc(_ldConsentLabel(m)) + (when ? (' · ' + lpEsc(when)) : '')
+      + ' <button type="button" onclick="ldConsentEdit()" style="background:none;border:none;color:#8f8f8f;font-size:10.5px;cursor:pointer;text-decoration:underline;padding:0 0 0 4px;font-family:inherit;">edit</button>';
+  } else {
+    box.innerHTML = '<span style="color:#9a948a;">Recording consent: not on record</span>'
+      + ' <button type="button" onclick="ldConsentEdit()" style="background:none;border:none;color:#C9A84C;font-size:10.5px;font-weight:600;cursor:pointer;text-decoration:underline;padding:0 0 0 4px;font-family:inherit;">record it</button>';
+  }
+}
+function ldConsentEdit(){
+  var cid = (typeof lpCid==='function' ? lpCid() : null) || new URLSearchParams(location.search).get('contact_id');
+  if(!cid){ showToast('No contact', true); return; }
+  var old = document.getElementById('ldConsentPop'); if(old) old.remove();
+  var cur = (contactData && contactData.recording_consent_method) || '';
+  var curAt = (contactData && contactData.recording_consent_at) || '';
+  var dstr = '';
+  if(curAt){ var d=new Date(curAt); if(!isNaN(d.getTime())) dstr = d.toISOString().slice(0,10); }
+  if(!dstr) dstr = new Date().toISOString().slice(0,10);
+  var pop = document.createElement('div');
+  pop.id = 'ldConsentPop';
+  pop.style.cssText = 'position:fixed;z-index:100060;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:18px;';
+  pop.innerHTML = '<div style="width:min(340px,96vw);background:#111;border:1px solid rgba(201,168,76,.35);border-radius:14px;padding:16px;font-family:inherit;">'
+    + '<div style="font-size:13px;font-weight:700;color:#C9A84C;margin-bottom:4px;">Recording consent</div>'
+    + '<div style="font-size:11px;color:#8f8f8f;line-height:1.5;margin-bottom:12px;">Outbound calls to this contact are recorded on this basis. Inbound callers still hear the announcement.</div>'
+    + '<label style="display:block;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:#8f8a80;margin-bottom:3px;">How</label>'
+    + '<select id="ldConsentMethod" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);border-radius:7px;color:#eee;font-size:12.5px;padding:7px 9px;font-family:inherit;margin-bottom:10px;">'
+    +   LD_CONSENT_METHODS.map(function(o){ return '<option value="'+o.v+'"'+(o.v===cur?' selected':'')+'>'+o.t+'</option>'; }).join('')
+    + '</select>'
+    + '<label style="display:block;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:#8f8a80;margin-bottom:3px;">When</label>'
+    + '<input type="date" id="ldConsentDate" value="'+lpEsc(dstr)+'" style="width:100%;box-sizing:border-box;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);border-radius:7px;color:#eee;font-size:12.5px;padding:7px 9px;font-family:inherit;margin-bottom:14px;">'
+    + '<div style="display:flex;gap:8px;align-items:center;">'
+    +   (cur ? '<button type="button" onclick="ldConsentSave(null)" style="background:transparent;border:1px solid rgba(229,72,77,.45);color:#E5848A;border-radius:7px;font-size:11px;font-weight:700;padding:6px 11px;cursor:pointer;font-family:inherit;">Clear</button>' : '')
+    +   '<span style="flex:1;"></span>'
+    +   '<button type="button" onclick="var p=document.getElementById(\'ldConsentPop\');if(p)p.remove();" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);color:#ddd;border-radius:7px;font-size:11px;font-weight:700;padding:6px 11px;cursor:pointer;font-family:inherit;">Cancel</button>'
+    +   '<button type="button" onclick="ldConsentSave()" style="background:#C9A84C;border:none;color:#111;border-radius:7px;font-size:11px;font-weight:800;padding:6px 13px;cursor:pointer;font-family:inherit;">Save</button>'
+    + '</div></div>';
+  pop.addEventListener('click', function(e){ if(e.target===pop) pop.remove(); });
+  document.body.appendChild(pop);
+}
+async function ldConsentSave(force){
+  var cid = (typeof lpCid==='function' ? lpCid() : null) || new URLSearchParams(location.search).get('contact_id');
+  if(!cid) return;
+  var clearing = (force === null);
+  var method = clearing ? null : (document.getElementById('ldConsentMethod')||{}).value;
+  var dv = clearing ? null : ((document.getElementById('ldConsentDate')||{}).value || '');
+  /* Midday local, not midnight. A bare date parsed as UTC midnight lands on the
+     previous day once rendered in America/Los_Angeles, so a consent recorded
+     today would display as yesterday. */
+  var at = (!clearing && dv) ? new Date(dv + 'T12:00:00').toISOString() : null;
+  try{
+    var r = await _authClient().rpc('set_recording_consent', { p_contact_id: cid, p_method: method, p_at: at });
+    if(r.error) throw r.error;
+    var out = r.data || {};
+    if(contactData){
+      contactData.recording_consent_at = out.recording_consent_at || null;
+      contactData.recording_consent_method = out.recording_consent_method || null;
+    }
+    ldRenderConsent();
+    var p=document.getElementById('ldConsentPop'); if(p) p.remove();
+    showToast(clearing ? 'Recording consent cleared' : 'Recording consent recorded');
+  }catch(e){ showToast('Could not save consent: '+((e&&e.message)||e), true); }
+}
+
 const LP_SNAP_STAFF_KEYS = ['escrow_ref'];
 
 /* ⚠️ MIRROR of referenceIsMatchable() in
