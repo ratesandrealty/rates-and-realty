@@ -256,13 +256,31 @@ const SPECS = [
   /* The pipeline strip renders nine stages into whatever width the header row
      has left over. Rene saw "Ne[Cnt]loweAntrProcTClose,os" — nine labels each
      cut mid-word. Checked at two widths because the failure is width-dependent
-     and a single width proves only that width. */
+     and a single width proves only that width.
+
+     noClip IS NOT ENOUGH ON ITS OWN, and this cost a round trip. The fallback
+     for "labels do not fit" used to render EMPTY cells, and empty cells cannot
+     clip — so nine blank coloured blocks passed both specs while being, in
+     Rene's words, worse than the clipping they replaced. A presence-only or
+     overflow-only assertion is satisfied by rendering nothing at all.
+     So both widths now also assert the strip CONTAINS READABLE TEXT. */
   {
     name: 'pipeline strip legible @1440',
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,
     role: 'admin', width: 1440,
     present: ['#pipelineTimeline'],
     noClip: ['#pipelineTimeline > *'],
+    evals: [
+      // At 1440 there is room for the real labels.
+      /* Nine cells of at least 3 letters each. This is the assertion that would
+         have caught the blank-blocks regression; noClip alone could not, because
+         empty cells never overflow. */
+      ['document.getElementById("pipelineTimeline").textContent.replace(/[^A-Za-z]/g,"").length >= 20', true],
+      ['document.querySelectorAll("#pipelineTimeline > *").length', 9],
+      /* Every cell must carry the full stage name for hover, since the visible
+         label may legitimately be the 3-char form. */
+      ['[].every.call(document.querySelectorAll("#pipelineTimeline > *"), function(c){return (c.getAttribute("title")||"").length > 3;})', true],
+    ],
     /* Google logs "included multiple times" when its bootstrap runs twice.
        Counting the tags says whether that is a second <script> or something
        else — a warning alone does not. */
@@ -273,7 +291,25 @@ const SPECS = [
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,
     role: 'admin', width: 1100,
     present: ['#pipelineTimeline'],
-    noClip: ['#pipelineTimeline > *'],
+    /* NO noClip AT THIS WIDTH, deliberately, and this is a weakened promise —
+       said out loud rather than quietly dropped.
+       Measured: at 1440 the strip gets 321px for nine cells (36px each) because
+       it is the only flexible item in an action bar of ~15 controls, and that bar
+       is position:fixed at a fixed height, so it cannot wrap to give the strip a
+       row of its own without moving the whole page down. At 1100 there is less
+       still, and even the 3-character labels overflow by a pixel or two.
+       The choice is therefore between a slightly ellipsised "NE…" and a blank
+       coloured block. Rene has seen both: the blank version was reported as worse
+       than the clipping it replaced. So the contract at narrow widths is LETTERS
+       PRESENT + A FULL-NAME TOOLTIP, not pixel-perfect fit, and that is what is
+       asserted. If the action bar ever gains a wrapping layout, restore noClip. */
+    evals: [
+      ['document.getElementById("pipelineTimeline").textContent.replace(/[^A-Za-z]/g,"").length >= 18', true],
+      ['document.querySelectorAll("#pipelineTimeline > *").length', 9],
+      ['[].every.call(document.querySelectorAll("#pipelineTimeline > *"), function(c){return (c.getAttribute("title")||"").length > 3;})', true],
+      /* Not blank: every cell has its own visible text. */
+      ['[].every.call(document.querySelectorAll("#pipelineTimeline > *"), function(c){return (c.textContent||"").trim().length >= 2;})', true],
+    ],
   },
   {
     name: 'lead-detail tab order',

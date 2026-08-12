@@ -1851,16 +1851,21 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
   <!-- Pipeline timeline (fills remaining space) -->
   <div id="pipelineTimeline" style="flex:1;min-width:0;height:26px;display:flex;align-items:stretch;background:rgba(0,0,0,0.35);border-radius:16px;border:1px solid rgba(255,255,255,0.06);overflow:hidden;margin:0 6px;"></div>
   <!-- Share with VA toggle (admin-only; revealed by initShareWithVa() once share_targets() resolves) -->
-  <div id="shareVaWrap" style="display:none;align-items:center;gap:8px;flex-shrink:0;padding:3px 10px;border-radius:20px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.18);">
-    <label for="shareVaToggle" style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;font-size:11px;font-weight:600;color:#C9A84C;white-space:nowrap;user-select:none;">
-      <span>Share with VA</span>
-      <span style="position:relative;display:inline-block;width:34px;height:18px;flex-shrink:0;">
+  <!-- COMPACT. Every pixel here comes straight out of #pipelineTimeline, which is
+       the only shrinkable item in this row: label "Share VA" not "Share with VA",
+       tighter padding/gap, smaller switch, and #shareVaMsg carries only transient
+       text now (see _shareMsgFlash) instead of a permanent
+       "Shared with processing@ratesandrealty.com". -->
+  <div id="shareVaWrap" style="display:none;align-items:center;gap:5px;flex-shrink:0;padding:2px 7px;border-radius:20px;background:#1a1a1a;border:1px solid rgba(201,168,76,0.18);">
+    <label for="shareVaToggle" title="Share this lead with the VA" style="display:flex;align-items:center;gap:5px;cursor:pointer;margin:0;font-size:10px;font-weight:600;color:#C9A84C;white-space:nowrap;user-select:none;">
+      <span>Share VA</span>
+      <span style="position:relative;display:inline-block;width:28px;height:15px;flex-shrink:0;">
         <input type="checkbox" id="shareVaToggle" style="opacity:0;width:0;height:0;position:absolute;margin:0;">
-        <span id="shareVaTrack" style="position:absolute;inset:0;background:#333;border-radius:18px;transition:background .2s;"></span>
-        <span id="shareVaKnob" style="position:absolute;top:2px;left:2px;width:14px;height:14px;background:#fff;border-radius:50%;transition:transform .2s;pointer-events:none;"></span>
+        <span id="shareVaTrack" style="position:absolute;inset:0;background:#333;border-radius:15px;transition:background .2s;"></span>
+        <span id="shareVaKnob" style="position:absolute;top:2px;left:2px;width:11px;height:11px;background:#fff;border-radius:50%;transition:transform .2s;pointer-events:none;"></span>
       </span>
     </label>
-    <span id="shareVaMsg" style="font-size:10px;color:#888;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;"></span>
+    <span id="shareVaMsg" style="font-size:10px;color:#888;white-space:nowrap;max-width:110px;overflow:hidden;text-overflow:ellipsis;"></span>
   </div>
   <!-- Right actions -->
   <div class="ab-controls" style="flex-shrink:0;">
@@ -5827,14 +5832,27 @@ function _renderShareToggle(on) {
   const knob = document.getElementById('shareVaKnob');
   if (cb) cb.checked = !!on;
   if (track) track.style.background = on ? '#C9A84C' : '#333';
-  if (knob) knob.style.transform = on ? 'translateX(16px)' : 'translateX(0)';
+  /* 13px = track 28 − knob 11 − 2×2 inset. Was 16px for the old 34px track; a
+     stale offset would push the knob past the edge of the smaller switch. */
+  if (knob) knob.style.transform = on ? 'translateX(13px)' : 'translateX(0)';
 }
 
+var _shareMsgTimer = null;
 function _shareMsg(text, isError) {
   const m = document.getElementById('shareVaMsg');
   if (!m) return;
   m.textContent = text || '';
   m.style.color = isError ? '#F07878' : '#888';
+}
+/* TRANSIENT confirmation. The permanent "Shared with processing@ratesandrealty.com"
+   that used to sit here was up to 220px of header, and the header row is the one
+   the pipeline strip shrinks to fit — it was a standing tax on the strip to
+   restate what the toggle already shows. Errors and "Saving…" still use
+   _shareMsg and persist; only the success sentence is temporary. */
+function _shareMsgFlash(text) {
+  _shareMsg(text, false);
+  if (_shareMsgTimer) clearTimeout(_shareMsgTimer);
+  _shareMsgTimer = setTimeout(function () { _shareMsg('', false); }, 2500);
 }
 
 async function initShareWithVa() {
@@ -5854,7 +5872,9 @@ async function initShareWithVa() {
     const wrap = document.getElementById('shareVaWrap');
     if (wrap) wrap.style.display = 'inline-flex';
     _renderShareToggle(_shareRowExists);
-    _shareMsg(_shareRowExists && va.label ? ('Shared with ' + va.label) : '', false);
+    /* No standing text. The toggle IS the state; a sentence repeating it cost
+       up to 220px of the header row the pipeline strip has to fit into. */
+    _shareMsg('', false);
 
     const cb = document.getElementById('shareVaToggle');
     if (cb && !cb._shareWired) { cb.addEventListener('change', onShareVaToggle); cb._shareWired = true; }
@@ -5873,7 +5893,7 @@ async function onShareVaToggle(e) {
       await LeadShare.grant(contactId);
       _shareRowExists = true;
       _renderShareToggle(true);
-      _shareMsg(_shareVa.label ? ('Shared with ' + _shareVa.label) : 'Shared', false);
+      _shareMsgFlash('Shared ✓');
     } else {
       await LeadShare.revoke(contactId);
       _shareRowExists = false;
@@ -14997,11 +15017,28 @@ function _loePkgLabel(sig, nameMap){
 }
 /* Shown only when there is something to do with it: two or more drafted
    letters. One letter is what the row Send button is for. */
+/* ALWAYS VISIBLE, DISABLED WITH A REASON — same pattern as Send-for-signature.
+   This used to be display:none until two letters were drafted. Measured across
+   the whole database: 5 LOE rows exist and NO contact has ever had two 'drafted'
+   at once, so the reveal condition has never once been true and the button has
+   never been seen by anyone. The multi-LOE feature was complete on both sides —
+   send_package + loe_ids[] server-side, loeOpenPackage/_loePkgOnPick/
+   loeSendPackage in the composer — and reported done, while its only entry point
+   was invisible. A hidden control cannot teach you it exists; a greyed one with a
+   reason can. */
 function _loeSyncPackageBtn(){
   var b = document.getElementById('loePackageBtn'); if(!b) return;
   var n = _loeRows.filter(function(r){ return r.status === 'drafted' && r.body && String(r.body).trim(); }).length;
-  b.style.display = n >= 2 ? 'inline-flex' : 'none';
-  b.title = n >= 2 ? ('Send ' + n + ' drafted letters as one signing package') : '';
+  var ready = n >= 2;
+  b.style.display = 'inline-flex';
+  b.disabled = !ready;
+  b.style.opacity = ready ? '1' : '0.45';
+  b.style.cursor = ready ? 'pointer' : 'not-allowed';
+  b.title = ready
+    ? ('Send ' + n + ' drafted letters as one signing package')
+    : (n === 1
+        ? 'Draft a second letter to send several as one package — one drafted so far.'
+        : 'Draft a second letter to send several as one package.');
 }
 
 async function loeOpenPackage(){
@@ -22327,8 +22364,28 @@ function _tlCells(active, activeIdx, compact) {
       'border-right:' + (!isLast?'1px solid rgba(255,255,255,0.04)':'none') + ';" ' +
       'onmouseover="if(\'' + s.key + '\'!==\'' + active + '\'){this.style.background=\'' + s.color + '33\';this.style.color=\'' + s.color + '\'}" ' +
       'onmouseout="if(\'' + s.key + '\'!==\'' + active + '\'){this.style.background=\'' + (isPast?s.color+'66':'transparent') + '\';this.style.color=\'' + (isPast?'#ddd':'#4A4A55') + '\'}">' +
-      (compact ? '' : (isActive?'\u25CF ':isPast?'\u2713 ':'') + s.short) + '</div>';
+      _tlCellText(s, isActive, isPast, compact) + '</div>';
   }).join('');
+}
+
+/* THREE TIERS, not two.
+   `compact` used to render '' \u2014 nine blank coloured blocks. That is worse than
+   clipping, because a clipped label is still evidence of a label, while a blank
+   block looks like the strip failed to load. It also leaned on the status bubble
+   beside the strip to name the active stage, which tells you the current stage
+   and nothing about the other eight.
+   Tier 2 is a TINY label that still says something: 3 characters, enough to tell
+   Cntct from Cntrct from Closed. Only if even that clips do we fall to colour
+   bands, and every cell keeps its title= tooltip throughout. */
+function _tlTiny(s) {
+  var m = { 'New Lead':'NEW', 'Contacted':'CTD', 'Follow Up':'F/U', 'Pre-Approved':'P/A',
+            'Under Contract':'U/C', 'Processing':'PRC', 'Clear to Close':'CTC',
+            'Closed':'CLS', 'Lost':'LST' };
+  return m[s.key] || String(s.short || s.key).slice(0, 3).toUpperCase();
+}
+function _tlCellText(s, isActive, isPast, compact) {
+  if (compact) return _tlTiny(s);                   // 3-char label \u2014 the floor
+  return (isActive ? '\u25CF ' : isPast ? '\u2713 ' : '') + s.short;
 }
 
 var _tlStage = null;
@@ -22397,14 +22454,32 @@ function _tlMeasure(bar, active, activeIdx) {
      synchronous layout, so the status bubble's new width — the thing the old
      ordering missed — is already accounted for here. No frame of delay needed. */
   if (!bar || !bar.isConnected) return;
-  if (bar.getAttribute('data-tl-compact') === '1') return;
-  var clipped = Array.prototype.some.call(bar.children, function (c) {
-    return c.scrollWidth > c.clientWidth + 1;
-  });
-  if (clipped) {
-    bar.innerHTML = _tlCells(active, activeIdx, true);
-    bar.setAttribute('data-tl-compact', '1');
-  }
+  if (bar.getAttribute('data-tl-compact')) return;   // already stepped down this render
+  var clips = function () {
+    return Array.prototype.some.call(bar.children, function (c) {
+      return c.scrollWidth > c.clientWidth + 1;
+    });
+  };
+  if (!clips()) return;                              // full labels fit
+
+  /* STEP DOWN ONE TIER AT A TIME, re-measuring each. Previously this jumped
+     straight from full labels to blank colour bands, so any shortfall at all —
+     four cells needing a few px — produced nine empty blocks and read as a
+     failed render. Tier 1 is a 3-character label, which is almost always
+     enough. */
+  bar.innerHTML = _tlCells(active, activeIdx, 1);
+  bar.setAttribute('data-tl-compact', '1');
+
+  /* THE LADDER STOPS HERE. There is deliberately no blank tier.
+     Measured at 1440 the strip gets 321px for nine cells — 36px each — because
+     it is the only flexible item in an action bar of ~15 controls, and the bar
+     is position:fixed at a fixed height so it cannot wrap without moving the
+     whole page down. So the 3-char tier is the normal state at real widths, not
+     an emergency.
+     If even 3 characters do not fit, a slightly ellipsised "NE…" still says more
+     than an empty coloured block, and every cell carries title= with the full
+     stage name. Rendering nothing was the previous behaviour and Rene's verdict
+     was that it is worse than the clipping it replaced. */
 }
 
 /* The window-resize listener below only fires on WINDOW resize. The strip is
