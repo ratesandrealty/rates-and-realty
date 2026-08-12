@@ -444,10 +444,16 @@ function renderAcquisition(a){
   return h+'</div>';
 }
 
-function renderNotFound(){
+/* Deliberately does not distinguish revoked from expired from never-existed to
+   the visitor: that distinction is useful to Rene and is in his link list, and
+   telling an arbitrary URL holder "this was revoked" confirms the report exists. */
+function renderNotFound(status){
+  const head = (status === 'expired') ? 'This link has expired'
+             : (status === 'revoked') ? 'This link is no longer available'
+             : 'Link expired or not found';
   document.getElementById('app').innerHTML='<div class="center"><div>'
     +'<div style="font-size:2rem;margin-bottom:8px">🔗</div>'
-    +'<h1 style="font-size:1.3rem;color:var(--gold);margin-bottom:8px">Link expired or not found</h1>'
+    +'<h1 style="font-size:1.3rem;color:var(--gold);margin-bottom:8px">'+head+'</h1>'
     +'<p class="muted" style="max-width:340px;margin:0 auto 18px">This home-value report is no longer available. Reach out to Rene for an updated one.</p>'
     +'<div class="cta" style="justify-content:center"><a class="call" href="tel:'+PHONE+'">📞 Call Rene</a><a class="text" href="sms:'+PHONE+'">💬 Text Rene</a></div>'
     +'</div></div>';
@@ -471,6 +477,10 @@ function renderError(msg){
     const client=window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
     const { data, error }=await client.rpc('get_cma_snapshot', { p_slug: slug });
     if(error){ console.warn('[cma]', error.message); renderError('This report is temporarily unavailable.'); return; }
+    /* Explicit status, same contract as the fee sheet: a withdrawn link must read
+       as WITHDRAWN, not as a broken site. Unknown statuses fall through to
+       not-found rather than rendering — fail closed on a public surface. */
+    if(data && data.status && data.status !== 'ok'){ renderNotFound(data.status); return; }
     if(!data || !data.data){ renderNotFound(); return; }
     document.title=(data.borrower_name?data.borrower_name+' — ':'')+'Home Value Report | Rates & Realty';
     renderCma(data);

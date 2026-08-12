@@ -209,9 +209,17 @@ async function buildCMASnapshot(body:any){
 
     // 6) Insert the snapshot + a /cma short link.
     const url=`https://homes.ratesandrealty.com/cma/${slug}`;
+    /* 30 DAYS on new links. Comps age fast and a stale valuation circulating is
+       the risk here, but a buyer's search runs for weeks — so e-sign's 14 days,
+       right for a transactional signature request, would expire mid-search.
+       Sits between that and the fee sheet's 90 (a rate quote has to survive to
+       closing). Links created before this stay NULL = never expires, so nothing
+       already sent breaks on deploy; they are revoked deliberately instead. */
+    const cmaExpiresAt = new Date(Date.now() + 30 * 864e5).toISOString();
     const {error:insErr}=await sb.from('cma_snapshots').insert({
       slug, contact_id:contactId, data, borrower_name:borrowerName, property_address:propertyAddress,
       include_acquisition:includeAcq, include_rentals:includeRentals,
+      expires_at: cmaExpiresAt,
     });
     if(insErr) throw new Error('snapshot insert failed: '+insErr.message);
     const {error:slErr}=await sb.from('short_links').insert({ slug, destination_url:url, contact_id:contactId });

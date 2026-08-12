@@ -254,6 +254,34 @@ function stubSource(role, email, stubRow, rpcMap, fetchMap, rpcFns, staleRole, i
 // ── specs ───────────────────────────────────────────────────────────────────
 const SPECS = [
   {
+    /* THE PUBLIC CMA LINK, SIGNED OUT AND UNSTUBBED. include_* are false on this
+       slug, so the acquisition and rental sections must be ABSENT FROM THE
+       PAYLOAD, not merely unrendered — that gap is what this sweep is about. The
+       page must still draw exactly as before: a redaction that changes what the
+       borrower sees is a new problem. */
+    name: 'public CMA link strips unrendered sections',
+    url: '/cma/uqa5u9q',
+    anonymous: true,
+    present: ['#app'],
+    evals: [
+      ['(async function(){var cfg=window.APP_CONFIG||{};'
+       + 'var cl=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY);'
+       + 'var r=await cl.rpc("get_cma_snapshot",{p_slug:"uqa5u9q"});var d=(r.data&&r.data.data)||{};'
+       + 'return JSON.stringify({status:r.data&&r.data.status,'
+       + 'da_inputs:("da_inputs" in d),acquisition:("acquisition" in d),rental:("rental" in d),'
+       + 'comps:Array.isArray(d.comps)&&d.comps.length>0});})()',
+       '{"status":"ok","da_inputs":false,"acquisition":false,"rental":false,"comps":true}'],
+      /* Rendered output unchanged: the value hero and the comps still draw. */
+      ['document.body.textContent.replace(/\s+/g,"").length > 800', true],
+      /* STRUCTURAL. document.body.textContent includes inline <script> source and
+         cma.html contains the literal "no longer available" inside renderNotFound,
+         so a text match always trips. renderNotFound wraps its output in .center —
+         its absence is the real proof the report rendered. Third time this trap has
+         caught an assertion in this file. */
+      ['!document.querySelector("#app .center")', true],
+    ],
+  },
+  {
     /* THE PUBLIC FEE LINK, AS A STRANGER SEES IT — signed out, UNSTUBBED, on a
        REAL slug that has been sent and viewed 29 times. The redaction's whole
        purpose is what an anonymous holder of the URL receives, so a stubbed run
