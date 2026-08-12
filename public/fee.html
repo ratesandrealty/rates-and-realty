@@ -477,6 +477,20 @@ function renderRate(snap){
       + feeDetails(feeBreakdown(recR, rec, inp))
       +'</div></div>';
 
+    /* THE BRIDGE ADDENDUM, last and additive. Rebuilds one result per scenario
+       purely to read totalMonthly for the "carrying both" column — calcScenario
+       is pure, so this computes nothing the sheet above did not already show and
+       changes nothing it did. Rate/single only, matching the admin tool: in the
+       per-column modes each column has a different permanent payment, so one
+       addendum would be wrong for most of them. */
+    if(mode==='rate' || mode==='single'){
+      h+=bridgeAddendumPub(data, scenarios.map(function(s){
+        var r=calcScenario(inp,s);
+        r.headerLabel='Option '+(s.id||'')+': '+_helocRate(s.rate)+'%';
+        return r;
+      }));
+    }
+
     h+=disclaimer(snap.created_at)+preparedBlock();
     document.getElementById('app').innerHTML=h;
 }
@@ -695,6 +709,108 @@ function renderHeloc(snap){
 
     h+=disclaimer(snap.created_at)+preparedBlock();
     document.getElementById('app').innerHTML=h;
+}
+
+/* ── BRIDGE ADDENDUM ON THE SHARE LINK ───────────────────────────────────────
+ *
+ * OPT-IN, via share_sections.bridge, exactly like the fee schedule, lender
+ * credits and co-borrowers. Default false, so every link minted before today
+ * shows no bridge rather than one appearing on a link already in a borrower's
+ * inbox.
+ *
+ * SUPPRESSING IT CANNOT MOVE A NUMBER. The addendum is additive: it READS each
+ * option's total monthly payment to show "carrying both" and writes nothing
+ * back, so the sheet above is byte-identical with it hidden or shown. That is a
+ * stronger guarantee than the lender-credits rule needs — there, the credit must
+ * stay inside cashToClose while only its LINE is suppressed, because removing it
+ * from the arithmetic would RAISE the borrower's cash to close.
+ *
+ * The arithmetic is copied from tools/fee-sheet.html's bridgeCompute, pinned by
+ * tools/test-bridge-math.mjs, for the same reason the buydown compute below is:
+ * two independent implementations of one number is how the hosted sheet starts
+ * quietly disagreeing with the one Rene is looking at.
+ */
+function _brMoney(v){ return '$'+Math.round(Number(v)||0).toLocaleString('en-US'); }
+function _brMoney2(v){ return '$'+(Number(v)||0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,','); }
+
+function bridgeComputePub(b){
+  const value=parseCurrency(b.value)||0, balance=parseCurrency(b.balance)||0;
+  const cltv=parseFloat(b.cltv)||0, rate=parseFloat(b.rate)||0;
+  const months=parseFloat(b.months)||0, ptsPct=parseFloat(b.points)||0;
+  const fees=parseCurrency(b.fees)||0, io=(b.mode!=='amortized');
+  const amount=Math.max(0, (value*cltv/100)-balance);
+  const r=rate/1200;
+  let monthly=0, totalInterest=0;
+  if(amount>0 && months>0){
+    if(io){ monthly=amount*r; totalInterest=monthly*months; }
+    else {
+      monthly=(r===0)?(amount/months):amount*r/(1-Math.pow(1+r,-months));
+      totalInterest=Math.max(0, monthly*months-amount);
+    }
+  }
+  const pointsAmt=amount*ptsPct/100;
+  return { amount, monthly, totalInterest, pointsAmt, fees, io, months, rate,
+           totalCost: totalInterest+pointsAmt+fees };
+}
+
+function bridgeAddendumPub(data, results){
+  const b = data.bridge || {};
+  if(!b.on) return '';
+  if(!(window.__SEC||{}).bridge) return '';          // opt-in, per link
+  const r = bridgeComputePub(b);
+  /* An unusable bridge renders NOTHING here rather than "not finished yet".
+     create_fee_sheet_snapshot and set_fee_sheet_sections both refuse to let this
+     state reach a link; if one ever slips through, silence is better on a
+     borrower-facing page than an admin-facing complaint. */
+  if(!(r.amount>0) || !(r.rate>0) || !(r.months>0)) return '';
+
+  const payoff=(b.payoff||'').trim();
+  const rows=(results||[]).map(function(res){
+    const perm=Number(res.totalMonthly)||0;
+    return '<tr class="row-item"><td>'+esc(res.headerLabel||'Option')+'</td>'
+      +'<td style="text-align:right;">'+_brMoney2(perm)+'</td>'
+      +'<td style="text-align:right;">'+_brMoney2(r.monthly)+'</td>'
+      +'<td style="text-align:right;font-weight:700;">'+_brMoney2(perm+r.monthly)+'</td></tr>';
+  }).join('');
+
+  /* id so the suppression test can remove exactly this node and compare the
+     rest byte-for-byte, and so anything else that needs to strip it has a
+     handle rather than a string match. */
+  return '<div class="sec" id="bridgeAddendumPub"><div class="sec-title">Bridge Loan Addendum</div><div class="card">'
+    + '<div style="font-size:12.5px;color:#555;margin-bottom:14px;">A short-term loan against the departing home, used before it sells. It sits alongside whichever option above is chosen — it does not replace it.</div>'
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">'
+    +   '<div style="flex:1;min-width:150px;border:1px solid #C9A84C;border-radius:8px;padding:12px 14px;background:#FFFDF5;">'
+    +     '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#8a6d1f;">Total cost of the bridge</div>'
+    +     '<div style="font-size:22px;font-weight:700;color:#1a1208;">'+_brMoney(r.totalCost)+'</div>'
+    +     '<div style="font-size:11px;color:#666;margin-top:2px;">interest + points + fees over '+r.months+' months</div></div>'
+    +   '<div style="flex:1;min-width:150px;border:1px solid #ddd;border-radius:8px;padding:12px 14px;">'
+    +     '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#777;">Bridge amount</div>'
+    +     '<div style="font-size:22px;font-weight:700;color:#333;">'+_brMoney(r.amount)+'</div>'
+    +     '<div style="font-size:11px;color:#666;margin-top:2px;">'+esc(b.cltv||'')+'% CLTV less the existing balance</div></div>'
+    +   '<div style="flex:1;min-width:150px;border:1px solid #ddd;border-radius:8px;padding:12px 14px;">'
+    +     '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#777;">Bridge payment</div>'
+    +     '<div style="font-size:22px;font-weight:700;color:#333;">'+_brMoney2(r.monthly)+'</div>'
+    +     '<div style="font-size:11px;color:#666;margin-top:2px;">'+(r.io?'interest-only':'amortised')+' at '+r.rate.toFixed(3)+'%</div></div>'
+    + '</div>'
+    /* THE DISCLOSURE THAT MATTERS, and it is not optional within the section:
+       while the departing home is unsold the borrower carries BOTH loans. */
+    + (rows ? '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">'
+      + '<thead><tr>'
+      +   '<th style="text-align:left;padding:7px 6px;border-bottom:2px solid #C9A84C;">While the departing home is unsold</th>'
+      +   '<th style="text-align:right;padding:7px 6px;border-bottom:2px solid #C9A84C;">New mortgage</th>'
+      +   '<th style="text-align:right;padding:7px 6px;border-bottom:2px solid #C9A84C;">Bridge</th>'
+      +   '<th style="text-align:right;padding:7px 6px;border-bottom:2px solid #C9A84C;">Both, monthly</th>'
+      + '</tr></thead><tbody>'+rows+'</tbody></table>' : '')
+    + (b.note && String(b.note).trim()
+        ? '<div style="margin-top:12px;padding:10px 12px;border-left:3px solid #C9A84C;background:#FFFDF5;font-size:12.5px;color:#3a3226;line-height:1.6;white-space:pre-wrap;">'
+          + esc(String(b.note).trim()) + '</div>' : '')
+    + '<div style="margin-top:12px;font-size:12px;color:#555;line-height:1.6;">'
+    +   (payoff ? 'Repaid in full from the sale of <strong>'+esc(payoff)+'</strong>. ' : '')
+    +   'Term '+r.months+' months at '+r.rate.toFixed(3)+'%, '+(r.io?'interest-only':'amortised over the term')+'. '
+    +   'Interest '+_brMoney(r.totalInterest)+' &middot; points '+_brMoney(r.pointsAmt)+' &middot; other fees '+_brMoney(r.fees)+'. '
+    +   (r.io ? 'The balance of '+_brMoney(r.amount)+' is repaid in one payment at closing on the sale; it does not reduce over the term. ' : '')
+    +   'If the sale takes longer than '+r.months+' months the bridge must be extended or refinanced, usually at further cost.'
+    + '</div></div></div>';
 }
 
 /* ── buydown (verbatim compute: tools/fee-sheet.html bdPmt / bdSchedule / bdCompute) ──

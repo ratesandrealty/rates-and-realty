@@ -753,6 +753,33 @@
                 </select>
             </div>
             <div class="field"><label>Repaid from the sale of</label><input type="text" id="br_payoff" placeholder="123 Departing St, City, CA" oninput="recalc()"></div>
+            <!-- FREE TEXT, per file. The computed figures say what the bridge
+                 costs; this is where Rene says what it is FOR on this deal
+                 ("covers the down payment until Elm St closes"). Rendered under
+                 the schedule, above the standing disclaimer. -->
+            <div class="field"><label>Note to the borrower (optional)</label>
+                <textarea id="br_note" rows="3" placeholder="Why this bridge, on this file — in your words."
+                    oninput="recalc()"
+                    style="width:100%;box-sizing:border-box;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:#ddd;font-size:11px;padding:6px 8px;font-family:inherit;line-height:1.5;resize:vertical;"></textarea></div>
+
+            <!-- ── THREE INDEPENDENT AUDIENCES ────────────────────────────────
+                 Rene may want the bridge on screen while presenting and off the
+                 link he leaves behind, or on the PDF he emails and off the live
+                 sheet. They are separate decisions about separate artefacts, so
+                 they are separate switches.
+                 THE LINK IS NOT HERE. Link visibility is per-LINK, not per-file:
+                 two links from one sheet may go to the borrower and their agent
+                 and want different answers. It lives on share_sections, beside
+                 the link it applies to, with the other per-link toggles. -->
+            <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,.08);">
+                <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:#8f8a80;margin-bottom:5px;">Show the addendum on</div>
+                <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#bbb;cursor:pointer;margin-bottom:4px;">
+                    <input type="checkbox" id="br_show_sheet" checked onchange="recalc()" style="accent-color:#C9A84C;cursor:pointer;">this sheet</label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#bbb;cursor:pointer;">
+                    <input type="checkbox" id="br_show_pdf" checked onchange="notifyParentOfChange()" style="accent-color:#C9A84C;cursor:pointer;">the PDF</label>
+                <div style="font-size:10px;color:#7f7a72;margin-top:5px;line-height:1.45;">
+                    The share link is set per link, under <strong>Shared links</strong>.</div>
+            </div>
         </div>
     </div>
 
@@ -2449,6 +2476,20 @@ function collectFeeSheetDraft() {
         /* Buydown persists like every other mode. Written AND read — the HELOC
            block below was written for months and never read back, which is what
            made "the HELOC button does nothing" true from the user's side. */
+        /* BRIDGE PERSISTS. It did not before: every br_* field was read straight
+           off the DOM at render time and written nowhere, so the whole addendum
+           — amount basis, rate, term, points, fees, the payoff address and the
+           note — was lost on reload. Same class as the HELOC block that was
+           saved and never read back, arrived at from the other end. */
+        bridge: {
+            on:      !!($('br_on') && $('br_on').checked),
+            value:   v('br_value'),  balance: v('br_balance'), cltv: v('br_cltv'),
+            rate:    v('br_rate'),   months:  v('br_months'),  points: v('br_points'),
+            fees:    v('br_fees'),   mode:    v('br_mode'),    payoff: v('br_payoff'),
+            note:    v('br_note'),
+            show_sheet: !$('br_show_sheet') || !!$('br_show_sheet').checked,
+            show_pdf:   !$('br_show_pdf')   || !!$('br_show_pdf').checked
+        },
         buydown: {
             structure: v('bd_structure'),
             rate: v('bd_rate'),
@@ -2785,7 +2826,12 @@ function bridgeInputs() {
         on:      !!($('br_on') && $('br_on').checked),
         value:   v('br_value'),  balance: v('br_balance'), cltv:  v('br_cltv'),
         rate:    v('br_rate'),   months:  v('br_months'),  points: v('br_points'),
-        fees:    v('br_fees'),   mode:    v('br_mode'),    payoff: v('br_payoff')
+        fees:    v('br_fees'),   mode:    v('br_mode'),    payoff: v('br_payoff'),
+        note:    v('br_note'),
+        /* Default TRUE when the element is missing, so an older draft restored
+           before these checkboxes existed keeps showing what it showed. */
+        show_sheet: !$('br_show_sheet') || !!$('br_show_sheet').checked,
+        show_pdf:   !$('br_show_pdf')   || !!$('br_show_pdf').checked
     };
 }
 /* CALLED FROM setMode AND FROM INIT, which is the whole reason it is a function.
@@ -2833,6 +2879,13 @@ function bridgeAddendumHtml(inp, results) {
     if (!inp || (inp.mode !== 'rate' && inp.mode !== 'single')) return '';
     const b = bridgeInputs();
     if (!b.on) return '';
+    /* THE SHEET TOGGLE. Off means the addendum is not drawn here at all — and
+       because the addendum is purely ADDITIVE (it reads res.totalMonthly and
+       writes nothing back), removing it cannot move a single figure in the sheet
+       above. That is a stronger guarantee than the lender-credits rule, which
+       has to keep the credit inside cashToClose while hiding only its LINE;
+       here there is no arithmetic to preserve because there never was any. */
+    if (!b.show_sheet) return '';
     const r = bridgeCompute(b);
 
     const m2 = v => '$' + (Number(v) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -2865,7 +2918,10 @@ function bridgeAddendumHtml(inp, results) {
     }).join('');
 
     return ''
-      + '<div style="margin-top:18px;padding:0 4px;">'
+      /* id is the PDF's handle: openFeeSheetPDF captures #sheet's DOM, so the only
+         way "on the sheet" and "on the PDF" can differ is by removing this node
+         from the captured copy. */
+      + '<div id="bridgeAddendum" style="margin-top:18px;padding:0 4px;">'
       + '<h2 style="font-family:\'Playfair Display\',Georgia,serif;font-size:19px;margin:14px 0 4px;">Bridge Loan Addendum</h2>'
       + '<div style="font-size:12px;color:#555;margin-bottom:14px;">'
       +   'A short-term loan against the departing home, used before it sells. It sits alongside whichever option above is chosen — it does not replace it.'
@@ -2908,6 +2964,10 @@ function bridgeAddendumHtml(inp, results) {
       +   rows
       + '</tbody></table>'
 
+      + (b.note && b.note.trim()
+          ? '<div style="margin-top:12px;padding:10px 12px;border-left:3px solid #C9A84C;background:#FFFDF5;font-size:12.5px;color:#3a3226;line-height:1.6;white-space:pre-wrap;">'
+            + _fsEsc(b.note.trim()) + '</div>'
+          : '')
       + '<div style="margin-top:12px;font-size:12px;color:#555;line-height:1.6;">'
       +   '<div style="margin-bottom:6px;">' + payoffLine + '</div>'
       +   'Term ' + r.months + ' months at ' + r.rate.toFixed(3) + '%, ' + (r.io ? 'interest-only' : 'amortised over the term') + '. '
@@ -3722,6 +3782,24 @@ recalc();
                appear anywhere in this file. So a HELOC estimate was saved on every
                keystroke and discarded on every reload: the inputs came back empty
                and the rate cards reset to defaults, with no error to explain it. */
+            if (d.bridge && typeof d.bridge === 'object') {
+                var BR = d.bridge;
+                var _brset = function (id, val) { var el = $(id); if (el && val != null && val !== '') el.value = val; };
+                var _brchk = function (id, val) { var el = $(id); if (el && typeof val === 'boolean') el.checked = val; };
+                _brchk('br_on', BR.on);
+                _brset('br_value', BR.value);   _brset('br_balance', BR.balance);
+                _brset('br_cltv',  BR.cltv);    _brset('br_rate',    BR.rate);
+                _brset('br_months',BR.months);  _brset('br_points',  BR.points);
+                _brset('br_fees',  BR.fees);    _brset('br_mode',    BR.mode);
+                _brset('br_payoff',BR.payoff);  _brset('br_note',    BR.note);
+                _brchk('br_show_sheet', BR.show_sheet);
+                _brchk('br_show_pdf',   BR.show_pdf);
+                /* The fields live inside a container the checkbox reveals, so
+                   restoring `on` without this leaves them filled and hidden. */
+                if (typeof bridgeToggle === 'function' && $('br_on') && $('br_on').checked) {
+                    var f = $('br_fields'); if (f) f.style.display = '';
+                }
+            }
             if (d.buydown && typeof d.buydown === 'object') {
                 var B = d.buydown;
                 var _bset = function (id, val) { var el = $(id); if (el && val != null && val !== '') el.value = val; };

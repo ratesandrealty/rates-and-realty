@@ -19413,7 +19413,37 @@ function openFeeSheetPDF() {
 
   var borrowerName = (getFeeSheetData().borrower_name || 'Borrower').replace(/[<>"']/g, '');
   var dateStr = new Date().toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'long', day: 'numeric', year: 'numeric' });
-  var sheetHTML = sheetEl.outerHTML;
+
+  /* ── THE PDF TOGGLE, and why it is a strip rather than a re-render ─────────
+   *
+   * This path is a CAPTURE of #sheet's live DOM, not a second renderer. So the
+   * only way "show on the sheet" and "show on the PDF" can be independent is to
+   * remove the node from a COPY of what was captured.
+   *
+   * A copy, deliberately. Re-rendering the iframe without the bridge and putting
+   * it back afterwards would flicker the sheet Rene is presenting from, and
+   * would leave it in the wrong state if the popup was blocked or the user
+   * cancelled midway. cloneNode touches nothing on screen.
+   *
+   * REMOVING THE ADDENDUM CANNOT MOVE A NUMBER. It is additive — it reads each
+   * option's totalMonthly and writes nothing back — so the sheet above it is
+   * byte-identical with or without it. That is why this can be a blunt node
+   * removal, where lender credits needs the credit kept inside cashToClose and
+   * only its LINE suppressed. */
+  var sheetClone = sheetEl.cloneNode(true);
+  try {
+    var _cw2 = iframe.contentWindow;
+    var wantPdf = true;
+    if (_cw2 && typeof _cw2.bridgeInputs === 'function') {
+      var _bi = _cw2.bridgeInputs();
+      wantPdf = !_bi.on || _bi.show_pdf !== false;
+    }
+    if (!wantPdf) {
+      var _bn = sheetClone.querySelector('#bridgeAddendum');
+      if (_bn) _bn.remove();
+    }
+  } catch (e) { /* cross-frame guard — a PDF WITH the addendum is the safe default */ }
+  var sheetHTML = sheetClone.outerHTML;
 
   var popup = window.open('', '_blank', 'width=1100,height=900,menubar=no,toolbar=no,scrollbars=yes');
   if (!popup) { alert('Allow popups for this site'); return; }
@@ -38180,7 +38210,11 @@ async function fsLoadShareLinks(){
    compensation reaches an agent. */
 function _fsSectionToggles(x){
   var sec = x.share_sections || {};
+  /* `bridge` is only offered when the snapshot HAS one — a checkbox for a
+     section that does not exist reads as a broken toggle, and switching it on
+     would be refused server-side anyway. */
   var defs = [['fee_schedule','Fee breakdown'],['lender_credits','Lender credits'],['people','Co-borrowers']];
+  if (x.has_bridge) defs.push(['bridge','Bridge addendum']);
   return '<span style="flex-shrink:0;display:flex;gap:9px;align-items:center;margin-right:6px;">'
     + defs.map(function(d){
         var on = sec[d[0]] === true;

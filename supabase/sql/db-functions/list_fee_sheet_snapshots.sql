@@ -19,6 +19,11 @@ begin
   from (
     select slug, borrower_name, contact_id, created_at, view_count, last_viewed_at,
            revoked_at, expires_at, share_sections,
+           /* Does this snapshot even HAVE a bridge addendum? The per-link toggle
+              is only offered when it does — a checkbox for a section that does
+              not exist reads as a broken toggle, and enabling it would be
+              refused server-side anyway. */
+           coalesce((data->'bridge'->>'on')::boolean, false) as has_bridge,
            case when revoked_at is not null then 'revoked'
                 when expires_at is not null and expires_at <= now() then 'expired'
                 else 'live' end as status

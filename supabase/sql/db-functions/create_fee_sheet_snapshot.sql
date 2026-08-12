@@ -40,6 +40,16 @@ begin
     end if;
   end if;
 
+  /* BRIDGE MUST BE RENDERABLE IF IT IS SWITCHED ON. Scoped to bridge.on
+     being TRUE — that flag IS the toggle, and an enabled addendum with no
+     equity or no rate is a mistake worth catching at mint rather than when the
+     section is later revealed. A half-filled bridge left OFF blocks nothing:
+     the link simply has no addendum. Shares _fs_bridge_usable with
+     set_fee_sheet_sections so the two enforcement points cannot drift. */
+  if public._fs_bridge_usable(v_data) = false then
+    raise exception 'the bridge addendum is switched on but has no amount (home value x CLTV less the balance) or no rate — the link would tell the borrower the quote is unfinished';
+  end if;
+
   select nullif(trim(coalesce(first_name,'')||' '||coalesce(last_name,'')),'')
     into v_name from public.contacts where id = p_contact_id;
   v_name := coalesce(v_name, 'Borrower');
