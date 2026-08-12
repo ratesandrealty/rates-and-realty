@@ -711,6 +711,30 @@ function renderHeloc(snap){
     document.getElementById('app').innerHTML=h;
 }
 
+/* Walkthrough video, mounted above #app rather than inside it, so no renderer
+   has to know it exists and re-rendering the sheet cannot drop it. */
+function mountWalkthrough(slug){
+  if(document.getElementById('feeWalkthrough')) return;
+  const app = document.getElementById('app');
+  if(!app || !app.parentNode) return;
+  const box = document.createElement('div');
+  box.id = 'feeWalkthrough';
+  box.style.cssText = 'max-width:820px;margin:0 auto 18px;padding:0 4px;';
+  box.innerHTML =
+      '<video controls preload="metadata" playsinline'
+    + ' style="width:100%;border-radius:12px;background:#000;display:block;max-height:60vh;"'
+    + ' src="/fee/' + encodeURIComponent(slug) + '/video"></video>'
+    /* An unlabelled black rectangle above a financial document reads as broken. */
+    + '<div style="font-size:12px;color:#777;margin-top:7px;text-align:center;">'
+    +   'Rene walks through this quote &mdash; press play, or just read the sheet below.'
+    + '</div>';
+  /* If the file will not decode, take the whole block out rather than leave a
+     dead player sitting above the numbers. */
+  const v = box.querySelector('video');
+  v.addEventListener('error', function(){ box.remove(); });
+  app.parentNode.insertBefore(box, app);
+}
+
 /* ── BRIDGE ADDENDUM ON THE SHARE LINK ───────────────────────────────────────
  *
  * OPT-IN, via share_sections.bridge, exactly like the fee schedule, lender
@@ -1002,6 +1026,22 @@ function renderError(msg){
         // Mirror the admin tool per mode: property → SFR/Condo/2-4 Unit comparison;
         // price → per purchase-price-point columns; heloc → heloc; rate/single
         // (and any unknown) → A/B/C rate scenarios. STRICT per-mode arrays — no cross-leak.
+        /* ── THE WALKTHROUGH, ABOVE THE SHEET ─────────────────────────────
+         * Rendered BEFORE the sheet and outside it, so the sheet below is
+         * untouched and fully readable without ever pressing play. Not a modal,
+         * not a gate: the video is an addition to the document, not a step in
+         * front of it.
+         * NO AUTOPLAY. Autoplay with sound on a document a borrower opens on a
+         * phone at work is hostile, and muted autoplay of someone explaining
+         * numbers is worse than none.
+         * A HEAD probe decides whether to render at all, so "no video" and
+         * "revoked" look identical — an empty area, no message. The worker
+         * answers 404 for both. */
+        try {
+          const vr = await fetch('/fee/' + slug + '/video', { method: 'HEAD' });
+          if (vr.ok) mountWalkthrough(slug);
+        } catch (_) { /* a video must never be the reason a fee sheet fails */ }
+
         if(mode==='heloc') renderHeloc(data);
         else if(mode==='buydown') renderBuydown(data);
         else if(mode==='property') renderProperty(data);

@@ -495,6 +495,71 @@ export default {
       }
     }
 
+    /* ── /fee/<slug>/video — the walkthrough, proxied ────────────────────────
+     *
+     * PROXIED RATHER THAN LINKED DIRECTLY, and that is the whole design. The
+     * bucket is public, so a direct storage URL would survive revocation — and
+     * the reason a fee video gets pulled is that Rene said a number out loud on
+     * it. "Hard to guess" is not revocation when the thing being protected is a
+     * recording of a compensation figure. Every request asks the database
+     * whether the video is still live; the moment it is not, the bytes stop.
+     *
+     * fee_video_public also refuses when the SHEET is revoked or expired, so a
+     * withdrawn link cannot keep serving its video, and returns the identical
+     * shape for "no video" and "revoked" — telling a URL holder a video was
+     * withdrawn confirms one existed.
+     *
+     * Range passthrough for the same reason /v/<slug>/media has it: without it
+     * Safari refuses to play and nobody can seek.
+     * NO CACHING. A revoked video that sat in a CDN or browser cache would keep
+     * playing exactly as long as the cache lived, which is the failure this
+     * endpoint exists to prevent. */
+    {
+      const fv = /^\/fee\/([A-Za-z0-9]+)\/video$/.exec(path);
+      if (fv) {
+        const SBURL = env.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
+        let meta = null;
+        try {
+          const r = await fetch(`${SBURL}/rest/v1/rpc/fee_video_public`, {
+            method: 'POST',
+            headers: {
+              /* ANON KEY, like the /v/<slug> resolver above. The worker has no
+                 service-role binding — wrangler.toml carries the URL and the
+                 anon key only — and pinning fee_video_public to service_role
+                 made every request 404 with the function answering correctly.
+                 See that function's comment: the proxy is not the access
+                 control; deleting the object on revocation is. */
+              'apikey': env.SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${env.SUPABASE_ANON_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ p_slug: fv[1] }),
+          });
+          if (r.ok) meta = await r.json();
+        } catch (e) { /* fall through to 404 — never serve on an unknown answer */ }
+        if (!meta || !meta.video || !meta.storage_path) {
+          return new Response('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
+        }
+        const origin = `${SBURL}/storage/v1/object/public/video-messages/${meta.storage_path
+          .split('/').map(encodeURIComponent).join('/')}`;
+        const fwd = new Headers();
+        const range = request.headers.get('range');
+        if (range) fwd.set('range', range);
+        const up = await fetch(origin, { method: request.method === 'HEAD' ? 'HEAD' : 'GET', headers: fwd });
+        if (up.status !== 200 && up.status !== 206) {
+          return new Response('Video unavailable', { status: 404, headers: { 'Cache-Control': 'no-store' } });
+        }
+        const h = new Headers();
+        ['content-type', 'content-length', 'content-range', 'accept-ranges']
+          .forEach((k) => { const v = up.headers.get(k); if (v) h.set(k, v); });
+        if (!h.has('accept-ranges')) h.set('accept-ranges', 'bytes');
+        if (!h.has('content-type')) h.set('content-type', 'video/webm');
+        h.set('Cache-Control', 'no-store, must-revalidate');
+        h.set('X-Content-Type-Options', 'nosniff');
+        return new Response(up.body, { status: up.status, headers: h });
+      }
+    }
+
     // Public fee-sheet snapshot page: /fee/<slug> → serve the branded page (reads the slug
     // client-side, fetches the frozen snapshot via get_fee_sheet_snapshot with anon). Mirrors
     // the /areas clean-URL rewrite; the slug is validated, then the static shell is served.

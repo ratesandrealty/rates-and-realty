@@ -20,6 +20,11 @@ begin
     select s.slug, s.borrower_name, s.contact_id, s.created_at, s.view_count, s.last_viewed_at,
            s.revoked_at, s.expires_at, s.share_sections,
            s.data->>'mode' as snapshot_mode,
+           /* Is a walkthrough live on this link? Drives which of Record / Pull
+              the row offers. Revoked rows are excluded by the same predicate the
+              public proxy uses, so the button cannot disagree with the borrower. */
+           exists (select 1 from public.fee_sheet_videos fv
+                    where fv.fee_slug = s.slug and fv.revoked_at is null) as has_video,
            s.share_sections->>'mode' as mode_override,
            (select jsonb_agg(jsonb_build_object(
                      'key', k->>'key', 'label', k->>'label',

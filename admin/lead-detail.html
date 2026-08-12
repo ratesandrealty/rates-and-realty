@@ -38127,6 +38127,16 @@ function _shareRowHtml(x, kind, extraHtml){
     +   ' · created ' + lpEsc(_fsAgeLabel(x.created_at))
     +   (x.last_viewed_at ? ' · last opened ' + lpEsc(_fsAgeLabel(x.last_viewed_at)) : '')
     + '</span>'
+    /* VIDEO CONTROLS, live links only. A revoked or expired link serves no
+       video anyway (fee_video_public refuses on both), so offering Record there
+       would be a button that produces nothing a borrower can reach. */
+    + (isLive && kind === 'fee'
+        ? (x.has_video
+            ? '<button type="button" onclick="fsRevokeVideo(\'' + lpEsc(x.slug) + '\')" title="Delete the walkthrough video from this link"'
+              + ' style="flex-shrink:0;background:rgba(229,72,77,.10);border:1px solid rgba(229,72,77,.4);color:#E5848A;border-radius:6px;font-size:10.5px;font-weight:700;padding:4px 9px;cursor:pointer;font-family:inherit;">🎥 Pull video</button>'
+            : '<button type="button" onclick="_fvConfirmThenRecord(\'' + lpEsc(x.slug) + '\')" title="Record a walkthrough for this link"'
+              + ' style="flex-shrink:0;background:transparent;border:1px solid rgba(201,168,76,.35);color:#C9A84C;border-radius:6px;font-size:10.5px;font-weight:700;padding:4px 9px;cursor:pointer;font-family:inherit;">🎥 Record</button>')
+        : '')
     + (isLive
         ? (extraHtml || '')
           + '<button type="button" onclick="'+fn+'(\''+lpEsc(x.slug)+'\',true)" style="flex-shrink:0;background:transparent;border:1px solid rgba(229,72,77,.45);color:#E5848A;border-radius:6px;font-size:10.5px;font-weight:700;padding:4px 10px;cursor:pointer;font-family:inherit;">Revoke</button>'
@@ -38282,6 +38292,118 @@ async function fsSetSection(slug, key, on){
     fsLoadShareLinks();   // re-sync the control to what the server actually holds
   }
 }
+/* ── WALKTHROUGH VIDEO ON A FEE LINK ────────────────────────────────────────
+ *
+ * A VIDEO CANNOT BE REDACTED. The link strips origComp because it was leaking
+ * compensation, and _fs_redact can do that because the number is a FIELD. A
+ * recording has no fields: if Rene says a figure out loud it is in an opaque
+ * media file, and the only remedy is to stop serving it. Everything here follows
+ * from that — the warning lands BEFORE the recorder opens, and revocation
+ * deletes the bytes rather than flagging a row.
+ */
+function _fvWarnKey(){
+  return 'rr_fee_video_warned:' + ((window._adminUser && (window._adminUser.id || window._adminUser.email)) || 'anon');
+}
+/* ONCE PER USER, not once per session and not once per file. Rene will attach
+   many of these, and a modal every time trains him to dismiss it unread — which
+   is exactly how a warning stops working.
+   Shown AGAIN after any revocation: that is the one moment it is information
+   rather than noise, because he has just had to pull one. */
+function _fvNeedsWarning(){
+  try { return localStorage.getItem(_fvWarnKey()) !== 'seen'; } catch(_) { return true; }
+}
+function _fvMarkWarned(){ try { localStorage.setItem(_fvWarnKey(), 'seen'); } catch(_) {} }
+function _fvResetWarning(){ try { localStorage.removeItem(_fvWarnKey()); } catch(_) {} }
+
+function _fvConfirmThenRecord(slug){
+  if(!_fvNeedsWarning()) return _fvOpenRecorder(slug);
+  var ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;z-index:100070;background:rgba(0,0,0,.62);display:flex;align-items:center;justify-content:center;padding:20px;';
+  ov.innerHTML =
+      '<div style="width:min(430px,96vw);background:#111;border:1px solid rgba(229,72,77,.45);border-radius:14px;padding:18px;font-family:inherit;">'
+    + '<div style="font-size:14px;font-weight:800;color:#F0A0A0;margin-bottom:9px;">This video goes on a link you send to the borrower.</div>'
+    + '<div style="font-size:12.5px;color:#ddd;line-height:1.65;margin-bottom:14px;">'
+    +   'Anything you say is on that link <strong>permanently</strong>. It cannot be edited or redacted the way the sheet hides your compensation. '
+    +   'If you name your comp, a lender credit, or another client, the only fix is pulling the video &mdash; which deletes it.'
+    + '</div>'
+    + '<div style="display:flex;gap:8px;align-items:center;">'
+    +   '<span style="flex:1;"></span>'
+    +   '<button type="button" id="fvWarnCancel" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);color:#ddd;border-radius:7px;font-size:11.5px;font-weight:700;padding:7px 12px;cursor:pointer;font-family:inherit;">Cancel</button>'
+    +   '<button type="button" id="fvWarnGo" style="background:#C9A84C;border:none;color:#111;border-radius:7px;font-size:11.5px;font-weight:800;padding:7px 14px;cursor:pointer;font-family:inherit;">I understand &mdash; record</button>'
+    + '</div></div>';
+  document.body.appendChild(ov);
+  ov.querySelector('#fvWarnCancel').addEventListener('click', function(){ ov.remove(); });
+  ov.querySelector('#fvWarnGo').addEventListener('click', function(){
+    _fvMarkWarned(); ov.remove(); _fvOpenRecorder(slug);
+  });
+}
+
+function _fvOpenRecorder(slug){
+  var go = function(){
+    window.LoomRecorder.open({
+      context: 'fee_walkthrough',
+      contact_id: (typeof lpCid==='function' ? lpCid() : null),
+      onSaved: function(v){ _fvAttach(slug, v); }
+    });
+  };
+  if(window.LoomRecorder) return go();
+  var ex = document.querySelector('script[src*="/admin/js/loom-recorder.js"]');
+  if(ex){ ex.addEventListener('load', go); return; }
+  var sc = document.createElement('script');
+  sc.src = '/admin/js/loom-recorder.js';
+  sc.onload = go;
+  sc.onerror = function(){ showToast('Could not load the recorder.', true); };
+  document.head.appendChild(sc);
+}
+
+/* The RPC returns what a REPLACE displaced, so the old bytes are deleted rather
+   than left addressable. A replace is a revocation of the previous video in
+   every sense that matters. */
+async function _fvAttach(slug, v){
+  try{
+    var path = _fvBucketPath(v && v.public_url);
+    var r = await _authClient().rpc('fee_video_attach', {
+      p_slug: slug, p_video_id: (v && v.id) || null, p_storage_path: path || null });
+    if(r.error) throw r.error;
+    var out = r.data || {};
+    if(out.replaced && out.replaced.storage_path) await _fvDeleteObject(out.replaced.storage_path);
+    showToast('Walkthrough attached to /fee/' + slug);
+    fsLoadShareLinks();
+  }catch(e){ showToast('Could not attach the video: ' + ((e&&e.message)||e), true); }
+}
+
+function _fvBucketPath(url){
+  var u = String(url||''), marker = '/storage/v1/object/public/video-messages/', i = u.indexOf(marker);
+  if(i === -1) return null;
+  return decodeURIComponent(u.slice(i + marker.length).split('?')[0]);
+}
+async function _fvDeleteObject(path){
+  if(!path) return;
+  try{ await _authClient().storage.from('video-messages').remove([path]); }
+  catch(e){ console.warn('[fee video] object delete failed', path, e && e.message); }
+}
+
+/* REVOCATION DELETES THE OBJECT. The reason a video is pulled is that it leaked
+   something; leaving the bytes addressable defeats the act. Irreversible, so it
+   asks — and it says plainly that the sheet itself is unaffected, because the
+   fear that stops someone pulling a bad video is breaking a link the borrower is
+   part-way through. */
+async function fsRevokeVideo(slug){
+  if(!confirm('Pull the walkthrough video from /fee/' + slug + '?\n\n'
+      + 'The video file is DELETED. This cannot be undone and the recording cannot be recovered.\n\n'
+      + 'The fee sheet link itself keeps working - only the video disappears.')) return;
+  try{
+    var r = await _authClient().rpc('fee_video_revoke', { p_slug: slug, p_reason: 'pulled' });
+    if(r.error) throw r.error;
+    var out = r.data || {};
+    if(out.revoked && out.storage_path) await _fvDeleteObject(out.storage_path);
+    /* He has just had to pull one — show the warning again next time. */
+    _fvResetWarning();
+    showToast(out.revoked ? ('Video pulled and deleted from /fee/' + slug) : 'No live video on that link');
+    fsLoadShareLinks();
+  }catch(e){ showToast('Could not pull the video: ' + ((e&&e.message)||e), true); }
+}
+
 async function fsRevokeLink(slug, revoke){
   if(revoke && !confirm('Revoke /fee/'+slug+'?\n\nAnyone who already has this link will see "no longer available". You can restore it afterwards.')) return;
   try{
