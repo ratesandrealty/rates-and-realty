@@ -154,7 +154,29 @@ function showToast(msg, isError) {
   setTimeout(() => t.classList.remove('show'), isError ? 4000 : 2500);
 }
 
-// ── Canonical role map (key → label). Unmapped keys fall back to the raw key. ──
+/* ── Canonical role map (key → label). Unmapped keys fall back to the raw key. ──
+ *
+ * 'appraisal_company' was REMOVED and 'appraisal' added (2026-08-12). This map
+ * is what buildRoleSelects() offers in both the filter and the add/edit modal,
+ * and it was the CAUSE of the appraisal split, not a symptom of it: it offered
+ * `appraisal_company` and had no `appraisal` entry at all, so the three real
+ * appraisal vendors held a role the dropdown could not even display, and anyone
+ * adding an appraiser had "Appraisal Company" as the only plausible option.
+ * Act Appraisal was filed there, became invisible in the picker, and editing
+ * Arevalos then failed on uq_vendor_directory_role_email (role, lower(email))
+ * because the same vendor existed under both roles.
+ *
+ * 'appraisal' is canonical, determined from data: all three loan_orders
+ * appraisal rows point at appraisal-role vendors, and nothing referenced either
+ * appraisal_company row. The vendor_role_labels TABLE already agreed — it holds
+ * 'appraisal' and has never held 'appraisal_company'. This hardcoded copy was
+ * the only outlier, which is the argument for reading it from that table rather
+ * than maintaining a second list here.
+ *
+ * NOTE: loan_contacts.role ALSO uses the string 'appraisal_company', for the
+ * per-contact appraisal slot on a lead (LP_CONTACT_ROLES in lead-detail.html).
+ * That is a DIFFERENT table with saved rows and is deliberately untouched —
+ * renaming it here would orphan them. Same string, unrelated meaning. */
 const ROLE_LABELS = {
   listing_agent: 'Listing Agent',
   listing_agent_tc: 'Listing Agent Transaction Coordinator',
@@ -165,7 +187,7 @@ const ROLE_LABELS = {
   escrow_officer: 'Escrow Officer',
   lender_ae: 'Lender AE',
   underwriter: 'Underwriter',
-  appraisal_company: 'Appraisal Company'
+  appraisal: 'Appraisal'
 };
 function roleLabel(k) { return ROLE_LABELS[k] || k || ''; }
 
