@@ -10961,20 +10961,37 @@ async function lpRenderSnapshot(cid){
   const _escVal = _lpEscrowRef
     ? lpEsc(_lpEscrowRef)
     : '<span style="color:rgba(255,255,255,.4);">—</span>';
+  /* ESCROW CELL — number on its OWN line, button BELOW it.
+     These three (number, pencil, Find-mail button) used to share one flex row
+     inside a grid whose columns are minmax(150px,1fr). The button and pencil are
+     flex-shrink:0, so the number absorbed the entire shortfall and "2802-SR"
+     rendered as "28…" — a clipped escrow number reads as a data error, and it is
+     the one value on this cell somebody needs to read exactly.
+     No ellipsis on the number now: escrow refs are short, and if one is genuinely
+     long it should wrap rather than lie. */
   const escrowCell = '<div style="min-width:0;"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:3px;">Escrow #</div>'
-    + '<div style="display:flex;align-items:center;gap:6px;font-size:14px;color:#fff;font-weight:600;">'
-    + '<span onclick="lpSnapEdit(\'escrow_ref\',event)" title="Click to edit" style="cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.18);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+_escVal+'</span>'
+    + '<div style="display:flex;align-items:baseline;gap:6px;font-size:14px;color:#fff;font-weight:600;">'
+    + '<span onclick="lpSnapEdit(\'escrow_ref\',event)" title="Click to edit" style="cursor:pointer;border-bottom:1px dashed rgba(255,255,255,.18);min-width:0;overflow-wrap:anywhere;">'+_escVal+'</span>'
     + '<span onclick="lpSnapEdit(\'escrow_ref\',event)" title="Edit escrow number" style="flex-shrink:0;cursor:pointer;color:rgba(255,255,255,.55);font-size:13px;">✎</span>'
+    + '</div>'
     /* SEARCH MAIL FOR THIS NUMBER — the manual trigger for the escrow
        suggester, which otherwise only ever runs when somebody happens to open
        a thread. Shown only when there IS a reference to search for; an escrow
        cell reading "—" has nothing to offer. */
     + (_lpEscrowRef
         ? '<button type="button" id="lpEscrowFindBtn" onclick="lpEscrowFindMail()" title="Search the mailbox for this escrow number and file what it finds"'
-          + ' style="flex-shrink:0;background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;'
-          + 'font-size:10px;font-weight:700;padding:2px 8px;cursor:pointer;font-family:inherit;">🔎 Find mail</button>'
+          + ' style="margin-top:6px;background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;'
+          + 'font-size:10.5px;font-weight:700;padding:4px 10px;cursor:pointer;font-family:inherit;">🔎 Find mail</button>'
         : '')
-    + '</div><div id="lpEscrowFindBox" style="margin-top:6px;"></div></div>';
+    + '</div>';
+
+  /* RESULTS BREAK OUT OF THE CELL. #lpEscrowFindBox used to live inside the
+     escrow cell, i.e. inside a 150px grid column, so every thread row had to
+     render subject, sender, date and a File-here button in that width. It is now
+     its own grid item spanning every column, which is the only way the rows get
+     the room the task actually needs. Empty and zero-height until a search runs,
+     so it costs nothing in the normal layout. */
+  const escrowFindRow = '<div id="lpEscrowFindBox" style="grid-column:1 / -1;"></div>';
 
   el.innerHTML = cell('Borrower',lpEsc(name))
     + propCell
@@ -10987,7 +11004,8 @@ async function lpRenderSnapshot(cid){
     + ecell('Lock Expires','rate_lock_expiry',dd(app.rate_lock_expiry)+lockChip)
     + ecell('Pipeline','pipeline_status',lpEsc(c.pipeline_status||'—'))
     + ecell('Credit Pulled','credit_report_pulled_date',dd(app.credit_report_pulled_date))
-    + ecell('Pre-Approval Exp','preapproval_expiry',dd(app.preapproval_expiry));
+    + ecell('Pre-Approval Exp','preapproval_expiry',dd(app.preapproval_expiry))
+    + escrowFindRow;
 }
 /* ⚠️ ROLE labels, for the ASSIGNED-TO picker only.
    processing_items.assigned_to is still a role string (a known instance of the
@@ -15502,9 +15520,17 @@ function _esignRemoveSigner(idx){ _esignSigners.splice(idx,1); _esignRenderSigne
 
 function _esignRenderSigners(){
   var list=document.getElementById('esignSignersList');
+  /* Count in the heading, so "how many signers" is answerable without reading
+     two lists and working out which is which. */
+  var cnt=document.getElementById('esignSignerCount');
+  if(cnt){
+    cnt.textContent='('+_esignSigners.length+')';
+    cnt.style.color=_esignSigners.length?'#27AE60':'#C9A84C';
+  }
   if(list){
     if(!_esignSigners.length){
-      list.innerHTML='<div style="color:#666;font-size:11px;padding:6px 2px;">No signers added yet.</div>';
+      list.innerHTML='<div style="color:#C9A84C;font-size:12px;padding:7px 9px;border:1px dashed rgba(201,168,76,0.35);border-radius:6px;background:rgba(201,168,76,0.05);">'
+        +'No signers added yet — pick one from <strong>Suggested</strong> below, or add someone manually.</div>';
     } else {
       list.innerHTML=_esignSigners.map(function(s,i){
         return '<div data-email="'+lpEsc((s.email||'').toLowerCase())+'" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;background:#1A1A1D;border:1px solid rgba(201,168,76,0.12);border-radius:6px;margin-bottom:5px;">'
@@ -15561,7 +15587,20 @@ function _esignUpdateSendState(){
     var msg=blocked || (hasPdf ? 'Use a PDF’s “Send” button to send it for signature. The button below sends the template document.' : '');
     note.textContent=msg;
     note.style.display=msg?'block':'none';
-    note.style.color=blocked?'#C9A84C':'#888';
+    /* Blocked keeps the gold bordered treatment set in the markup; the PDF hint
+       is advisory, so it drops back to a quiet grey with no border rather than
+       shouting in the same style as a refusal. */
+    if(blocked){
+      note.style.color='#C9A84C';
+      note.style.borderColor='rgba(201,168,76,0.35)';
+      note.style.background='rgba(201,168,76,0.07)';
+      note.style.fontSize='13px';
+    } else {
+      note.style.color='#8f8f8f';
+      note.style.borderColor='transparent';
+      note.style.background='transparent';
+      note.style.fontSize='11.5px';
+    }
   }
 }
 
@@ -16850,10 +16889,15 @@ async function openEsignSendModal(){
     +'</div>'
     // Merge fields + loan number + templates + lender clauses (populated by _mfInitBlock)
     +'<div id="mfBlock" style="margin-bottom:16px;"></div>'
-    // Signers
-    +'<div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Signers</div>'
-    // Suggestions
-    +'<div style="font-size:11px;color:#888;margin-bottom:4px;">Suggested from this loan</div>'
+    /* SIGNERS heading carries a COUNT. The whole confusion was that a list of
+       suggestions showing the borrower's name reads as "the signer is chosen".
+       A heading that says "Signers (0)" cannot be misread that way, and it is the
+       same number the Send gate is refusing on. #esignSignerCount is updated by
+       _esignRenderSigners. */
+    +'<div style="font-size:11px;color:#8a8a8a;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;font-weight:700;">'
+      +'Signers <span id="esignSignerCount" style="color:#C9A84C;">(0)</span></div>'
+    // Suggestions — explicitly labelled as NOT added
+    +'<div style="font-size:11px;color:#888;margin-bottom:4px;">Suggested from this loan — <span style="color:#C9A84C;">click + Add to include someone</span></div>'
     +'<div id="esignSuggestions" style="margin-bottom:12px;"><div style="color:#666;font-size:11px;padding:4px 2px;">Loading suggestions…</div></div>'
     // Manual add
     +'<div style="font-size:11px;color:#888;margin-bottom:4px;">Add someone else</div>'
@@ -16879,7 +16923,11 @@ async function openEsignSendModal(){
       +'Require signing in order (one at a time)'
     +'</label>'
     // Footer
-    +'<div id="esignSendNote" style="display:none;font-size:11px;color:#888;margin-bottom:8px;"></div>'
+    /* 13px, bordered, gold — not an 11px grey hint. This sentence is the only
+       thing between Rene and a send, and at 11px next to a greyed button it lost
+       to a suggestion list that looked like a selection: reported as a dead
+       button three times. Size is the fix, not more words. */
+    +'<div id="esignSendNote" style="display:none;font-size:13px;line-height:1.45;color:#C9A84C;margin-bottom:10px;padding:8px 10px;border:1px solid rgba(201,168,76,0.35);border-radius:7px;background:rgba(201,168,76,0.07);"></div>'
     +'<div style="display:flex;gap:8px;">'
       +'<button type="button" onclick="_esignCloseModal()" style="flex:1;height:36px;border-radius:7px;border:1px solid rgba(201,168,76,0.15);background:transparent;color:#888;font-size:13px;cursor:pointer;">Cancel</button>'
       +'<button type="button" id="esignSubmitBtn" disabled onclick="_esignSubmit()" style="flex:1;height:36px;border-radius:7px;border:none;background:linear-gradient(135deg,#7A5020,#C9A84C);color:#1A0E00;font-size:13px;font-weight:700;cursor:not-allowed;opacity:0.45;">Send for signature</button>'
@@ -18338,20 +18386,47 @@ function _lpEscRenderFind(ref, hits, cid){
     _lpEscFindMsg(errHtml + '<div style="font-size:10.5px;color:#888;">No mail mentions '+lpEsc(ref)+'.</div>');
     return;
   }
+  /* `from` IS AN OBJECT. gmail-inbox list_threads returns
+     from: { email, name } — so `lpEsc(t.from||'')` stringified it to
+     "[object Object]", which the old ellipsis then cut to "[object Obj…".
+     Read the parts. Verified against the function's own return shape, not
+     guessed: index.ts list_threads builds
+       { id, subject, from:{email,name}, date, unread, message_count }
+     and the error path returns from: null, hence the null-safety here. */
+  var fmtFrom=function(f){
+    if(!f) return '';
+    if(typeof f==='string') return f;
+    var nm=(f.name||'').trim(), em=(f.email||'').trim();
+    if(nm && em) return nm+' <'+em+'>';
+    return nm || em || '';
+  };
+  /* date is an ISO string; String(t.date) printed the whole
+     "2026-08-11T22:41:37.068Z" into a 9.5px line. */
+  var fmtWhen=function(d){
+    if(!d) return '';
+    var dt=new Date(d);
+    if(isNaN(dt)) return String(d);
+    return dt.toLocaleDateString('en-US',{ timeZone:'America/Los_Angeles', month:'short', day:'numeric', year:'numeric' })
+         + ' ' + dt.toLocaleTimeString('en-US',{ timeZone:'America/Los_Angeles', hour:'numeric', minute:'2-digit' });
+  };
   var rows=hits.map(function(t){
     var subj=lpEsc(t.subject||'(no subject)');
-    var from=lpEsc(t.from||'');
-    var when=t.date?lpEsc(String(t.date)):'';
-    return '<div style="display:flex;align-items:center;gap:7px;padding:5px 7px;border:1px solid rgba(255,255,255,.08);'
-      + 'background:rgba(255,255,255,.02);border-radius:7px;margin-bottom:4px;">'
+    var from=lpEsc(fmtFrom(t.from));
+    var when=lpEsc(fmtWhen(t.date));
+    /* Subject WRAPS now (up to two lines) instead of being ellipsised. The point
+       of this panel is deciding whether a thread belongs to this lead, and the
+       distinguishing part of an escrow subject is usually at the end. */
+    return '<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border:1px solid rgba(255,255,255,.08);'
+      + 'background:rgba(255,255,255,.02);border-radius:7px;margin-bottom:6px;">'
       + '<span style="flex:1;min-width:0;">'
-      +   '<span style="display:block;font-size:11.5px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+subj+'</span>'
-      +   '<span style="display:block;font-size:9.5px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+      +   '<span style="display:block;font-size:12.5px;color:#e6e6e6;line-height:1.35;overflow-wrap:anywhere;'
+      +     'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">'+subj+'</span>'
+      +   '<span style="display:block;font-size:10.5px;color:#8f8f8f;margin-top:3px;overflow-wrap:anywhere;">'
       +     from + (when?(' · '+when):'') + ' · ' + lpEsc(t.__mailbox||'') + '</span>'
       + '</span>'
       + '<button type="button" class="lpEscFileBtn" data-tid="'+lpEsc(t.id)+'" data-mb="'+lpEsc(t.__mailbox||'')+'"'
-      +   ' style="flex-shrink:0;background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;'
-      +   'border-radius:6px;font-size:10px;font-weight:700;padding:3px 9px;cursor:pointer;font-family:inherit;">File here</button>'
+      +   ' style="flex-shrink:0;align-self:center;background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;'
+      +   'border-radius:6px;font-size:11px;font-weight:700;padding:5px 12px;cursor:pointer;font-family:inherit;">File here</button>'
       + '</div>';
   }).join('');
   /* OFFERS, never files. Same contract as the suggester: matching proposes, a

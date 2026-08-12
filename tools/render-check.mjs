@@ -893,8 +893,15 @@ const SPECS = [
         + ' window.GmailInbox = window.GmailInbox || {};'
         + ' window.GmailInbox.call = function(cl, mb, action, params){ window.__gm.push({ mb:mb, action:action, params:params });'
         + '   if(action==="list_threads") return Promise.resolve({ threads:['
-        + '     { id:"t1", subject:"Closing statement", from:"escrow@title.test", date:"Aug 6" },'
-        + '     { id:"t2", subject:"Wire instructions",  from:"escrow@title.test", date:"Aug 7" } ] });'
+        /* THE REAL SHAPE. This stub returned from:"escrow@title.test" — a STRING —
+           and gmail-inbox actually returns from:{ email, name } and an ISO date.
+           So the panel rendered "[object Object]" in production for months while
+           this spec stayed green: a stub that under-delivers reads as a working
+           page, and here it under-delivered by being SIMPLER than reality, which
+           is the harder version to notice. Shapes copied from
+           supabase/functions/gmail-inbox/index.ts list_threads. */
+        + '     { id:"t1", subject:"Closing statement", from:{email:"escrow@title.test",name:"Title Escrow"}, date:"2026-08-06T17:04:00.000Z" },'
+        + '     { id:"t2", subject:"Wire instructions",  from:{email:"escrow@title.test",name:null},          date:"2026-08-07T18:22:00.000Z" } ] });'
         + '   return Promise.resolve({ ok:true }); };'
         + ' return "installed"; })()', 'installed'],
 
@@ -915,6 +922,14 @@ const SPECS = [
 
       // Results are offered…
       ['document.querySelectorAll("#lpEscrowFindBox .lpEscFileBtn").length', 2],
+      /* THE BUG THIS SPEC MISSED. Assert on rendered TEXT, not just element
+         counts: "[object Object]" satisfies every count and selector assertion
+         above it. Both the object form and the null-name form must render as a
+         person, and the ISO date must not reach the screen raw. */
+      ['document.getElementById("lpEscrowFindBox").textContent.indexOf("[object") >= 0', false],
+      ['document.getElementById("lpEscrowFindBox").textContent.indexOf("Title Escrow <escrow@title.test>") >= 0', true],
+      ['document.getElementById("lpEscrowFindBox").textContent.indexOf("2026-08-06T17:04") >= 0', false],
+      ['document.getElementById("lpEscrowFindBox").textContent.indexOf("Aug 6, 2026") >= 0', true],
       // …and NOTHING was filed by rendering them.
       ['window.__gm.filter(function(c){return c.action==="tag";}).length', 0],
 
