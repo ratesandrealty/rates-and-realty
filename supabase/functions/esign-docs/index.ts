@@ -608,7 +608,10 @@ async function download(req: Request, body: any) {
   const rule = () => { ensure(8); page.drawLine({ start: { x: M, y: y - 2 }, end: { x: PW - M, y: y - 2 }, thickness: 0.5, color: rgb(0.82, 0.82, 0.82) }); y -= 8; };
 
   text(env.document_title || 'Document', { font: bold, size: 16 });
-  gap(4); text('Holder: RFD Group / Rates & Realty', { size: 9, color: GRAY }); gap(8); rule(); gap(4);
+  /* The "Holder: RFD Group / Rates & Realty" subtitle was removed 2026-08-12 at
+     Rene's request. sign.html already suppressed its own copy (see the note at
+     the holder subtitle there); the PDF was the remaining place it appeared. */
+  gap(4); rule(); gap(4);
   let proseHtml = '';
   if (tpl && tpl.body_html) {
     const lender = env.merge_data?.lender ?? tpl.defaults?.lender ?? '';
@@ -649,7 +652,12 @@ async function download(req: Request, body: any) {
   text('Envelope Id: ' + env.id, { size: 9, color: GRAY });
   text('Subject: ' + (env.document_title || ''), { size: 9, color: GRAY });
   text('Status: ' + String(env.status || '').toUpperCase(), { size: 9, color: GOLD });
-  text('Holder: RFD Group / Rates & Realty  \u00b7  ' + OWNER_EMAIL, { size: 9, color: GRAY });
+  /* Holder branding removed here too, but the OWNER EMAIL IS KEPT and relabelled
+     rather than deleted with it. This is the Certificate of Completion \u2014 the
+     audit record a signed document is evidenced by \u2014 and "who sent this envelope"
+     is part of that evidence, not branding. Dropping the address to remove a
+     brand name would quietly weaken the certificate. */
+  text('Sent by: ' + OWNER_EMAIL, { size: 9, color: GRAY });
   gap(8); rule(); gap(2);
   text('Record Tracking', { font: bold, size: 11 }); gap(4);
   text('Created: ' + fmtTs(env.created_at), { size: 9 });

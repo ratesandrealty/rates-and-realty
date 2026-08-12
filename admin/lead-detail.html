@@ -12403,7 +12403,10 @@ function _lpActState(status, direction){
 function _lpActChip(key){
   const d = LP_ACT_STATE[key] || LP_ACT_STATE.sent;
   const failed = (key === 'failed');
-  return '<span style="flex-shrink:0;display:inline-flex;align-items:center;gap:4px;'
+  /* The class carries no styling — every rule here is inline. It exists so a
+     chip can be FOUND and swapped in place after a state change without
+     re-rendering the panel around it (lpHoiRepaintChip). Purely a handle. */
+  return '<span class="lp-act-chip" style="flex-shrink:0;display:inline-flex;align-items:center;gap:4px;'
     + 'padding:1px 7px;border-radius:999px;font-size:9.5px;font-weight:800;letter-spacing:.02em;'
     + 'text-transform:uppercase;background:' + d.chipBg + ';color:' + d.chipFg + ';'
     + (failed ? 'box-shadow:0 0 0 1px rgba(229,72,77,.55);' : '')
@@ -12649,11 +12652,42 @@ async function lpHoiLoadList(){
     lpHoiRenderList(_lpHoiList);
   }catch(e){ console.warn('[hoi_quote_list]', e&&e.message); }
 }
+/* ── HOI QUOTE REQUESTS — GRID + COLLAPSE, the treatment VOE got ─────────────
+ *
+ * Same problem and the same fix. Every request rendered as a full-width strip
+ * carrying its select, its amount box and its Select button, so five insurance
+ * quotes were a wall of controls you had to read end-to-end to answer "which of
+ * these came back". Now:
+ *   · a HEADER that answers that WITHOUT being opened — company, state chip,
+ *     quote amount and the winner mark
+ *   · a COLLAPSIBLE body holding the controls and the agent detail
+ *   · a GRID, so several sit side by side instead of stacking
+ *
+ * Open state lives in _lpHoiOpen and survives re-render, because lpHoiLoadList
+ * re-runs after a select and a card that slammed shut mid-edit would be worse
+ * than the wall. Keyed by request id, exactly as VOE keys by card key.
+ */
+let _lpHoiOpen = {};          // quote id → true when the body is expanded
+
+function lpHoiToggle(id){
+  _lpHoiOpen[id] = !_lpHoiOpen[id];
+  const body=document.getElementById('lpHoiBody-'+id);
+  const car =document.getElementById('lpHoiCaret-'+id);
+  if(body) body.style.display = _lpHoiOpen[id] ? 'block' : 'none';
+  if(car)  car.textContent = _lpHoiOpen[id] ? '▾' : '▸';
+}
+
 function lpHoiRenderList(rows){
   const box=document.getElementById('lpHoiQuotes'); if(!box) return;
   if(!rows||!rows.length){ box.innerHTML=''; return; }
   const ctl='background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:#ddd;font-size:11px;padding:3px 6px;';
-  box.innerHTML='<div style="font-size:10px;font-weight:700;color:#8f8f8f;text-transform:uppercase;letter-spacing:.5px;margin:2px 0 5px;">Quote requests ('+rows.length+')</div>'+rows.map(function(r){
+  /* Default open only for a single request, closed when there are several —
+     one quote is the common case and nothing changes for it. Recomputed each
+     render for cards nobody has touched; an explicit choice is kept. */
+  const many = rows.length > 1;
+  rows.forEach(function(r){ if(!(r.id in _lpHoiOpen)) _lpHoiOpen[r.id] = !many; });
+
+  const cards=rows.map(function(r){
     const seld=!!r.is_selected;
     const when=r.sent_at?_lpDD(r.sent_at):(r.created_at?_lpDD(r.created_at):'');
     const stOpts=LP_HOI_STATUS.map(s=>'<option value="'+s.v+'"'+(((r.status||'sent')===s.v)?' selected':'')+'>'+s.t+'</option>').join('');
@@ -12667,23 +12701,84 @@ function lpHoiRenderList(rows){
        outer border and is not folded into the state colours. */
     const key=_lpActState(r.status, 'outbound');
     const failed=(key==='failed');
-    return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 8px;border:1px solid '+(seld?'rgba(80,200,120,.5)':(failed?'rgba(229,72,77,.45)':'rgba(255,255,255,.08)'))+';'+_lpActRowCss(key)+'border-radius:8px;margin-bottom:4px;">'
-      +'<div style="flex:1;min-width:150px;"><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;"><span style="font-size:12px;font-weight:600;color:'+(failed?'#FFD9D9':'#e2e2e2')+';">'+lpEsc(r.company_name||r.agent_name||'(company)')+'</span>'+_lpActChip(key)+(seld?'<span style="color:#50c878;font-size:10px;font-weight:700;">✓ Selected</span>':'')+'</div><div style="font-size:10px;color:#888;">'+lpEsc([r.agent_name,r.agent_email].filter(Boolean).join(' · '))+(when?(' · '+when):'')+'</div>'
-      /* The reason, when the row carries one. "Never delivered" tells you to
-         act; send_error tells you what to fix — a bad address reads very
-         differently from the mail service being down. */
-      +(failed?('<div style="color:#FF8A8A;font-size:9.5px;font-weight:700;margin-top:2px;">This request was never delivered — resend it.'
-        +(r.send_error?('<span style="display:block;font-weight:500;color:#E5A0A0;margin-top:1px;">'+lpEsc(String(r.send_error).slice(0,160))+'</span>'):'')
-        +'</div>'):'')+'</div>'
-      +'<select onchange="lpHoiStatusChange(\''+r.id+'\',this.value)" style="'+ctl+'">'+stOpts+'</select>'
-      +'<input placeholder="$ quote" value="'+lpEsc(amt)+'" onchange="lpHoiQuoteAmount(\''+r.id+'\',this.value)" style="'+ctl+'width:88px;">'
-      +(seld?'<span style="font-size:11px;color:#50c878;font-weight:700;">Winner</span>':'<button onclick="lpHoiSelect(\''+r.id+'\')" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;">Select ✓</button>')
+    const open=!!_lpHoiOpen[r.id];
+    return '<div data-hoi-id="'+lpEsc(r.id)+'" style="position:relative;border:1px solid '+(seld?'rgba(80,200,120,.5)':(failed?'rgba(229,72,77,.45)':'rgba(255,255,255,.08)'))+';'+_lpActRowCss(key)+'border-radius:8px;padding:8px;">'
+      /* The whole header is the toggle — a caret alone is a small target in a
+         dense panel, and there is nothing else in the strip to click. */
+      +'<div onclick="lpHoiToggle(\''+r.id+'\')" style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;min-width:0;">'
+        +'<span id="lpHoiCaret-'+r.id+'" style="flex-shrink:0;color:#8f8f8f;font-size:11px;width:10px;">'+(open?'▾':'▸')+'</span>'
+        +'<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;">'
+          +'<span style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;">'
+            +'<span style="font-size:12px;font-weight:600;color:'+(failed?'#FFD9D9':'#e2e2e2')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(r.company_name||r.agent_name||'(company)')+'</span>'
+            +_lpActChip(key)
+            +(seld?'<span style="color:#50c878;font-size:10px;font-weight:700;flex-shrink:0;">✓ Selected</span>':'')
+          +'</span>'
+          /* THE AMOUNT IS IN THE HEADER. Comparing quotes is the whole reason
+             this list exists, and it was the one number you had to open a row
+             to see. An outstanding request says so rather than showing nothing,
+             which reads identically to a quote of zero. */
+          +'<span style="font-size:10px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+            +(amt?('<strong style="color:#C9A84C;font-size:11.5px;">'+lpEsc(amt)+'</strong>'):'<span style="color:#777;">no quote yet</span>')
+            +(when?(' &nbsp;·&nbsp; '+lpEsc(when)):'')
+          +'</span>'
+        +'</span>'
+      +'</div>'
+      +'<div id="lpHoiBody-'+r.id+'" style="display:'+(open?'block':'none')+';margin-top:7px;padding-top:7px;border-top:1px solid rgba(255,255,255,.06);">'
+        +'<div style="font-size:10px;color:#888;margin-bottom:6px;overflow-wrap:anywhere;">'+lpEsc([r.agent_name,r.agent_email].filter(Boolean).join(' · '))+'</div>'
+        /* The reason, when the row carries one. "Never delivered" tells you to
+           act; send_error tells you what to fix — a bad address reads very
+           differently from the mail service being down. */
+        +(failed?('<div style="color:#FF8A8A;font-size:9.5px;font-weight:700;margin-bottom:6px;">This request was never delivered — resend it.'
+          +(r.send_error?('<span style="display:block;font-weight:500;color:#E5A0A0;margin-top:1px;">'+lpEsc(String(r.send_error).slice(0,160))+'</span>'):'')
+          +'</div>'):'')
+        +'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">'
+          +'<select onchange="lpHoiStatusChange(\''+r.id+'\',this.value)" style="'+ctl+'">'+stOpts+'</select>'
+          +'<input placeholder="$ quote" value="'+lpEsc(amt)+'" onchange="lpHoiQuoteAmount(\''+r.id+'\',this.value)" style="'+ctl+'width:88px;">'
+          +(seld?'<span style="font-size:11px;color:#50c878;font-weight:700;">Winner</span>':'<button onclick="lpHoiSelect(\''+r.id+'\')" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;">Select ✓</button>')
+        +'</div>'
+      +'</div>'
       +'</div>';
   }).join('');
+
+  /* The heading stays OUTSIDE the grid — dropping it in would make it a cell and
+     stand it beside the first card instead of above them all. Same reason
+     lpVoeCards holds only cards. */
+  box.innerHTML='<div style="font-size:10px;font-weight:700;color:#8f8f8f;text-transform:uppercase;letter-spacing:.5px;margin:2px 0 5px;">Quote requests ('+rows.length+')</div>'
+    /* auto-fill + minmax, matching VOE: two or three across a wide processing
+       pane, one on a narrow one, with no breakpoint to keep in step. */
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:8px;align-items:start;">'+cards+'</div>';
 }
 async function lpHoiStatusChange(id, status){
-  try{ const r=await _authClient().from('hoi_quote_requests').update({ status:status, updated_at:new Date().toISOString() }).eq('id',id); if(r.error) throw r.error; const row=(_lpHoiList||[]).find(function(x){return String(x.id)===String(id);}); if(row) row.status=status; }
+  try{ const r=await _authClient().from('hoi_quote_requests').update({ status:status, updated_at:new Date().toISOString() }).eq('id',id); if(r.error) throw r.error; const row=(_lpHoiList||[]).find(function(x){return String(x.id)===String(id);}); if(row) row.status=status;
+    /* REPAINT THE CHIP. This used to update the in-memory row and stop, which
+       was harmless while the state was only shown by the <select> the user had
+       just set. The chip now sits in the card HEADER and is what the panel is
+       read by when the body is closed — leaving it stale would mean a collapsed
+       card reporting the state it had before you changed it.
+       Patched in place rather than re-rendering the list: a re-render would
+       rebuild the amount input and drop anything half-typed in a sibling card. */
+    lpHoiRepaintChip(id, status);
+  }
   catch(e){ _lpHoiToast('Status save failed: '+((e&&e.message)||e), true); }
+}
+/* Swap one card's chip and row tint for the new state. Silent if the card is
+   not on screen — the list may have been re-rendered or the tab switched. */
+function lpHoiRepaintChip(id, status){
+  const card=document.querySelector('[data-hoi-id="'+id+'"]'); if(!card) return;
+  const key=_lpActState(status, 'outbound');
+  const old=card.querySelector('.lp-act-chip');
+  if(old){
+    const tmp=document.createElement('span');
+    tmp.innerHTML=_lpActChip(key);
+    const next=tmp.firstElementChild;
+    if(next) old.replaceWith(next);
+  }
+  /* _lpActRowCss returns "prop:val;prop:val;" — apply it over the card's own
+     border/radius rather than replacing cssText, which would drop them. */
+  String(_lpActRowCss(key)||'').split(';').forEach(function(d){
+    const i=d.indexOf(':'); if(i<1) return;
+    try{ card.style.setProperty(d.slice(0,i).trim(), d.slice(i+1).trim()); }catch(_){}
+  });
 }
 async function lpHoiQuoteAmount(id, valStr){
   const num=parseFloat(String(valStr||'').replace(/[^0-9.]/g,''));
