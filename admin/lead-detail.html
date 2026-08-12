@@ -18559,6 +18559,16 @@ function buildFeeSheetUrl() {
   if (d.purchase_price) params.push('purchase_price=' + d.purchase_price);
   if (d.loan_amount) params.push('loan_amount=' + d.loan_amount);
   if (d.loan_type) params.push('loan_type=' + encodeURIComponent(d.loan_type));
+  /* down_pct is the number that actually carries the CRM's intent.
+     The fee sheet DERIVES loan amount as purchasePrice − (purchasePrice × downPct),
+     and never reads #loanAmount back. So sending loan_amount alone wrote a value
+     into a field that recalc() overwrote in the same tick — the illusion of
+     integration. loan_amount is still sent (it seeds the display before the first
+     recalc and other callers may read it), but down_pct is what governs. */
+  if (d.purchase_price && d.loan_amount && d.purchase_price > 0 && d.loan_amount <= d.purchase_price) {
+    var dp = (1 - (d.loan_amount / d.purchase_price)) * 100;
+    params.push('down_pct=' + (Math.round(dp * 100) / 100));
+  }
   return '/tools/fee-sheet.html' + (params.length ? '?' + params.join('&') : '');
 }
 

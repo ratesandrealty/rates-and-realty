@@ -468,7 +468,7 @@
         /* PRINT */
         @media print {
             body { background: #fff; }
-            .sidebar, .toast { display: none !important; }
+            .sidebar, .toast, .no-print { display: none !important; }
             .main { padding: 0; }
             .sheet {
                 box-shadow: none;
@@ -609,6 +609,9 @@
     <h2>Fee Sheet Generator</h2>
 
     <h3>Loan Info</h3>
+    <!-- Shown only in comparison modes, where the per-column values govern and
+         these fields are never read. See fsApplyColumnGovernance(). -->
+    <div id="fsColumnGovernNote" style="display:none;margin:0 0 10px;padding:8px 10px;border:1px solid #8a6d1f;background:rgba(201,168,76,0.10);border-radius:6px;font-size:11px;line-height:1.45;color:#d8c17a;"></div>
     <div class="field"><label>Borrower Name</label><input type="text" id="borrowerName" placeholder="John Doe"></div>
     <div class="field"><label>Property Address</label><input type="text" id="propertyAddress" placeholder="123 Main St, City, CA"></div>
     <div id="purchaseRefiFields">
@@ -761,6 +764,12 @@
 
 <!-- SHEET -->
 <div class="main">
+    <!-- STAFF-ONLY, NEVER PRINTED. This warns that the sheet is priced as a
+         different loan product than the panel claims. It sits above the sheet so
+         it cannot be missed while reading the output, and carries .no-print
+         because the sheet itself is what gets PDF'd and sent to the borrower —
+         an internal "these disagree" note must not travel with it. -->
+    <div class="no-print" id="fsSheetMismatch" style="display:none;margin:0 0 12px;"></div>
     <div class="sheet" id="sheet"></div>
     <div id="helocSheet" style="display:none;"></div>
 </div>
@@ -1206,9 +1215,86 @@ function setMode(newMode) {
     if (helocPanel) helocPanel.style.display = isHeloc ? '' : 'none';
     if (sheet) sheet.style.display = isHeloc ? 'none' : '';
     if (helocSheet) helocSheet.style.display = isHeloc ? '' : 'none';
+    fsApplyColumnGovernance();
     renderCards();
     recalc();
     notifyParentOfChange();
+}
+
+/* In 'price' and 'property' mode, readSidebarInputs() is called once PER COLUMN
+ * with overrides for purchasePrice, downPct and loanProduct — so these sidebar
+ * fields are not overridden, they are never read at all.
+ *
+ * They used to keep displaying their old values next to output computed from
+ * something else. On Daniel Garcia's sheet that read "5% / $35,000 / $665,000 /
+ * Conv 30yr Fixed" while every rendered column was 3.5% FHA — and $665,000
+ * appeared nowhere in the output because nothing consumes it. A panel that
+ * displays numbers which do not govern is worse than one that shows nothing.
+ *
+ * Note this disables rather than hides: the values are still legible (they are
+ * what rate/single mode will use when you switch back), just visibly inert. */
+function fsApplyColumnGovernance() {
+    var isCol = (_currentMode === 'price' || _currentMode === 'property');
+    var ids = ['purchasePrice', 'downPct', 'downDollar', 'loanAmount', 'loanProduct'];
+    ids.forEach(function (id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        // #loanAmount is readonly in every mode — it is derived output, never an input.
+        if (id !== 'loanAmount') el.disabled = isCol;
+        el.style.opacity = isCol ? '0.45' : (id === 'loanAmount' ? '0.7' : '');
+        el.style.cursor = isCol ? 'not-allowed' : '';
+    });
+    var note = document.getElementById('fsColumnGovernNote');
+    if (!note) return;
+    if (!isCol) { note.style.display = 'none'; note.innerHTML = ''; return; }
+    var what = (_currentMode === 'price') ? 'price' : 'property';
+    note.innerHTML =
+        '<strong>The columns govern in ' + what + ' comparison.</strong> Purchase price, down payment, ' +
+        'loan amount and loan product come from each column below — the greyed fields here are not used ' +
+        'in this mode. Switch to Rate Comparison or Single Rate to edit them.' +
+        fsProductMismatchHtml();
+    note.style.display = '';
+}
+
+/* Maps both naming schemes onto one family. The sidebar holds display labels
+ * ("Conv 30yr Fixed", "FHA VOE"); the columns hold codes ("conv30", "fha30"). */
+function fsProductFamily(v) {
+    var s = String(v || '').toLowerCase();
+    if (!s) return null;
+    if (s.indexOf('fha') === 0 || s.indexOf('fha') > -1) return 'FHA';
+    if (s.indexOf('usda') > -1) return 'USDA';
+    if (s.indexOf('va') === 0 || s.indexOf('va ') > -1) return 'VA';
+    if (s.indexOf('conv') > -1) return 'Conventional';
+    if (s.indexOf('jumbo') > -1) return 'Jumbo';
+    if (s.indexOf('dscr') > -1) return 'DSCR';
+    return null;
+}
+
+/* THE URGENT HALF. A down-payment discrepancy is a wrong number; quoting FHA on
+ * a conventional file is a wrong PRODUCT — UFMIP financed into the loan, FHA
+ * monthly MI, a different APR and different cash to close. Measured across the
+ * saved drafts: 2 of the 3 with price columns disagreed with their own panel,
+ * and one of those disagreed in the opposite direction. Neither announced it. */
+function fsProductMismatchHtml() {
+    var sel = document.getElementById('loanProduct');
+    var panelFam = fsProductFamily(sel && sel.value);
+    var cols = (_currentMode === 'price') ? (priceScenarios || [])
+             : (_currentMode === 'property') ? (propertyScenarios || []) : [];
+    var colFams = [];
+    cols.forEach(function (c) {
+        var f = fsProductFamily(c && c.loanProduct);
+        if (f && colFams.indexOf(f) === -1) colFams.push(f);
+    });
+    if (!panelFam || !colFams.length) return '';
+    var differs = colFams.filter(function (f) { return f !== panelFam; });
+    if (!differs.length) return '';
+    return '<div style="margin-top:8px;padding:7px 9px;border-radius:5px;background:rgba(231,76,60,0.14);' +
+           'border:1px solid #a33;color:#f0a9a2;">' +
+           '⚠️ <strong>Loan product mismatch.</strong> This panel says <strong>' + panelFam +
+           '</strong>; the columns quote <strong>' + colFams.join(' / ') + '</strong>. ' +
+           'The sheet is priced as ' + colFams.join(' / ') + ' — including any upfront and monthly ' +
+           'mortgage insurance that product carries. Fix the column products, or the panel, before sending.' +
+           '</div>';
 }
 
 // TODO(post-3c): copyToClipboard() and PDF/print currently format from rate-mode scenarios array.
@@ -1823,6 +1909,19 @@ function render(inp, results) {
     `;
 
     $('sheet').innerHTML = html;
+
+    /* Refresh the governance panel and the staff-only mismatch banner on EVERY
+       render, not just on mode change — the column products are edited inline,
+       so a mismatch can appear without setMode() ever running again. */
+    try {
+        fsApplyColumnGovernance();
+        var banner = document.getElementById('fsSheetMismatch');
+        if (banner) {
+            var warn = fsProductMismatchHtml();
+            banner.innerHTML = warn;
+            banner.style.display = warn ? '' : 'none';
+        }
+    } catch (e) { /* never let the warning break the sheet */ }
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -2917,9 +3016,22 @@ recalc();
     const lt = p.get('loan_type') || '';
     const term = p.get('term') || '';
 
+    const dpct = p.get('down_pct') || '';
+
     if (bn) $('borrowerName').value = decodeURIComponent(bn);
     if (pp) $('purchasePrice').value = '$' + Number(pp).toLocaleString('en-US');
     if (la) $('loanAmount').value = '$' + Number(la).toLocaleString('en-US');
+    /* down_pct is the only one of these that survives recalc(). #loanAmount is
+       derived output — the line above seeds the display and is overwritten by the
+       recalc() below, which is why the CRM's loan amount never used to reach the
+       sheet. Setting downPct (and the matching $ field) is what makes it land. */
+    if (dpct !== '' && isFinite(Number(dpct))) {
+        $('downPct').value = Math.round(Number(dpct) * 100) / 100;
+        if (pp) {
+            var _dAmt = Number(pp) * Number(dpct) / 100;
+            if (isFinite(_dAmt) && _dAmt > 0) $('downDollar').value = '$' + Math.round(_dAmt).toLocaleString('en-US');
+        }
+    }
     if (addr) $('propertyAddress').value = decodeURIComponent(addr);
     if (lt) {
         const sel = $('loanProduct');
