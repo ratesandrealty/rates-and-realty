@@ -206,8 +206,14 @@ function compCard(c, i){
   const sm=statusMeta(c.status);
   // Each comp shows its OWN rehosted photo (public cma-photos URL). The house-icon placeholder
   // is used only when a comp genuinely has no photo — or if the image fails to load (onerror).
+  /* onerror must capture the parent BEFORE removing itself. `this.remove()` then
+     `this.parentElement` reads null and the handler throws, so a comp whose photo
+     fails to decode took out the handler instead of falling back to the
+     placeholder — an uncaught TypeError on a borrower-facing page. Found on
+     pfspn8g, where one comp's rehosted "photo" is a PDF served as .jpg (see the
+     cma-photos note: the rehost trusts the source content-type). */
   const photo=c.photoUrl
-    ? '<div class="comp-photo"><img src="'+esc(c.photoUrl)+'" alt="" loading="lazy" onerror="this.remove();this.parentElement.classList.add(\'ph\');this.parentElement.textContent=\'🏠\'"></div>'
+    ? '<div class="comp-photo"><img src="'+esc(c.photoUrl)+'" alt="" loading="lazy" onerror="var p=this.parentElement;if(p){this.remove();p.classList.add(\'ph\');p.textContent=\'🏠\';}"></div>'
     : '<div class="comp-photo ph">🏠</div>';
   const meta=[
     (c.bedrooms!=null?esc(c.bedrooms)+' bd':null),

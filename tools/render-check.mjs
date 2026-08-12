@@ -269,8 +269,9 @@ const SPECS = [
        + 'var r=await cl.rpc("get_cma_snapshot",{p_slug:"uqa5u9q"});var d=(r.data&&r.data.data)||{};'
        + 'return JSON.stringify({status:r.data&&r.data.status,'
        + 'da_inputs:("da_inputs" in d),acquisition:("acquisition" in d),rental:("rental" in d),'
+       + 'mls:!!(d.comps||[]).some(function(c){return ("mlsNumber" in c)||("description" in c);}),'
        + 'comps:Array.isArray(d.comps)&&d.comps.length>0});})()',
-       '{"status":"ok","da_inputs":false,"acquisition":false,"rental":false,"comps":true}'],
+       '{"status":"ok","da_inputs":false,"acquisition":false,"rental":false,"mls":false,"comps":true}'],
       /* Rendered output unchanged: the value hero and the comps still draw. */
       ['document.body.textContent.replace(/\s+/g,"").length > 800', true],
       /* STRUCTURAL. document.body.textContent includes inline <script> source and
@@ -278,6 +279,45 @@ const SPECS = [
          so a text match always trips. renderNotFound wraps its output in .center —
          its absence is the real proof the report rendered. Third time this trap has
          caught an assertion in this file. */
+      ['!document.querySelector("#app .center")', true],
+    ],
+  },
+  {
+    /* THE OTHER HALF OF THE REDACTION, and the case the first spec cannot reach.
+       uqa5u9q has both include_ flags FALSE, so `acquisition` is dropped whole —
+       which means it proves nothing about what ships INSIDE a section that does
+       render. pfspn8g has both flags TRUE.
+
+       `acquisition.inputs` is the same investor-modelling set as the top-level
+       `da_inputs` — hold costs, hard-money rate and points, LTC, ARV, refinance
+       assumptions — nested one level down. Stripping da_inputs while an identical
+       copy shipped underneath is exactly the miss this asserts against.
+
+       PRESENT and ABSENT are paired on purpose: if the section never mounted, an
+       absent-only check would pass vacuously. */
+    name: 'public CMA link strips investor inputs inside a rendered section',
+    url: '/cma/pfspn8g',
+    anonymous: true,
+    present: ['#app'],
+    evals: [
+      ['(async function(){var cfg=window.APP_CONFIG||{};'
+       + 'var cl=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY);'
+       + 'var r=await cl.rpc("get_cma_snapshot",{p_slug:"pfspn8g"});var d=(r.data&&r.data.data)||{};'
+       + 'var a=d.acquisition||{},R=a.results||{};'
+       + 'return JSON.stringify({status:r.data&&r.data.status,'
+       // PRESENT: the section really is being delivered and rendered.
+       + 'acq:("acquisition" in d),rental:("rental" in d),'
+       + 'flipProfit:!!(R.flip&&R.flip.gross_profit!=null),capRate:!!(a.property&&a.property.cap_rate!=null),'
+       // ABSENT: everything the page never reads.
+       + 'inputs:("inputs" in a),da_inputs:("da_inputs" in d),'
+       + 'acqName:("borrower_name" in a),'
+       + 'flipExtras:!!(R.flip&&(("max_buy" in R.flip)||("total_project_cost" in R.flip)||("hm_loan" in R.flip))),'
+       + 'brrrrExtras:!!(R.brrrr&&(("new_loan" in R.brrrr)||("refi_pmt" in R.brrrr)))});})()',
+       '{"status":"ok","acq":true,"rental":true,"flipProfit":true,"capRate":true,'
+       + '"inputs":false,"da_inputs":false,"acqName":false,"flipExtras":false,"brrrrExtras":false}'],
+      /* The Investment Analysis section actually drew — .strat is emitted only by
+         renderAcquisition(), so this fails if the redaction gutted the section. */
+      ['document.querySelectorAll("#app .strat").length', 3],
       ['!document.querySelector("#app .center")', true],
     ],
   },

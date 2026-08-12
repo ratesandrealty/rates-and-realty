@@ -1,6 +1,6 @@
 -- create_fee_sheet_snapshot(p_contact_id uuid)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-12. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -13,7 +13,7 @@ CREATE OR REPLACE FUNCTION public.create_fee_sheet_snapshot(p_contact_id uuid)
 AS $function$
 declare
   v_role text; v_data jsonb; v_slug text; v_name text; v_url text; v_tries int := 0;
-  v_people jsonb;
+  v_people jsonb; v_expires timestamptz;
 begin
   v_role := coalesce(nullif(current_setting('request.jwt.claims', true),'')::jsonb->>'role','');
   if not (public.is_admin() or v_role='service_role'
@@ -28,8 +28,6 @@ begin
     into v_name from public.contacts where id = p_contact_id;
   v_name := coalesce(v_name, 'Borrower');
 
-  -- freeze the connected people (co-borrowers etc.) into the snapshot so the public
-  -- page can list them without a live DB lookup. Primary contact first, then relations.
   select jsonb_agg(x order by x.ord, x.name) into v_people
   from (
     select 0 as ord, v_name as name, 'Primary'::text as relationship
@@ -43,7 +41,6 @@ begin
   ) x
   where x.name is not null;
 
-  -- attach frozen people list into the snapshot data (non-destructive)
   v_data := jsonb_set(v_data, '{_people}', coalesce(v_people, '[]'::jsonb), true);
 
   loop
@@ -54,8 +51,14 @@ begin
     if v_tries > 12 then raise exception 'could not allocate slug'; end if;
   end loop;
 
-  insert into public.fee_sheet_snapshots(slug, contact_id, data, borrower_name, created_by)
-  values (v_slug, p_contact_id, v_data, v_name, auth.uid());
+  /* 90 DAYS. A fee sheet is a rate quote: long enough to cover a normal
+     purchase from pre-approval to closing without the borrower losing their
+     copy, short enough that a stale quote stops circulating on its own. Rene can
+     revoke earlier at any time; nothing renews it silently. */
+  v_expires := now() + interval '90 days';
+
+  insert into public.fee_sheet_snapshots(slug, contact_id, data, borrower_name, created_by, expires_at)
+  values (v_slug, p_contact_id, v_data, v_name, auth.uid(), v_expires);
 
   v_url := 'https://homes.ratesandrealty.com/fee/' || v_slug;
   insert into public.short_links(slug, destination_url, contact_id)
@@ -63,5 +66,6 @@ begin
   on conflict (slug) do nothing;
 
   return jsonb_build_object('slug', v_slug, 'url', v_url, 'borrower_name', v_name,
+                            'expires_at', v_expires,
                             'people', coalesce(v_people,'[]'::jsonb));
 end; $function$;
