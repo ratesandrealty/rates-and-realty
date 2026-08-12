@@ -169,14 +169,25 @@ Deno.serve(async (req: Request) => {
     }
 
     // ─── GET ALL SHOWINGS (CRM admin) ────────────────────────────────────
-    if (action === 'get_all_showings') {
-      const { data, error } = await sb.from('showings')
-        .select('*, contacts(id, first_name, last_name, email, phone, crm_id)')
-        .order('created_at', { ascending: false })
-        .limit(200);
-      if (error) return err(error.message, 500);
-      return ok({ showings: data || [], count: data?.length || 0 });
-    }
+    /* REMOVED 2026-08-12: action 'get_all_showings'.
+     *
+     * It took NO identity parameter of any kind — not a weak check, none — and
+     * returned up to 200 showings joined to contacts(first_name, last_name,
+     * email, phone, crm_id). On a verify_jwt=false function using the service
+     * role, that was a 200-contact PII dump available to anyone who could POST.
+     *
+     * It read like a leftover admin action on a public function. Confirmed to
+     * have no caller FOUR ways before removal, because "no caller found" has
+     * been wrong three times on this project:
+     *   - repo grep (html/js/ts/mjs/sql/json), excluding its own file
+     *   - all 11 n8n workflows read node-by-node: none calls portal-data at
+     *     all; n8n touches only gdrive-proxy, post-close-followups, refi-watch,
+     *     critical-date-reminders and email-service
+     *   - cron.job: 0 commands reference portal-data
+     *   - pg_proc: 0 database functions reference portal-data
+     *
+     * An unknown action now falls through to the 400 at the end of the handler,
+     * so a forgotten caller gets a clear error rather than silence. */
 
     // ─── GET APPLICATION ─────────────────────────────────────────────────
     if (action === 'get_application') {
@@ -210,24 +221,37 @@ Deno.serve(async (req: Request) => {
     // Bypasses the save_mortgage_application RPC (which doesn't cast text→date
     // properly) and does a direct upsert via the Supabase client.
     if (action === 'save_application') {
-      const { email, borrower_id, portal_user_id, data: appData } = body;
-      if (!email && !borrower_id) return err('email or borrower_id required');
+      /* IDENTITY: portal_user_id or contact_id ONLY. `email` and `borrower_id`
+       * are no longer accepted as identity (2026-08-12).
+       *
+       * This does NOT authenticate the call — nothing in this function can,
+       * because the portal issues no session; see docs/PORTAL-IDENTITY-2026-08-12.md.
+       * It raises the bar from "knows a public email address" to "knows a uuid",
+       * which is the difference between trivially targetable and not. A
+       * mortgage application is the most sensitive record a borrower has here,
+       * and `email` made overwriting one a matter of knowing who they are.
+       *
+       * borrower_id goes too, for the same reason in weaker form: it is the
+       * RR- crm id, printed in the welcome email and shown in the portal, so it
+       * is closer to public than to secret.
+       *
+       * SAFE FOR THE ONE CALLER: public/unified-portal.html:1723 already sends
+       * portal_user_id alongside email and borrower_id, so nothing needs to
+       * change there. The exception is a stale localStorage blob carrying only
+       * {email, first_name} (the fallback at unified-portal.html:1089) — that
+       * state now fails with a clear instruction instead of silently writing to
+       * a record identified by an email address. */
+      const { portal_user_id, contact_id: bodyContactId, data: appData } = body;
+      if (!portal_user_id && !bodyContactId) {
+        return err('portal_user_id or contact_id required — please sign out and sign in again', 400);
+      }
 
-      // Resolve contact_id from email or borrower_id.
-      let contact_id: string | null = null;
-      if (borrower_id) {
-        const { data: c } = await sb.from('contacts').select('id').eq('borrower_id', borrower_id).maybeSingle();
-        if (c) contact_id = c.id;
-      }
-      if (!contact_id && email) {
-        const { data: c } = await sb.from('contacts').select('id').eq('email', email.toLowerCase()).maybeSingle();
-        if (c) contact_id = c.id;
-      }
+      let contact_id: string | null = bodyContactId || null;
       if (!contact_id && portal_user_id) {
         const { data: pu } = await sb.from('portal_users').select('contact_id').eq('id', portal_user_id).maybeSingle();
         if (pu?.contact_id) contact_id = pu.contact_id;
       }
-      if (!contact_id) return err('Could not resolve contact — check email or borrower_id');
+      if (!contact_id) return err('Could not resolve contact from portal_user_id');
 
       // Clean the payload: strip undefined/null, ensure dates are ISO strings.
       const cleanData: Record<string, any> = {};
@@ -240,8 +264,18 @@ Deno.serve(async (req: Request) => {
       // portal_user_id is from portal_users, not auth.users. Sending it
       // causes "violates foreign key constraint mortgage_applications_borrower_user_id_fkey".
       // if (portal_user_id) cleanData.borrower_user_id = portal_user_id;
-      if (borrower_id) cleanData.borrower_id = borrower_id;
-      if (email) cleanData.email = email;
+
+      /* email and borrower_id are STAMPED FROM THE CONTACT ROW, not from the
+       * request body (2026-08-12). They used to be copied straight out of the
+       * body. If the caller is not trusted to say who it is, it is not trusted
+       * to say what that person's email address is either — otherwise the
+       * application record could be written with someone else's contact_id and
+       * an attacker-chosen email, and the row would look internally consistent.
+       * The contact row is the source of truth for both. */
+      const { data: owner } = await sb.from('contacts')
+        .select('email, borrower_id').eq('id', contact_id).maybeSingle();
+      if (owner?.borrower_id) cleanData.borrower_id = owner.borrower_id;
+      if (owner?.email) cleanData.email = owner.email;
 
       // Check for existing app row.
       const { data: existing } = await sb.from('mortgage_applications')
