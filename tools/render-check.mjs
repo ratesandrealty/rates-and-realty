@@ -253,6 +253,43 @@ function stubSource(role, email, stubRow, rpcMap, fetchMap, rpcFns, staleRole, i
 
 // ── specs ───────────────────────────────────────────────────────────────────
 const SPECS = [
+  {
+    /* BUYDOWN ARITHMETIC IS A REGRESSION TEST, not a rendering one. A buydown
+       sheet with a wrong year-two payment is worse than no sheet — it goes to a
+       borrower as a number they plan around. The expected values are published
+       amortization figures for $400,000 / 30yr (7% $2,661.21, 5% $2,147.29,
+       6% $2,398.20), computed by hand before the feature was written, so this
+       fails if the formula drifts rather than if the layout moves. */
+  name: 'buydown 2-1 and 1-1 arithmetic',
+    url: '/tools/fee-sheet.html',
+    role: 'admin',
+    steps: [{ click: '#modeBtnBuydown', waitMs: 1200 }],
+    present: ['#modeBtnBuydown'],
+    evals: [
+      /* Drive the exact hand-checked case: $400,000 at 7.000%, 30yr, 2-1.
+         Expected from published amortization figures:
+           note $2,661.21 · yr1 $2,147.29 · yr2 $2,398.20 · total cost $9,323.18 */
+      ['(function(){'
+       + '$("bd_rate").value="7"; $("bd_loan").value="$400,000"; $("bd_term").value="30";'
+       + '$("bd_structure").value="2-1"; buydownRecalc();'
+       + 'var r=bdCompute(bdInputs());'
+       + 'return JSON.stringify({note:r.notePmt.toFixed(2),yr1:r.years[0].payment.toFixed(2),'
+       + 'yr2:r.years[1].payment.toFixed(2),total:r.totalCost.toFixed(2),'
+       + 'panel:getComputedStyle($("buydownPanel")).display,'
+       + 'sheetRendered:(($("buydownSheet").textContent||"").trim().length>800)});})()',
+       '{"note":"2661.21","yr1":"2147.29","yr2":"2398.20","total":"9323.18","panel":"block","sheetRendered":true}'],
+      // 1-1 on the same loan: both years at 6%, cost 24 x (2661.21 - 2398.20)
+      ['(function(){$("bd_structure").value="1-1"; buydownRecalc();'
+       + 'var r=bdCompute(bdInputs());'
+       + 'return r.years[0].rate.toFixed(3)+"|"+r.years[1].rate.toFixed(3)+"|"+r.totalCost.toFixed(2);})()',
+       '6.000|6.000|6312.19'],
+      // The sheet actually renders the schedule, not just the panel.
+      ['(function(){var t=$("buydownSheet").textContent||"";'
+       + 'return JSON.stringify({hasYear1:t.indexOf("Year 1")>-1,hasYear3:t.indexOf("Year 3")>-1,'
+       + 'hasTotal:t.indexOf("Total buydown cost")>-1,hasQualify:t.indexOf("qualify")>-1});})()',
+       '{"hasYear1":true,"hasYear3":true,"hasTotal":true,"hasQualify":true}'],
+    ],
+  },
   /* The pipeline strip renders nine stages into whatever width the header row
      has left over. Rene saw "Ne[Cnt]loweAntrProcTClose,os" — nine labels each
      cut mid-word. Checked at two widths because the failure is width-dependent

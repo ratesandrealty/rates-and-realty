@@ -707,6 +707,7 @@
             <button id="modeBtnSingle" type="button" onclick="setMode('single')">Single Rate</button>
             <button id="modeBtnProperty" type="button" onclick="setMode('property')">Property Comparison</button>
             <button id="modeBtnPrice" type="button" onclick="setMode('price')">Price Comparison</button>
+            <button id="modeBtnBuydown" type="button" onclick="setMode('buydown')">Buydown</button>
             <button id="modeBtnHeloc" type="button" onclick="setMode('heloc')">HELOC</button>
         </div>
     </div>
@@ -721,6 +722,41 @@
     </div>
 
     <!-- ════════════ HELOC PANEL (swaps in for HELOC mode) ════════════ -->
+    <!-- ── TEMPORARY BUYDOWN (2-1 / 1-1) ─────────────────────────────────────
+         Self-contained like the HELOC panel: its own inputs and its own sheet,
+         so it does not touch the shared per-column machinery the other four
+         modes share. Loan amount defaults to the sidebar's purchase − down, but
+         is overridable because a buydown quote is often run against a lender's
+         figure rather than the one on the main sheet. -->
+    <div id="buydownPanel" style="display:none;">
+        <div class="row2">
+            <div class="field"><label>Structure</label>
+                <select id="bd_structure" onchange="buydownRecalc()">
+                    <option value="2-1">2-1 Buydown (yr1 −2%, yr2 −1%)</option>
+                    <option value="1-1">1-1 Buydown (yr1 −1%, yr2 −1%)</option>
+                </select>
+            </div>
+            <div class="field"><label>Note Rate %</label><input type="number" id="bd_rate" step="0.125" min="0" max="20" placeholder="6.875" oninput="buydownRecalc()"></div>
+        </div>
+        <div class="row2">
+            <div class="field"><label>Loan Amount</label><input type="text" id="bd_loan" placeholder="Auto from sidebar" oninput="buydownRecalc()"></div>
+            <div class="field"><label>Term (years)</label><input type="number" id="bd_term" value="30" step="1" min="5" max="40" oninput="buydownRecalc()"></div>
+        </div>
+        <div class="field"><label>Who pays for it</label>
+            <select id="bd_payer" onchange="buydownRecalc()">
+                <option value="seller">Seller credit</option>
+                <option value="lender">Lender credit</option>
+                <option value="builder">Builder credit</option>
+                <option value="borrower">Borrower paid</option>
+            </select>
+        </div>
+        <div id="bd_err" style="display:none;color:#ff8080;font-size:11px;margin-top:10px;line-height:1.4;"></div>
+        <div style="margin-top:12px;font-size:10.5px;color:#8a8475;line-height:1.5;">
+            The subsidy is held in escrow and pays the difference each month. The
+            borrower qualifies at the <strong>note rate</strong>, not the reduced rate.
+        </div>
+    </div>
+
     <div id="helocPanel" style="display:none;">
         <div class="row2">
             <div class="field"><label>Estimated Home Value</label><input type="text" id="heloc_value" placeholder="$650,000" oninput="helocRecalc()"></div>
@@ -771,6 +807,7 @@
          an internal "these disagree" note must not travel with it. -->
     <div class="no-print" id="fsSheetMismatch" style="display:none;margin:0 0 12px;"></div>
     <div class="sheet" id="sheet"></div>
+    <div id="buydownSheet" style="display:none;"></div>
     <div id="helocSheet" style="display:none;"></div>
 </div>
 
@@ -967,11 +1004,18 @@ function buildScenarioCards() {
     scenarios.forEach((s, i) => {
         const card = document.createElement('div');
         card.className = 'scenario-card' + (s.recommended ? ' recommended' : '');
+        /* SAME HEADER SHAPE AS PRICE COMPARISON — title left, Recommend + × right.
+           Rate Comparison was the only mode you could not add a column to, and its
+           header put Recommend on its own row under an h3 while Price put both
+           controls beside the title. Matching the existing pattern rather than
+           inventing a second one. */
         card.innerHTML = `
-            <h3 style="margin:0 0 8px">Option ${s.id}</h3>
-            <div class="scenario-header">
-                <span></span>
-                <button class="btn-recommend ${s.recommended ? 'active' : ''}" onclick="toggleRecommend(${i})">&#9733; Recommend</button>
+            <div class="scenario-header" style="margin-bottom:8px;">
+                <h3 style="margin:0;">Option ${s.id}</h3>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <button class="btn-recommend ${s.recommended ? 'active' : ''}" onclick="toggleRecommend(${i})">&#9733; Recommend</button>
+                    ${scenarios.length > 1 ? `<button type="button" title="Remove option" onclick="removeRateColumn(${i})" style="background:transparent;border:1px solid #663;color:#c88;border-radius:6px;font-size:14px;line-height:1;cursor:pointer;padding:3px 8px;font-family:inherit;">&times;</button>` : ''}
+                </div>
             </div>
             <div class="field"><label>Label</label><input type="text" value="${s.label}" onchange="scenarios[${i}].label=this.value;recalc()"></div>
             <div class="row2">
@@ -984,6 +1028,50 @@ function buildScenarioCards() {
             </div>`;
         container.appendChild(card);
     });
+    const addWrap = document.createElement('div');
+    addWrap.style.cssText = 'margin-top:4px;';
+    addWrap.innerHTML = `<button type="button" onclick="addRateColumn()" style="width:100%;background:transparent;border:1px dashed #C9A84C;color:#C9A84C;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;padding:8px;font-family:inherit;">+ Add option</button>`;
+    container.appendChild(addWrap);
+}
+
+/* Rate-mode column add/remove, mirroring addPriceColumn/removePriceColumn
+   exactly — including the deliberate choice NOT to force-promote a new
+   recommended option when the recommended one is removed. Recommend is a real
+   on/off toggle and "none selected" is a legitimate state. */
+function nextRateId() {
+    // Ids are the letters shown as "Option A/B/C…", so continue the sequence
+    // rather than reusing a removed letter, which would duplicate a heading.
+    let max = 0;
+    (scenarios || []).forEach(function (s) {
+        const c = String(s.id || '').trim().toUpperCase().charCodeAt(0);
+        if (c >= 65 && c <= 90 && (c - 64) > max) max = c - 64;
+    });
+    return String.fromCharCode(65 + max);
+}
+
+function addRateColumn() {
+    if (!scenarios || scenarios.length === 0) return;
+    const last = scenarios[scenarios.length - 1] || {};
+    scenarios.push({
+        id: nextRateId(),
+        label: 'Option ' + nextRateId(),
+        rate: (last.rate != null ? last.rate : 6.875),
+        points: 0,
+        origComp: (last.origComp != null ? last.origComp : 1.5),
+        lenderCredits: 0,
+        recommended: false
+    });
+    buildScenarioCards();
+    recalc();
+    notifyParentOfChange();
+}
+
+function removeRateColumn(i) {
+    if (!scenarios || scenarios.length <= 1) return;
+    scenarios.splice(i, 1);
+    buildScenarioCards();
+    recalc();
+    notifyParentOfChange();
 }
 
 function buildPropertyCards() {
@@ -1163,7 +1251,7 @@ function togglePriceRecommend(i) {
 
 // Dispatcher — mounts the right cards into #scenarioCards based on _currentMode.
 function renderCards() {
-    if (_currentMode === 'heloc') { return; } // HELOC builds its own panel
+    if (_currentMode === 'heloc' || _currentMode === 'buydown') { return; } // these build their own panels
     if (_currentMode === 'property') {
         buildPropertyCards();
     } else if (_currentMode === 'price') {
@@ -1186,8 +1274,18 @@ function renderCards() {
 
 // Mode toggle handler. Wired to the toggle pill buttons.
 function setMode(newMode) {
-    if (newMode !== 'rate' && newMode !== 'single' && newMode !== 'property' && newMode !== 'price' && newMode !== 'heloc') return;
-    if (_currentMode === newMode) return;
+    if (newMode !== 'rate' && newMode !== 'single' && newMode !== 'property' && newMode !== 'price' && newMode !== 'heloc' && newMode !== 'buydown') return;
+    /* NO EARLY RETURN ON AN UNCHANGED MODE.
+       This used to be `if (_currentMode === newMode) return;`, which is a fair
+       optimisation for a click and a trap for a restore. _currentMode is set
+       DIRECTLY (not through setMode) by the feeSheetRestore seed lead-detail
+       posts at +300ms; applyFeeSheetDraft then calls setMode() at +450ms to
+       apply the authoritative draft. If both name the same mode, setMode
+       returned here having swapped no panels — leaving _currentMode saying
+       'heloc' while the HELOC panel was still display:none.
+       Everything below is idempotent (class toggles, display assignments, a
+       re-render), so running it for an unchanged mode costs one repaint and
+       removes a whole class of "the mode says X but the screen shows Y". */
     _currentMode = newMode;
     // Update toggle button visuals.
     const rateBtn = document.getElementById('modeBtnRate');
@@ -1200,21 +1298,36 @@ function setMode(newMode) {
     if (propBtn) propBtn.classList.toggle('active', newMode === 'property');
     if (priceBtn) priceBtn.classList.toggle('active', newMode === 'price');
     if (helocBtn) helocBtn.classList.toggle('active', newMode === 'heloc');
+    const buydownBtn = document.getElementById('modeBtnBuydown');
+    if (buydownBtn) buydownBtn.classList.toggle('active', newMode === 'buydown');
     // Swap the HELOC panel in/out for the purchase/refi panel. Borrower fields +
     // the mode toggle stay visible; only the mode-specific bodies swap.
     const isHeloc = (newMode === 'heloc');
+    const isBuydown = (newMode === 'buydown');
+    /* Both HELOC and Buydown are SELF-CONTAINED modes: own panel, own sheet, and
+       neither uses the shared per-column cards. `isOwnPanel` is the condition the
+       purchase/refi sidebar and the main sheet hide on, so adding a third such
+       mode later is one entry, not another parallel flag. */
+    const isOwnPanel = isHeloc || isBuydown;
     const prFields = document.getElementById('purchaseRefiFields');
     const scen = document.getElementById('scenarioCards');
     const acts = document.querySelector('.sidebar-actions');
     const helocPanel = document.getElementById('helocPanel');
+    const buydownPanel = document.getElementById('buydownPanel');
     const sheet = document.getElementById('sheet');
     const helocSheet = document.getElementById('helocSheet');
+    const buydownSheet = document.getElementById('buydownSheet');
+    /* The buydown panel KEEPS the purchase/refi fields visible: its loan amount
+       falls back to purchase price minus down payment, so hiding them would hide
+       the inputs feeding it. HELOC has no such dependency. */
     if (prFields) prFields.style.display = isHeloc ? 'none' : '';
-    if (scen) scen.style.display = isHeloc ? 'none' : '';
+    if (scen) scen.style.display = isOwnPanel ? 'none' : '';
     if (acts) acts.style.display = isHeloc ? 'none' : '';
     if (helocPanel) helocPanel.style.display = isHeloc ? '' : 'none';
-    if (sheet) sheet.style.display = isHeloc ? 'none' : '';
+    if (buydownPanel) buydownPanel.style.display = isBuydown ? '' : 'none';
+    if (sheet) sheet.style.display = isOwnPanel ? 'none' : '';
     if (helocSheet) helocSheet.style.display = isHeloc ? '' : 'none';
+    if (buydownSheet) buydownSheet.style.display = isBuydown ? '' : 'none';
     fsApplyColumnGovernance();
     renderCards();
     recalc();
@@ -2073,6 +2186,7 @@ function calcPriceColumn(col) {
 
 function recalc() {
     if (_currentMode === 'heloc') { helocRecalc(); return; }
+    if (_currentMode === 'buydown') { buydownRecalc(); return; }
     if (_currentMode === 'property') {
         if (!propertyScenarios || propertyScenarios.length === 0) {
             propertyScenarios = defaultPropertyScenarios();
@@ -2249,6 +2363,16 @@ function collectFeeSheetDraft() {
         price_scenarios: (priceScenarios || []).map(function (p) {
             return { id: p.id, label: p.label, purchasePrice: p.purchasePrice, downPct: (p.downPct != null ? p.downPct : 20), propertyType: p.propertyType, loanProduct: p.loanProduct, rate: p.rate, points: p.points || 0, origComp: (p.origComp != null ? p.origComp : 1.5), lenderCredits: p.lenderCredits || 0, recommended: !!p.recommended };
         }),
+        /* Buydown persists like every other mode. Written AND read — the HELOC
+           block below was written for months and never read back, which is what
+           made "the HELOC button does nothing" true from the user's side. */
+        buydown: {
+            structure: v('bd_structure'),
+            rate: v('bd_rate'),
+            loan: v('bd_loan'),
+            term: v('bd_term'),
+            payer: v('bd_payer')
+        },
         heloc: {
             value: v('heloc_value'),
             balance: v('heloc_balance'),
@@ -2478,6 +2602,167 @@ var _helocState = {
 var _HELOC_TERMS = [30, 20, 15, 10, 5];
 var _HELOC_DRAW_FALLBACK_MAX = 500000; // slider cap when no home value entered
 var _HELOC_AUTOPAY_REDUCTION = 0.25;
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * TEMPORARY BUYDOWN (2-1 / 1-1)
+ *
+ * ARITHMETIC, and it was checked by hand before any of the layout below existed.
+ * A buydown sheet with a wrong year-two payment is worse than no sheet.
+ *
+ * The payment in each buydown year is the ordinary amortised payment on the FULL
+ * loan for the FULL term at the REDUCED rate. The loan is not re-amortised: the
+ * borrower's principal balance follows the note rate, and an escrow subsidy pays
+ * the monthly difference. That is the standard structure and it is why the total
+ * cost is simply the sum of the monthly differences.
+ *
+ *   pmt(P, rate, years) = P·r / (1 − (1+r)^−n),  r = rate/1200, n = years·12
+ *
+ * Verified against three published figures for $400,000 / 30yr:
+ *   7.000% → $2,661.21   5.000% → $2,147.29   6.000% → $2,398.20
+ * giving a 2-1 cost of $9,323.18 and a 1-1 cost of $6,312.19 at a 7% note.
+ * ════════════════════════════════════════════════════════════════════════════ */
+function bdPmt(P, ratePct, years) {
+    const n = (years || 30) * 12;
+    if (!(P > 0) || n <= 0) return 0;
+    const r = (ratePct || 0) / 1200;
+    if (r === 0) return P / n;
+    return P * r / (1 - Math.pow(1 + r, -n));
+}
+
+/* Reduction schedule per structure. Year 3+ is always the note rate — stated
+   explicitly rather than implied, because "what happens in year three" is the
+   question a borrower asks about a buydown. */
+function bdSchedule(structure) {
+    return (structure === '1-1') ? [1, 1] : [2, 1];
+}
+
+function bdInputs() {
+    const structure = ($('bd_structure') && $('bd_structure').value) || '2-1';
+    const term = parseFloat($('bd_term') && $('bd_term').value) || 30;
+    const noteRate = parseFloat($('bd_rate') && $('bd_rate').value) || 0;
+    /* Loan amount falls back to the sidebar's purchase − down so the mode works
+       without re-entering figures, but an explicit value always wins. */
+    let loan = parseCurrency($('bd_loan') && $('bd_loan').value);
+    if (!(loan > 0)) {
+        const pp = parseCurrency($('purchasePrice').value);
+        const dp = parseFloat($('downPct').value) || 0;
+        loan = Math.max(0, pp - (pp * dp / 100));
+    }
+    return { structure, term, noteRate, loan, payer: ($('bd_payer') && $('bd_payer').value) || 'seller' };
+}
+
+function bdCompute(inp) {
+    const cuts = bdSchedule(inp.structure);
+    const notePmt = bdPmt(inp.loan, inp.noteRate, inp.term);
+    const years = cuts.map(function (cut, idx) {
+        const rate = Math.max(0, inp.noteRate - cut);
+        const pay = bdPmt(inp.loan, rate, inp.term);
+        const save = notePmt - pay;
+        return { year: idx + 1, cut, rate, payment: pay, monthlySaving: save, yearSaving: save * 12 };
+    });
+    const totalCost = years.reduce(function (s, y) { return s + y.yearSaving; }, 0);
+    return { notePmt, years, totalCost };
+}
+
+function buydownRecalc() {
+    const inp = bdInputs();
+    const errs = [];
+    if (!(inp.loan > 0)) errs.push('Enter a loan amount, or a purchase price and down payment on the sidebar.');
+    if (!(inp.noteRate > 0)) errs.push('Enter the note rate.');
+    const errBox = $('bd_err');
+    if (errBox) {
+        errBox.innerHTML = errs.map(function (e) { return '• ' + e; }).join('<br>');
+        errBox.style.display = errs.length ? 'block' : 'none';
+    }
+    const sheet = $('buydownSheet');
+    if (!sheet) return;
+    if (errs.length) { sheet.innerHTML = _bdReportHtml(null, inp); return; }
+    sheet.innerHTML = _bdReportHtml(bdCompute(inp), inp);
+}
+
+function _bdMoney(v) { return '$' + Math.round(v).toLocaleString('en-US'); }
+function _bdMoney2(v) { return '$' + v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+
+function _bdReportHtml(res, inp) {
+    const dateStr = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    const timeStr = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    const name = ($('borrowerName') && $('borrowerName').value) || 'TBD';
+    const addr = ($('propertyAddress') && $('propertyAddress').value) || 'TBD';
+    const payerLabel = { seller: 'Seller credit', lender: 'Lender credit', builder: 'Builder credit', borrower: 'Borrower paid' }[inp.payer] || 'Seller credit';
+
+    if (!res) {
+        return _fsReportHeader(name, addr, dateStr)
+            + '<div style="padding:26px;text-align:center;color:#777;font-size:13px;">Enter a note rate and loan amount to build the buydown schedule.</div>'
+            + _fsReportFooter(dateStr, timeStr);
+    }
+
+    const rows = res.years.map(function (y) {
+        return '<tr class="row-item">'
+            + '<td>Year ' + y.year + ' &mdash; note rate &minus;' + y.cut + '%</td>'
+            + '<td style="text-align:right;">' + y.rate.toFixed(3) + '%</td>'
+            + '<td style="text-align:right;font-weight:600;">' + _bdMoney2(y.payment) + '</td>'
+            + '<td style="text-align:right;color:#2e7d32;">' + _bdMoney2(y.monthlySaving) + '</td>'
+            + '<td style="text-align:right;">' + _bdMoney(y.yearSaving) + '</td>'
+            + '</tr>';
+    }).join('');
+
+    const afterYear = res.years.length + 1;
+    return _fsReportHeader(name, addr, dateStr)
+        + '<div style="padding:0 4px;">'
+        + '<h2 style="font-family:\'Playfair Display\',Georgia,serif;font-size:19px;margin:14px 0 4px;">'
+        +   inp.structure + ' Temporary Buydown</h2>'
+        + '<div style="font-size:12px;color:#555;margin-bottom:14px;">'
+        +   'Loan ' + _bdMoney(inp.loan) + ' &nbsp;·&nbsp; Note rate ' + inp.noteRate.toFixed(3) + '% &nbsp;·&nbsp; ' + inp.term + '-year term</div>'
+
+        /* FIRST-YEAR PAYMENT IS THE HEADLINE — it is the number the borrower is
+           being sold, and it is the one that must not be confused with the note
+           payment they qualify at. Both are shown together for that reason. */
+        + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">'
+        +   '<div style="flex:1;min-width:150px;border:1px solid #C9A84C;border-radius:8px;padding:12px 14px;background:#FFFDF5;">'
+        +     '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#8a6d1f;">Year 1 payment (P&amp;I)</div>'
+        +     '<div style="font-size:22px;font-weight:700;color:#1a1208;">' + _bdMoney2(res.years[0].payment) + '</div>'
+        +     '<div style="font-size:11px;color:#666;margin-top:2px;">at ' + res.years[0].rate.toFixed(3) + '%</div>'
+        +   '</div>'
+        +   '<div style="flex:1;min-width:150px;border:1px solid #ddd;border-radius:8px;padding:12px 14px;">'
+        +     '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#777;">Note-rate payment (P&amp;I)</div>'
+        +     '<div style="font-size:22px;font-weight:700;color:#333;">' + _bdMoney2(res.notePmt) + '</div>'
+        +     '<div style="font-size:11px;color:#666;margin-top:2px;">year ' + afterYear + ' onward &mdash; and what you qualify at</div>'
+        +   '</div>'
+        +   '<div style="flex:1;min-width:150px;border:1px solid #ddd;border-radius:8px;padding:12px 14px;">'
+        +     '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#777;">Total buydown cost</div>'
+        +     '<div style="font-size:22px;font-weight:700;color:#1a1208;">' + _bdMoney(res.totalCost) + '</div>'
+        +     '<div style="font-size:11px;color:#666;margin-top:2px;">' + payerLabel + '</div>'
+        +   '</div>'
+        + '</div>'
+
+        + '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">'
+        +   '<thead><tr>'
+        +     '<th style="text-align:left;padding:7px 6px;border-bottom:2px solid #C9A84C;">Period</th>'
+        +     '<th style="text-align:right;padding:7px 6px;border-bottom:2px solid #C9A84C;">Rate</th>'
+        +     '<th style="text-align:right;padding:7px 6px;border-bottom:2px solid #C9A84C;">Monthly P&amp;I</th>'
+        +     '<th style="text-align:right;padding:7px 6px;border-bottom:2px solid #C9A84C;">Monthly saving</th>'
+        +     '<th style="text-align:right;padding:7px 6px;border-bottom:2px solid #C9A84C;">Year total</th>'
+        +   '</tr></thead><tbody>'
+        +   rows
+        +   '<tr class="row-item"><td>Year ' + afterYear + ' onward &mdash; note rate</td>'
+        +     '<td style="text-align:right;">' + inp.noteRate.toFixed(3) + '%</td>'
+        +     '<td style="text-align:right;font-weight:600;">' + _bdMoney2(res.notePmt) + '</td>'
+        +     '<td style="text-align:right;color:#777;">&mdash;</td>'
+        +     '<td style="text-align:right;color:#777;">&mdash;</td></tr>'
+        +   '<tr class="total-row" style="background:rgba(201,168,76,0.10);">'
+        +     '<td colspan="4" style="padding:9px 6px;font-weight:700;">Total buydown cost &mdash; ' + payerLabel + '</td>'
+        +     '<td style="text-align:right;padding:9px 6px;font-weight:700;">' + _bdMoney(res.totalCost) + '</td></tr>'
+        + '</tbody></table>'
+
+        + '<div style="margin-top:14px;font-size:11px;color:#555;line-height:1.55;">'
+        +   'The reduced payments above are funded by a subsidy held in escrow, not by a lower loan. '
+        +   'Qualification, the loan balance and the amortisation all follow the note rate of '
+        +   inp.noteRate.toFixed(3) + '%. If the loan is paid off or refinanced early, any unused '
+        +   'subsidy is credited to the payoff. Estimate only &mdash; not a commitment to lend.'
+        + '</div>'
+        + '</div>'
+        + _fsReportFooter(dateStr, timeStr);
+}
 
 function helocCfg() {
     return {
@@ -3082,8 +3367,16 @@ recalc();
             if (c.county) $('county').value = c.county;
             if (c.annualTax) $('annualTax').value = '$' + Number(c.annualTax).toLocaleString('en-US');
             if (c.annualInsurance) $('annualInsurance').value = '$' + Number(c.annualInsurance).toLocaleString('en-US');
-            // Restore mode (v2+). Default to 'rate' for v1 blobs.
-            if (d.mode === 'rate' || d.mode === 'single' || d.mode === 'property' || d.mode === 'price') {
+            /* Restore mode (v2+). Default to 'rate' for v1 blobs.
+               'heloc' WAS MISSING FROM THIS LIST — the whole reason "the HELOC
+               button does nothing". The mode itself is complete and works: measured
+               in the browser, clicking it switches _currentMode, swaps the panel and
+               sheet, and renders. But the draft saved mode:'heloc' and this
+               whitelist rejected it on the way back in, forcing 'rate'. So every
+               visit reverted to Rate Comparison and any HELOC work vanished — which
+               from the outside is a button that does nothing. */
+            if (d.mode === 'rate' || d.mode === 'single' || d.mode === 'property'
+                || d.mode === 'price' || d.mode === 'heloc' || d.mode === 'buydown') {
                 _currentMode = d.mode;
             } else {
                 _currentMode = 'rate';
@@ -3123,6 +3416,44 @@ recalc();
                     };
                 });
             }
+            /* Restore HELOC (v2+). saveFeeSheetDraft has ALWAYS written a `heloc`
+               block — home value, balance, CLTV, draw, origination options, autopay
+               and the rate cards — and nothing ever read it back. `d.heloc` did not
+               appear anywhere in this file. So a HELOC estimate was saved on every
+               keystroke and discarded on every reload: the inputs came back empty
+               and the rate cards reset to defaults, with no error to explain it. */
+            if (d.buydown && typeof d.buydown === 'object') {
+                var B = d.buydown;
+                var _bset = function (id, val) { var el = $(id); if (el && val != null && val !== '') el.value = val; };
+                _bset('bd_structure', B.structure);
+                _bset('bd_rate', B.rate);
+                _bset('bd_loan', B.loan);
+                _bset('bd_term', B.term);
+                _bset('bd_payer', B.payer);
+            }
+            if (d.heloc && typeof d.heloc === 'object') {
+                var H = d.heloc;
+                /* Direct assignment, not setV(): setV is function-scoped inside
+                   applyFeeSheetDraft and does not exist here. Using it would have
+                   thrown a ReferenceError and taken the WHOLE restore down — a
+                   worse bug than the one being fixed, and invisible to check-js
+                   because it is a runtime error, not a syntax one. */
+                var _hset = function (id, val) { var el = $(id); if (el && val != null && val !== '') el.value = val; };
+                _hset('heloc_value', H.value);
+                _hset('heloc_balance', H.balance);
+                _hset('heloc_cltv', H.cltv);
+                _hset('heloc_draw', H.draw);
+                if ($('heloc_autopay')) $('heloc_autopay').checked = !!H.autopay;
+                if (Array.isArray(H.origOptions) && H.origOptions.length) _helocState.origOptions = H.origOptions.slice();
+                if (H.origSelected != null) _helocState.origSelected = H.origSelected;
+                if (Array.isArray(H.cards) && H.cards.length) {
+                    _helocState.cards = H.cards.map(function (hc) {
+                        return { type: hc.type || 'fixed', term: hc.term || 30, rate: hc.rate || 0, selected: !!hc.selected };
+                    });
+                    if (!_helocState.cards.some(function (hc) { return hc.selected; })) _helocState.cards[0].selected = true;
+                }
+                if (typeof helocRenderRateEditor === 'function') helocRenderRateEditor();
+            }
             // Restore scenarios — accept either v2 (d.scenarios array) or v1 (d.scenarioA/B/C).
             var incoming = null;
             if (Array.isArray(d.scenarios) && d.scenarios.length > 0) {
@@ -3136,6 +3467,21 @@ recalc();
                 if (d.scenarioC) incoming.push({ id:'C', label: d.scenarioC.label || 'Lender Credit', rate: d.scenarioC.rate||0, points: d.scenarioC.points||0, origComp: d.scenarioC.origComp||1.5, lenderCredits: (d.scenarioC.lenderCredits!=null ? d.scenarioC.lenderCredits : (d.scenarioC.credits||0)) });
             }
             if (incoming) {
+                /* GROW THE ARRAY FIRST. This loop stopped at scenarios.length,
+                   which was fine when Rate Comparison was fixed at three options.
+                   Now that columns can be added, a saved 4th/5th option would have
+                   been silently dropped on reload — the same shape of bug as the
+                   HELOC block that was written and never read. Extra saved columns
+                   are appended before the copy below; ids come from the saved blob
+                   where present so headings stay stable. */
+                while (scenarios.length < incoming.length) {
+                    var _ni = scenarios.length;
+                    scenarios.push({
+                        id: incoming[_ni].id || String.fromCharCode(65 + _ni),
+                        label: incoming[_ni].label || ('Option ' + String.fromCharCode(65 + _ni)),
+                        rate: 0, points: 0, origComp: 1.5, lenderCredits: 0, recommended: false
+                    });
+                }
                 // Apply incoming into existing scenarios array (preserve length if mismatched).
                 for (var i = 0; i < scenarios.length && i < incoming.length; i++) {
                     Object.assign(scenarios[i], {
