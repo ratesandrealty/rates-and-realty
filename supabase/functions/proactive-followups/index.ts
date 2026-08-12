@@ -13,32 +13,23 @@ import { requireStaff } from '../_shared/require-staff.ts'
 
 type SbClient = ReturnType<typeof createClient>
 
-/* The cron credential now lives in VAULT (secret name proactive_followups_secret)
- * and is read at request time, not baked in.
+/* HISTORY of this function's credential, kept because each step was a real
+ * failure and the shape recurs:
  *
- * It used to be `Deno.env.get(...) || '<a literal baked in here>'` — and that env var was
- * NEVER SET, so the function ran on the hardcoded fallback. That value is in git,
- * in every clone and every commit that touched this file, and both crons carried
- * it in cleartext in cron.job.command. It also doubles as a ?secret= query
- * parameter, so it reached any URL logging in between. A guard against strangers,
- * not a secret.
+ *   1. `Deno.env.get(...) || '<literal>'` — the env var was never set, so it ran
+ *      on the hardcoded fallback. In git, in every clone, and carried in
+ *      cleartext in cron.job.command. The fallback always matched, so nothing
+ *      ever looked wrong. (Same shape as sms-assistant's OCR_CRON_SECRET, which
+ *      is still a literal in source today.)
+ *   2. Rotated out 2026-08-06 into vault as `proactive_followups_secret`, read
+ *      at request time via cron_secret_get().
+ *   3. 2026-08-11 — replaced entirely by x-internal-secret. The vault read and
+ *      the `?secret=` query-parameter path are both GONE; see the handler.
  *
- * The old literal was ROTATED OUT on 2026-08-06 and is gone from this file, so
- * the copy in git history no longer opens anything. Both crons were repointed at
- * vault and each invoked verbatim and observed returning 200 BEFORE the legacy
- * path was removed — the switchover was proven, not assumed. */
-let _vaultSecret: string | null | undefined = undefined
-async function cronSecret(db: SbClient): Promise<string | null> {
-  if (_vaultSecret !== undefined) return _vaultSecret
-  try {
-    /* `as any` on the rpc call only — SbClient is typed from the generated
-       schema, which has no signature for this function. The VALUE is still
-       checked as a string below. */
-    const { data } = await (db as any).rpc('cron_secret_get', { p_name: 'proactive_followups_secret' })
-    _vaultSecret = (typeof data === 'string' && data.length > 0) ? data : null
-  } catch (_e) { _vaultSecret = null }
-  return _vaultSecret
-}
+ * `cron_secret_get('proactive_followups_secret')` now has no caller. The vault
+ * entry can be deleted once nothing else references it — checked at the time of
+ * writing: nothing does. Left in place rather than deleted blind, since a vault
+ * entry costs nothing and a wrong deletion is unrecoverable. */
 const STALE_LEAD_DAYS = 14
 const PREAPPROVAL_WARN_DAYS = 30
 const CREDIT_WARN_DAYS = 90
@@ -256,46 +247,40 @@ async function runUrgent(sb: SbClient, twilio: { sid: string; token: string; fro
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: { 'Access-Control-Allow-Origin': '*' } })
   const url = new URL(req.url)
-  const providedSecret = req.headers.get('x-cron-secret') || url.searchParams.get('secret') || ''
-  const expected = await cronSecret(
-    createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!))
-  /* Refuse if vault has no value AND the legacy value does not match — an unset
-     secret must not mean "let everything through". */
-  /* No fallback. An unset or unreadable secret REFUSES rather than admitting
-     everything — the previous `env || 'literal'` meant the env var was never set
-     and nobody noticed, because the fallback always matched. */
-  const legacyOk = !!expected && providedSecret === expected
 
-  /* ── MIGRATION STEP 1 OF 2 (2026-08-11): accepts BOTH secrets. ─────────────
+  /* ── MIGRATION COMPLETE (2026-08-11). x-internal-secret ONLY. ──────────────
    *
-   * Moving off x-cron-secret onto the project-standard x-internal-secret. This
-   * project has three cron-secret conventions — x-cron-secret, x-cron-key,
-   * x-internal-secret — and that is how the CRON_KEY rotation missed three
-   * workflows. One convention, not three.
+   * This function used to authenticate with its own `x-cron-secret`, compared
+   * against a vault value, and also accepted the secret as a `?secret=` QUERY
+   * PARAMETER — which put a live credential in the URL, where it lands in
+   * request logs and in net._http_response rows. Both are gone.
    *
-   * WHY BOTH, AND WHY THIS ORDER. The function and its cron jobs cannot change
-   * atomically: a deploy takes ~30s and pg_cron lives in the database. Guard
-   * first and jobs 20/21 fail until re-headered; re-header first and they fail
-   * until the deploy lands. Either way there is a window where the ONLY caller
-   * is refused. Accepting both removes the window entirely:
+   * Why move at all, when the old guard worked: this project had three
+   * cron-secret conventions — x-cron-secret, x-cron-key, x-internal-secret —
+   * and that is how the CRON_KEY rotation missed three workflows. A rotation is
+   * only as reliable as the number of places you have to remember.
    *
-   *   1. deploy this (both accepted)         <- behaviour-neutral, jobs unaffected
-   *   2. prove the legacy path still works
-   *   3. re-header jobs 20 and 21
-   *   4. prove the new path works
-   *   5. delete the legacy branch below      <- the actual migration
+   * Done in five steps so there was never a window where the only caller was
+   * refused. The function and its cron jobs cannot change atomically: a deploy
+   * takes ~30s and pg_cron lives in the database, so guarding first breaks jobs
+   * 20/21 until they are re-headered, and re-headering first breaks them until
+   * the deploy lands. An intermediate deploy accepting BOTH removed the window:
    *
-   * STILL FAILS CLOSED. An unset vault secret makes `expected` null, so
-   * legacyOk is false, and requireStaff refuses anything without a valid
-   * x-internal-secret. Neither branch admits an unauthenticated caller — which
-   * is the trap voe-inbound-poll fell into, where `if (POLL_SECRET)` turned a
-   * missing secret into no check at all. */
-  if (!legacyOk) {
-    const auth = await requireStaff(req, { allowInternal: true, what: 'Running proactive follow-ups' })
-    if (!auth.ok) {
-      console.error('[proactive-followups] REJECTED:', auth.status, auth.msg)
-      return new Response(JSON.stringify({ error: 'Forbidden — missing or invalid credentials' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
-    }
+   *   1. deploy dual-accept            ✅ behaviour-neutral
+   *   2. prove legacy still works      ✅ 386489, 200 dry_run
+   *   3. re-header jobs 20 and 21      ✅ url/schedule verified vs snapshot
+   *   4. prove the new path works      ✅ 386679, job 21's own 00:00Z run,
+   *                                       200 {"mode":"urgent","sent":0,…}
+   *   5. delete the legacy branch      ✅ this commit
+   *
+   * FAILS CLOSED: no header, wrong secret, and an unreadable internal secret are
+   * all refusals. Nothing here can pass because a value is absent — the trap
+   * voe-inbound-poll fell into, where `if (POLL_SECRET)` turned a missing secret
+   * into no check at all. */
+  const auth = await requireStaff(req, { allowInternal: true, what: 'Running proactive follow-ups' })
+  if (!auth.ok) {
+    console.error('[proactive-followups] REJECTED:', auth.status, auth.msg)
+    return new Response(JSON.stringify({ error: 'Forbidden — missing or invalid credentials' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
   }
 
   const mode = (url.searchParams.get('mode') || 'digest').toLowerCase()
