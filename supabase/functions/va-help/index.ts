@@ -90,9 +90,41 @@ async function translateBlocks(blocks: any[], lang: string): Promise<Record<stri
   }
 }
 
+/* ── ONE STORE: help_topics ──────────────────────────────────────────────────
+ *
+ * This read `va_portal_help`, a table holding four rows byte-identical to four
+ * rows in `help_topics` whose keys differ only by a `va.` prefix. help_topics was
+ * seeded FROM it on 2026-07-07 and va_portal_help has not been touched since
+ * 2026-07-04. Meanwhile the ⓘ component and the management page both moved to
+ * help_topics — so admin/va-tasks.html was running BOTH systems on the SAME
+ * three topics, with the buttons the VA can actually see reading the store
+ * WITHOUT translation.
+ *
+ * FIELD MAP, since the two schemas name things differently:
+ *     va_portal_help.key   -> help_topics.topic_key   (keeps the `va.` prefix)
+ *     va_portal_help.body  -> help_topics.description
+ *
+ * THE PREFIX IS KEPT. Dropping it would be a second, silent breakage: the three
+ * data-help-topic attributes in va-tasks.html say `va.welcome` etc., and a
+ * mismatch here renders an empty block with nothing erroring — the same shape as
+ * a stale ?v= pin.
+ *
+ * `area in ('va','both')` is what scopes this endpoint to VA-facing topics, so
+ * the ~60 CRM tooltip topics coming with the rollout do not appear in the VA
+ * portal's help list. That is exactly what `area` was always for.
+ *
+ * va_portal_help is deliberately NOT dropped. It now has no reader; leave it
+ * until translation has been proven working end to end at least once.
+ */
 async function list(lang: string) {
-  const { data: blocks } = await sb.from("va_portal_help").select("*").eq("is_active", true).order("sort_order");
-  const rows = blocks || [];
+  const { data: blocks } = await sb.from("help_topics")
+    .select("topic_key, title, description, video_url, sort_order")
+    .eq("is_active", true)
+    .in("area", ["va", "both"])
+    .order("sort_order").order("topic_key");
+  const rows = (blocks || []).map((b: any) => ({
+    key: b.topic_key, title: b.title, body: b.description, video_url: b.video_url,
+  }));
   const targetLang = (lang || "en").toLowerCase();
 
   if (targetLang === "en") {
@@ -144,18 +176,25 @@ async function save(req: Request, body: any) {
   if (!(await requireAdmin(req))) return json({ error: "admin only" }, 403);
   const key = String(body.key || "").trim();
   if (!key) return json({ error: "key required" }, 400);
-  const row: any = { key, updated_at: new Date().toISOString() };
+  /* Same field map as list(). `area` defaults to 'va' for anything saved through
+     THIS endpoint — it is the VA portal's editor, so a block created here is a
+     VA block, and leaving it to help_topic_upsert's 'crm' default is how the
+     four existing rows drifted to the wrong area in the first place. */
+  const row: any = { topic_key: key, area: "va", updated_at: new Date().toISOString() };
   if (body.title !== undefined) row.title = String(body.title);
-  if (body.body !== undefined) row.body = String(body.body);
+  if (body.body !== undefined) row.description = String(body.body);
   if (body.video_url !== undefined) row.video_url = body.video_url ? String(body.video_url) : null;
   if (body.sort_order !== undefined) row.sort_order = Number(body.sort_order) || 0;
   if (body.is_active !== undefined) row.is_active = !!body.is_active;
   // title/body required on first insert
-  const { data: existing } = await sb.from("va_portal_help").select("key").eq("key", key).maybeSingle();
-  if (!existing && (row.title === undefined || row.body === undefined)) {
+  const { data: existing } = await sb.from("help_topics").select("topic_key").eq("topic_key", key).maybeSingle();
+  if (!existing && (row.title === undefined || row.description === undefined)) {
     return json({ error: "title and body required for a new block" }, 400);
   }
-  const { error } = await sb.from("va_portal_help").upsert(row, { onConflict: "key" });
+  /* Never overwrite an existing row's area — an admin may have deliberately set
+     it to 'both' so a topic serves the CRM tooltip AND the VA portal. */
+  if (existing) delete row.area;
+  const { error } = await sb.from("help_topics").upsert(row, { onConflict: "topic_key" });
   if (error) return json({ error: error.message }, 400);
   // invalidate cached translations for this block so they regenerate on next view
   await sb.from("va_portal_help_i18n").delete().eq("key", key);
