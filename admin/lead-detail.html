@@ -4809,6 +4809,12 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
             <span id="feeSheetSaveStatus" style="font-size:.7rem;min-width:60px;text-align:right;"></span>
             <button onclick="openFeeSheetPDF()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;background:rgba(201,168,76,.1);color:#C9A84C;border-color:rgba(201,168,76,.3);"><i class="fas fa-file-pdf" style="margin-right:4px"></i>Download PDF</button>
             <button id="emailFeeSheetBtn" onclick="emailFeeSheet()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;background:rgba(201,168,76,.1);color:#C9A84C;border-color:rgba(201,168,76,.3);">📧 Email Fee Sheet</button>
+            <!-- SHARE LINK. Deferred four times; the only way to mint a /fee/<slug>
+                 was the SMS composer's "Fee sheet link" button, so getting a link
+                 meant opening a text you did not want to send. This calls the SAME
+                 RPC (create_fee_sheet_snapshot) rather than adding a second
+                 generator — one path to mint, one shape of link, one expiry rule. -->
+            <button id="fsShareBtn" onclick="fsCreateShareLink()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;background:rgba(201,168,76,.1);color:#C9A84C;border-color:rgba(201,168,76,.3);">🔗 Share Link</button>
             <button onclick="openFeeSheetFullscreen()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;"><i class="fas fa-expand" style="margin-right:4px"></i>Fullscreen</button>
           </div>
         </div>
@@ -37791,6 +37797,92 @@ async function fsRevokeLink(slug, revoke){
     showToast(revoke ? ('Revoked /fee/'+slug) : ('Restored /fee/'+slug));
     fsLoadShareLinks();
   }catch(e){ showToast('Could not update link: '+((e&&e.message)||e), true); }
+}
+
+/* ── Fee Sheet tab → mint a /fee/<slug> link, then copy or text it ──────────
+ *
+ * DELIBERATELY NOT A SECOND GENERATOR. This calls create_fee_sheet_snapshot,
+ * the same RPC the SMS composer's "Fee sheet link" button calls, so there is one
+ * place that freezes a draft, one slug allocator, one 90-day expiry and one
+ * redaction (_fs_redact strips the comp rate). A parallel implementation here is
+ * how the two drift until only one of them gets the next fix — which is exactly
+ * what happened to the two share-link PANELS before they were merged into
+ * _shareRowHtml.
+ *
+ * ALL SHEET TYPES. The snapshot is whatever the draft holds, and
+ * collectFeeSheetDraft() persists `mode` plus the buydown and heloc blocks, so
+ * HELOC and buydown links mint here with no special-casing. public/fee.html
+ * renders each mode; buydown's renderer was added alongside this.
+ */
+async function fsCreateShareLink(){
+  var cid=(typeof lpCid==='function'?lpCid():null) || new URLSearchParams(location.search).get('contact_id');
+  if(!cid){ showToast('No contact', true); return; }
+  var btn=document.getElementById('fsShareBtn');
+  if(btn){ btn.disabled=true; btn.style.opacity='0.6'; }
+  try{
+    var r=await _authClient().rpc('create_fee_sheet_snapshot', { p_contact_id: cid });
+    if(r.error) throw r.error;
+    var res=r.data||{};
+    if(!res.url) throw new Error('No link returned');
+    _fsShowLinkResult(res.url, res.slug||'');
+    // The panel above the iframe must not go stale the moment a link is minted.
+    try { if (typeof fsLoadShareLinks === 'function') fsLoadShareLinks(); } catch(_){}
+  }catch(e){
+    /* Surfaced verbatim. The common one is "no fee sheet draft for this contact
+       — build/save one first", which is the actionable message, not a failure. */
+    showToast((e&&e.message)||String(e), true);
+  }
+  if(btn){ btn.disabled=false; btn.style.opacity='1'; }
+}
+
+/* Small result card under the header: the link, Copy, and Text.
+   Shown rather than auto-copied — silently writing the clipboard gives no proof
+   anything happened, and the slug is worth seeing before it is sent. */
+function _fsShowLinkResult(url, slug){
+  var box=document.getElementById('fsShareLinks');
+  if(!box){ try{ navigator.clipboard.writeText(url); }catch(_){ } showToast('Link created · '+url); return; }
+  var host=document.getElementById('fsNewLinkCard');
+  if(!host){
+    host=document.createElement('div');
+    host.id='fsNewLinkCard';
+    box.parentNode.insertBefore(host, box);
+  }
+  host.innerHTML=
+    '<div style="border:1px solid rgba(201,168,76,.45);border-radius:10px;padding:11px 13px;background:rgba(201,168,76,.07);margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
+    + '<span style="font-size:11px;font-weight:800;color:#C9A84C;text-transform:uppercase;letter-spacing:.5px;">Link ready</span>'
+    + '<a href="'+lpEsc(url)+'" target="_blank" rel="noopener" style="font-family:ui-monospace,monospace;font-size:12px;color:#ddd;text-decoration:underline;">'+lpEsc(url)+'</a>'
+    + '<span style="flex:1;"></span>'
+    + '<button type="button" onclick="_fsCopyLink(this,\''+lpEsc(url)+'\')" style="background:transparent;border:1px solid rgba(201,168,76,.45);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:700;padding:5px 12px;cursor:pointer;font-family:inherit;">Copy</button>'
+    + '<button type="button" onclick="_fsTextLink(\''+lpEsc(url)+'\')" style="background:transparent;border:1px solid rgba(201,168,76,.45);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:700;padding:5px 12px;cursor:pointer;font-family:inherit;">Text it</button>'
+    + '<button type="button" onclick="var h=document.getElementById(\'fsNewLinkCard\');if(h)h.innerHTML=\'\';" title="Dismiss" style="background:transparent;border:none;color:#777;font-size:15px;line-height:1;cursor:pointer;padding:2px 4px;">&times;</button>'
+    + '</div>';
+}
+
+function _fsCopyLink(btn, url){
+  function done(ok){
+    if(!ok){ showToast('Could not copy — select the link and copy manually', true); return; }
+    var t=btn.textContent; btn.textContent='Copied'; setTimeout(function(){ btn.textContent=t; }, 1400);
+  }
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(function(){ done(true); }, function(){ done(false); });
+  } else { done(false); }
+}
+
+/* Opens the existing composer and drops the link in, rather than re-implementing
+   sending. openTextComposer() resolves the phone, the VA routing and the blast
+   state; duplicating any of that here would be a second thing to keep correct. */
+function _fsTextLink(url){
+  try{
+    openTextComposer();
+    setTimeout(function(){
+      var ta=document.getElementById('tcBody');
+      if(!ta){ showToast('Composer did not open', true); return; }
+      var cur=(ta.value||'').replace(/\s+$/,'');
+      ta.value=(cur?cur+'\n':'')+url;
+      if(typeof _tcCharCount==='function') _tcCharCount();
+      ta.focus();
+    }, 120);
+  }catch(e){ showToast('Could not open the composer: '+((e&&e.message)||e), true); }
 }
 
 // ── SMS a fee sheet: freeze a snapshot → hosted short link → append to the message ──

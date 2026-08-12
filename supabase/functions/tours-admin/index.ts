@@ -33,6 +33,27 @@ function toIsoOrNull(v: any): string | null {
   try { const d = new Date(v); if (isNaN(d.getTime())) return null; return d.toISOString(); } catch { return null; }
 }
 
+/* ── When a tour link should stop working ───────────────────────────────────
+ *
+ * SCHEDULED_END + 7 DAYS, not a fixed window from creation. A tour is a dated
+ * event, unlike a fee sheet (90 days, has to survive to closing) or a CMA
+ * (30 days, comps go stale) — so a fixed N-days is the wrong shape here.
+ *
+ * The 7-day tail is load-bearing rather than padding: reminder_post_tour_enabled
+ * fires AFTER the showing and asks for feedback, and the feedback action goes
+ * through the same token. Expiring at the tour itself would silently kill the
+ * link the reminder points at.
+ *
+ * A tour with no date yet gets 30 days from now — a draft that is never
+ * scheduled should not mint a permanent link.
+ */
+function tourExpiry(batch: any): string {
+  const end = batch?.scheduled_end || batch?.scheduled_start;
+  const base = end ? new Date(end).getTime() : NaN;
+  if (!isNaN(base)) return new Date(base + 7 * 864e5).toISOString();
+  return new Date(Date.now() + 30 * 864e5).toISOString();
+}
+
 async function mintShortLink(destinationUrl: string, contactId: string | null, batchId: string): Promise<{ id: string; pretty_url: string } | null> {
   try {
     const r = await fetch(`${SUPABASE_URL}/functions/v1/track-event/create_link`, {
@@ -311,7 +332,13 @@ Deno.serve(async (req) => {
         const totalMins = (stops || []).reduce((acc: number, s: any) => acc + (s.duration_minutes || 30) + 15, 0);
         end = new Date(new Date(start).getTime() + totalMins * 60000).toISOString();
       }
-      const { data, error } = await sb.from("showing_batches").update({ scheduled_start: start, scheduled_end: end, status: "scheduled" }).eq("id", body.batch_id).select("*").single();
+      /* Rescheduling moves the expiry with the tour — but only for a link that
+         already has one. A NULL stays NULL so a pre-2026-08-12 tour is not
+         retroactively given an expiry by being rescheduled. */
+      const { data: prior } = await sb.from("showing_batches").select("expires_at").eq("id", body.batch_id).maybeSingle();
+      const patch: any = { scheduled_start: start, scheduled_end: end, status: "scheduled" };
+      if (prior?.expires_at) patch.expires_at = tourExpiry({ scheduled_end: end, scheduled_start: start });
+      const { data, error } = await sb.from("showing_batches").update(patch).eq("id", body.batch_id).select("*").single();
       if (error) return err(error.message, 500);
       return ok({ success: true, tour: data });
     }
@@ -324,7 +351,11 @@ Deno.serve(async (req) => {
       const { data: contact } = await sb.from("contacts").select("*").eq("id", batch.contact_id).single();
       if (!contact) return err("contact not found", 404);
       const sendResult = await sendInitialShare(batch, contact, channels);
-      await sb.from("showing_batches").update({ status: "sent", sent_at: new Date().toISOString() }).eq("id", body.batch_id);
+      /* Stamp expiry when the link actually starts circulating. Existing rows
+         keep expires_at NULL and go on working — no backfill. */
+      await sb.from("showing_batches").update({
+        status: "sent", sent_at: new Date().toISOString(), expires_at: tourExpiry(batch),
+      }).eq("id", body.batch_id);
       const { data: batchUpdated } = await sb.from("showing_batches").select("*").eq("id", body.batch_id).single();
       const reminders = await queueRemindersForBatch(batchUpdated);
       await insertReminderRows(batchUpdated, contact, reminders);
@@ -368,6 +399,22 @@ Deno.serve(async (req) => {
       fireScorer(batch.contact_id, "tour_completed");
       await safeWrite(sb.from("activity_events").insert({ contact_id: batch.contact_id, type: "system", channel: "system", direction: "internal", title: `\u2705 Tour completed: ${batch.title || batch.share_token}`, metadata: { batch_id: batch.id }, created_at: new Date().toISOString() }));
       return ok({ success: true, tour: batch });
+    }
+
+    /* THE VOID ACTION. Mirrors revoke_cma_snapshot / revoke_fee_sheet_snapshot:
+       reversible, and the public side refuses BEFORE it counts a view or fires
+       the scorer. Kept separate from `cancel` on purpose — canceling a tour is a
+       fact about the showing that the lead should still be able to read;
+       revoking is withdrawing the link itself. */
+    if (action === "revoke_link") {
+      if (!body.batch_id) return err("batch_id required");
+      const revoke = body.revoke !== false;
+      const { data, error } = await sb.from("showing_batches").update({
+        revoked_at: revoke ? new Date().toISOString() : null,
+        revoked_by: revoke ? (_auth.userId || null) : null,
+      }).eq("id", body.batch_id).select("id, share_token, revoked_at, expires_at").single();
+      if (error) return err(error.message, 500);
+      return ok({ success: true, batch_id: data.id, share_token: data.share_token, revoked: !!data.revoked_at });
     }
 
     if (action === "list_tours_for_contact") {

@@ -697,6 +697,120 @@ function renderHeloc(snap){
     document.getElementById('app').innerHTML=h;
 }
 
+/* ── buydown (verbatim compute: tools/fee-sheet.html bdPmt / bdSchedule / bdCompute) ──
+ *
+ * BUYDOWN HAD NO RENDERER HERE AT ALL. The mode dispatch fell through to
+ * renderRate(), so a buydown draft minted a link that drew a rate-comparison
+ * sheet from a payload holding no scenarios — a public page showing the wrong
+ * product entirely. collectFeeSheetDraft() has been persisting `buydown` all
+ * along and create_fee_sheet_snapshot freezes whatever the draft holds, so the
+ * DATA was always arriving; only the rendering was missing.
+ *
+ * The arithmetic is copied from the admin tool rather than re-derived, for the
+ * same reason _fs_redact mirrors fee.html's: two independent implementations of
+ * the same number is how the hosted sheet starts quietly disagreeing with the
+ * one Rene is looking at.
+ */
+function _bdPmt(P, ratePct, years){
+    const n=(years||30)*12;
+    if(!(P>0)||n<=0) return 0;
+    const r=(ratePct||0)/1200;
+    if(r===0) return P/n;
+    return P*r/(1-Math.pow(1+r,-n));
+}
+function _bdSchedule(structure){ return (structure==='1-1')?[1,1]:[2,1]; }
+function _bdMoney(v){ return '$'+Math.round(v).toLocaleString('en-US'); }
+function _bdMoney2(v){ return '$'+v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,','); }
+
+function renderBuydown(snap){
+    const data=snap.data||{}, bd=data.buydown||{}, c=data.common||{};
+    const name=snap.borrower_name||c.borrowerName||'Borrower';
+    const structure=bd.structure||'2-1';
+    const term=parseFloat(bd.term)||30;
+    const noteRate=parseFloat(bd.rate)||0;
+    /* Same fallback as bdInputs(): an explicit bd_loan wins, else purchase − down.
+       Without this a sheet built off the sidebar renders a $0 loan. */
+    let loan=parseCurrency(bd.loan);
+    if(!(loan>0)){
+        const pp=parseCurrency(c.purchasePrice), dp=parseFloat(c.downPct)||0;
+        loan=Math.max(0, pp-(pp*dp/100));
+    }
+    const payerLabel={seller:'Seller credit',lender:'Lender credit',builder:'Builder credit',borrower:'Borrower paid'}[bd.payer]||'Seller credit';
+
+    /* A link whose draft was never finished must say so, not draw a $0 schedule
+       that reads as a real quote of nothing. */
+    if(!(loan>0)||!(noteRate>0)){
+        document.getElementById('app').innerHTML='<div class="hero">'
+          +'<div class="eyebrow">Temporary Buydown</div>'+headerName(name,data)
+          +'</div><div class="sec"><div class="card"><div style="padding:22px;text-align:center;color:#777;font-size:13px;line-height:1.7;">'
+          +'This buydown quote is not finished yet.<br>Reach out to Rene for an updated one.'
+          +'</div></div></div>'+disclaimer(snap.created_at)+preparedBlock();
+        return;
+    }
+
+    const cuts=_bdSchedule(structure);
+    const notePmt=_bdPmt(loan, noteRate, term);
+    const years=cuts.map((cut,idx)=>{
+        const rate=Math.max(0, noteRate-cut);
+        const pay=_bdPmt(loan, rate, term);
+        const save=notePmt-pay;
+        return { year:idx+1, cut, rate, payment:pay, monthlySaving:save, yearSaving:save*12 };
+    });
+    const totalCost=years.reduce((s,y)=>s+y.yearSaving,0);
+    const afterYear=years.length+1;
+
+    let h='<div class="hero">'
+      +'<div class="eyebrow">'+esc(structure)+' Temporary Buydown</div>'
+      + headerName(name, data)
+      +'<div class="product"><span class="badge">'+esc(term)+'-Year Term</span><span class="badge">'+esc(payerLabel)+'</span></div>'
+      /* THE YEAR-1 PAYMENT IS THE HEADLINE and the note-rate payment sits beside
+         it, never instead of it — the borrower qualifies at the note rate, and a
+         sheet showing only the reduced payment misrepresents what they are
+         signing up for. Same pairing as the admin tool. */
+      +'<div class="payhero"><div class="lbl">Year 1 Payment (P&amp;I)</div>'
+        +'<div class="amt">'+_bdMoney2(years[0].payment)+'<small>/mo</small></div>'
+        +'<div class="rate">at '+years[0].rate.toFixed(3)+'% · note rate '+noteRate.toFixed(3)+'%</div>'
+      +'</div></div>';
+
+    h+='<div class="sec"><div class="sec-title">At a Glance</div><div class="opts">'
+      +'<div class="opt rec"><div class="opt-head"><span class="opt-name">Year 1</span>'
+        +'<span class="opt-rate">'+years[0].rate.toFixed(3)+'%</span></div>'
+        +'<div class="opt-meta"><div class="m"><div class="k">Monthly P&amp;I</div><div class="v">'+_bdMoney2(years[0].payment)+'</div></div>'
+        +'<div class="m"><div class="k">Saving</div><div class="v">'+_bdMoney2(years[0].monthlySaving)+'/mo</div></div>'
+        +'<div class="m"><div class="k">Year total</div><div class="v">'+_bdMoney(years[0].yearSaving)+'</div></div></div></div>'
+      +'<div class="opt"><div class="opt-head"><span class="opt-name">Year '+afterYear+' onward</span>'
+        +'<span class="opt-rate">'+noteRate.toFixed(3)+'%</span></div>'
+        +'<div class="opt-meta"><div class="m"><div class="k">Monthly P&amp;I</div><div class="v">'+_bdMoney2(notePmt)+'</div></div>'
+        +'<div class="m"><div class="k">Qualify at</div><div class="v">'+noteRate.toFixed(3)+'%</div></div>'
+        +'<div class="m"><div class="k">Buydown cost</div><div class="v">'+_bdMoney(totalCost)+'</div></div></div></div>'
+      +'</div></div>';
+
+    h+='<div class="sec"><div class="sec-title">Payment Schedule</div><div class="card"><div class="rows">';
+    years.forEach(y=>{
+        h+=row('Year '+y.year+' — note rate −'+y.cut+'%',
+               _bdMoney2(y.payment)+' <span style="opacity:.7">('+y.rate.toFixed(3)+'%)</span>');
+    });
+    h+=row('Year '+afterYear+' onward — note rate', _bdMoney2(notePmt)+' <span style="opacity:.7">('+noteRate.toFixed(3)+'%)</span>', 'sub')
+      + row('Total buydown cost — '+esc(payerLabel), _bdMoney(totalCost), 'total')
+      +'</div></div></div>';
+
+    h+='<div class="sec"><div class="sec-title">Loan Details</div><div class="card"><div class="rows">'
+      + row('Loan Amount', _bdMoney(loan))
+      + row('Note Rate', noteRate.toFixed(3)+'%')
+      + row('Term', term+' yrs / '+(term*12)+' mo.')
+      + row('Structure', esc(structure)+' temporary buydown')
+      + row('Paid by', esc(payerLabel), 'total')
+      +'</div>'
+      +'<div style="margin-top:12px;font-size:11.5px;color:#666;line-height:1.6;">'
+      +  'The reduced payments above are funded by a subsidy held in escrow, not by a lower loan. '
+      +  'Qualification, the loan balance and the amortisation all follow the note rate of '+noteRate.toFixed(3)+'%. '
+      +  'If the loan is paid off or refinanced early, any unused subsidy is credited to the payoff.'
+      +'</div></div></div>';
+
+    h+=disclaimer(snap.created_at)+preparedBlock();
+    document.getElementById('app').innerHTML=h;
+}
+
 /* One page for every "you cannot see this" outcome, worded so the visitor knows
    it is the LINK that ended, not the site that failed. Deliberately does NOT say
    which of revoked / expired / never-existed it was: that distinction is useful
@@ -749,6 +863,7 @@ function renderError(msg){
         // price → per purchase-price-point columns; heloc → heloc; rate/single
         // (and any unknown) → A/B/C rate scenarios. STRICT per-mode arrays — no cross-leak.
         if(mode==='heloc') renderHeloc(data);
+        else if(mode==='buydown') renderBuydown(data);
         else if(mode==='property') renderProperty(data);
         else if(mode==='price') renderPrice(data);
         else renderRate(data);

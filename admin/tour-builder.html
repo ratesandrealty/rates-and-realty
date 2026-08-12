@@ -94,6 +94,11 @@ footer .meta-list{display:flex;gap:14px;flex-wrap:wrap}
     <div class="topbar-actions">
       <a class="tb-act-btn" href="/admin/showings" title="Back to all tours"><i class="fas fa-arrow-left"></i> Back</a>
       <a class="tb-act-btn" id="publicLinkBtn" href="#" target="_blank" rel="noopener" hidden title="Open the public itinerary in a new tab"><i class="fas fa-external-link-alt"></i> Public itinerary</a>
+      <!-- Link state + revoke, beside the link itself. A forwarded itinerary used
+           to be permanent: no expiry, and `canceled` only changed a badge while
+           still serving every address and time. -->
+      <span id="tourLinkState" hidden style="font-size:11px;color:#8f8f8f;align-self:center;white-space:nowrap;"></span>
+      <button type="button" class="tb-act-btn" id="tourRevokeBtn" hidden onclick="tourToggleRevoke()" title="Withdraw the public itinerary link"><i class="fas fa-ban"></i> <span id="tourRevokeLabel">Revoke link</span></button>
     </div>
   </div>
 
@@ -160,7 +165,61 @@ footer .meta-list{display:flex;gap:14px;flex-wrap:wrap}
     } else {
       publicBtn.hidden = true;
     }
+    renderTourLinkState(t);
   }
+
+  /* Link state beside the link. Deliberately distinguishes REVOKED from EXPIRED
+     from NEVER-EXPIRES here, in the admin — the public page refuses all three
+     identically so an arbitrary URL holder learns nothing, but which one applies
+     is exactly what Rene needs to know. */
+  var _tourBatchId = null, _tourRevoked = false;
+  function renderTourLinkState(t) {
+    var st = document.getElementById('tourLinkState');
+    var btn = document.getElementById('tourRevokeBtn');
+    var lbl = document.getElementById('tourRevokeLabel');
+    if (!st || !btn || !lbl) return;
+    if (!t || !t.share_token) { st.hidden = true; btn.hidden = true; return; }
+    _tourBatchId = t.id || null;
+    _tourRevoked = !!t.revoked_at;
+    var expired = !!(t.expires_at && new Date(t.expires_at).getTime() <= Date.now());
+    st.hidden = false; btn.hidden = false;
+    if (_tourRevoked) { st.textContent = '· link revoked'; st.style.color = '#E5848A'; }
+    else if (expired) { st.textContent = '· link expired'; st.style.color = '#9a948a'; }
+    else if (t.expires_at) { st.textContent = '· expires ' + fmtScheduled(t.expires_at); st.style.color = '#8f8f8f'; }
+    else { st.textContent = '· never expires'; st.style.color = '#C9A84C'; }
+    lbl.textContent = _tourRevoked ? 'Restore link' : 'Revoke link';
+  }
+
+  window.tourToggleRevoke = async function () {
+    if (!_tourBatchId) return;
+    var revoke = !_tourRevoked;
+    if (revoke && !confirm('Revoke this tour link?\n\nAnyone who already has it — including anyone it was forwarded to — will stop being able to open the itinerary. You can restore it afterwards.')) return;
+    var btn = document.getElementById('tourRevokeBtn');
+    if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+    try {
+      var cl = window._supabaseClient;
+      var sess = await cl.auth.getSession();
+      var tok = sess && sess.data && sess.data.session && sess.data.session.access_token;
+      var r = await fetch((window.APP_CONFIG.SUPABASE_URL) + '/functions/v1/tours-admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok, 'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY },
+        body: JSON.stringify({ action: 'revoke_link', batch_id: _tourBatchId, revoke: revoke }),
+      });
+      var j = await r.json();
+      if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+      _tourRevoked = !!j.revoked;
+      var lbl = document.getElementById('tourRevokeLabel');
+      var st = document.getElementById('tourLinkState');
+      if (lbl) lbl.textContent = _tourRevoked ? 'Restore link' : 'Revoke link';
+      if (st) {
+        st.textContent = _tourRevoked ? '· link revoked' : '· link live';
+        st.style.color = _tourRevoked ? '#E5848A' : '#8f8f8f';
+      }
+    } catch (e) {
+      alert('Could not update the link: ' + ((e && e.message) || e));
+    }
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+  };
 
   document.addEventListener('DOMContentLoaded', function () {
     var qs = new URLSearchParams(location.search);

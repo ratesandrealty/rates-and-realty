@@ -58,6 +58,34 @@ function stopToAddressString(s: any): string | null {
   return null;
 }
 
+/* ── THE SHARE-LINK GATE ────────────────────────────────────────────────────
+ *
+ * FOUR call sites look a batch up by share_token — the GET that renders the
+ * itinerary, plus confirm, cancel and feedback. Each one did its own bare
+ * `.eq("share_token", token)`. Gating only the GET would leave a revoked link
+ * still able to confirm a tour and fire emails to Rene and the listing agent,
+ * so every one of them goes through here.
+ *
+ * Returns a reason instead of throwing so each caller can answer in its own
+ * shape — the GET renders a page, the POSTs return JSON.
+ *
+ * `status = 'canceled'` is deliberately NOT treated as revoked. A canceled tour
+ * is still information the lead is entitled to see (that is what the Canceled
+ * pill is for); revocation is the separate act of withdrawing the link.
+ */
+type TourGate = { ok: true; batch: any } | { ok: false; reason: "not_found" | "revoked" | "expired" };
+
+async function loadBatchByToken(sb: any, token: string, columns = "*"): Promise<TourGate> {
+  if (!token) return { ok: false, reason: "not_found" };
+  const { data: batch } = await sb.from("showing_batches").select(columns).eq("share_token", token).maybeSingle();
+  if (!batch) return { ok: false, reason: "not_found" };
+  if (batch.revoked_at) return { ok: false, reason: "revoked" };
+  if (batch.expires_at && new Date(batch.expires_at).getTime() <= Date.now()) {
+    return { ok: false, reason: "expired" };
+  }
+  return { ok: true, batch };
+}
+
 async function fireScorer(contactId: string, trigger: string) {
   if (!contactId) return;
   fetch(`${SUPABASE_URL}/functions/v1/lead-scorer`, {
@@ -417,8 +445,11 @@ Deno.serve(async (req) => {
       const body = await req.json();
       const token = body.share_token;
       if (!token) return new Response(JSON.stringify({ error: "share_token required" }), { status: 400, headers: { ...cors, "Content-Type": "application/json" } });
-      const { data: batch } = await sb.from("showing_batches").select("*").eq("share_token", token).maybeSingle();
-      if (!batch) return new Response(JSON.stringify({ error: "tour not found" }), { status: 404, headers: { ...cors, "Content-Type": "application/json" } });
+      /* Gated like the GET. A revoked link must not still be able to confirm a
+         tour — that path writes the batch AND emails Rene. */
+      const gate = await loadBatchByToken(sb, token);
+      if (!gate.ok) return new Response(JSON.stringify({ error: "tour not available" }), { status: 404, headers: { ...cors, "Content-Type": "application/json" } });
+      const batch = gate.batch;
       if (batch.status === "canceled") return new Response(JSON.stringify({ error: "tour was canceled" }), { status: 400, headers: { ...cors, "Content-Type": "application/json" } });
 
       await sb.from("showing_batches").update({ status: "confirmed", confirmed_at: new Date().toISOString() }).eq("id", batch.id);
@@ -485,8 +516,11 @@ Deno.serve(async (req) => {
       const body = await req.json();
       const token = body.share_token;
       if (!token) return new Response(JSON.stringify({ error: "share_token required" }), { status: 400, headers: { ...cors, "Content-Type": "application/json" } });
-      const { data: batch } = await sb.from("showing_batches").select("*").eq("share_token", token).maybeSingle();
-      if (!batch) return new Response(JSON.stringify({ error: "tour not found" }), { status: 404, headers: { ...cors, "Content-Type": "application/json" } });
+      /* Gated like the GET — a withdrawn link must not cancel a tour, which
+         clears queued reminders and emails Rene. */
+      const gate = await loadBatchByToken(sb, token);
+      if (!gate.ok) return new Response(JSON.stringify({ error: "tour not available" }), { status: 404, headers: { ...cors, "Content-Type": "application/json" } });
+      const batch = gate.batch;
 
       await sb.from("showing_messages").update({ status: "canceled" }).eq("batch_id", batch.id).eq("status", "queued");
       await sb.from("showing_batches").update({
@@ -552,8 +586,13 @@ Deno.serve(async (req) => {
       const body = await req.json();
       const token = body.share_token;
       if (!token || !body.showing_id) return new Response(JSON.stringify({ error: "share_token and showing_id required" }), { status: 400, headers: { ...cors, "Content-Type": "application/json" } });
-      const { data: batch } = await sb.from("showing_batches").select("id, contact_id, share_token, title").eq("share_token", token).maybeSingle();
-      if (!batch) return new Response(JSON.stringify({ error: "tour not found" }), { status: 404, headers: { ...cors, "Content-Type": "application/json" } });
+      /* Gated like the GET. This one is the reason expiry is scheduled_end + 7
+         days rather than the tour date itself: post-tour feedback has to still
+         be reachable after the showing, and cutting the link at the tour would
+         silently kill the reminder that asks for it. */
+      const gate = await loadBatchByToken(sb, token, "id, contact_id, share_token, title, revoked_at, expires_at");
+      if (!gate.ok) return new Response(JSON.stringify({ error: "tour not available" }), { status: 404, headers: { ...cors, "Content-Type": "application/json" } });
+      const batch = gate.batch;
 
       const updates: any = { updated_at: new Date().toISOString(), feedback_at: new Date().toISOString() };
       if (body.rating != null && body.rating >= 1 && body.rating <= 5) updates.lead_rating = body.rating;
@@ -610,16 +649,29 @@ Deno.serve(async (req) => {
           status: 404, headers: { ...cors, "Content-Type": "text/html; charset=utf-8" },
         });
       }
-      const { data: batch } = await sb.from("showing_batches").select("*").eq("share_token", token).maybeSingle();
-      if (!batch) {
-        return new Response("<!DOCTYPE html><html><body style='background:#0a0a0a;color:#fff;font-family:sans-serif;padding:40px;text-align:center'><h2>Tour not found</h2><p style='color:#888'>This link may have expired or been canceled.</p></body></html>", {
+      /* Status decided BEFORE the view counter moves and before fireScorer, so a
+         revoked or expired link stops accruing views and stops feeding lead
+         scoring. Same ordering as get_cma_snapshot and get_fee_sheet_snapshot. */
+      const gate = await loadBatchByToken(sb, token);
+      if (!gate.ok) {
+        /* Deliberately does not tell an arbitrary URL holder WHICH of revoked,
+           expired or never-existed applies — that distinction is Rene's, and
+           confirming "this was revoked" confirms the tour exists. */
+        return new Response("<!DOCTYPE html><html><body style='background:#0a0a0a;color:#fff;font-family:sans-serif;padding:40px;text-align:center'><h2>Tour not available</h2><p style='color:#888'>This link may have expired or been canceled. Reach out to Rene for an updated one.</p></body></html>", {
           status: 404, headers: { ...cors, "Content-Type": "text/html; charset=utf-8" },
         });
       }
+      const batch = gate.batch;
       const { data: stops } = await sb.from("showings").select("*").eq("batch_id", batch.id).is("deleted_at", null).order("sort_order", { ascending: true });
       let contact: any = null;
       if (batch.contact_id) {
-        const { data: c } = await sb.from("contacts").select("id, first_name, last_name, email, phone, pipeline_status").eq("id", batch.contact_id).maybeSingle();
+        /* ONLY id AND first_name. renderHtml references `contact` exactly twice —
+           its own signature and `Hi ${contact?.first_name}` — and id is needed for
+           fireScorer. email, phone and pipeline_status were being pulled into a
+           function that renders a page for whoever holds a forwarded link and
+           never used any of them. Not a leak as it stood, but one careless
+           template edit from being one; the fix is to not fetch it. */
+        const { data: c } = await sb.from("contacts").select("id, first_name").eq("id", batch.contact_id).maybeSingle();
         contact = c;
       }
 

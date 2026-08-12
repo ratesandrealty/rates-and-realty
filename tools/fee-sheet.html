@@ -141,14 +141,22 @@
         /* Mode toggle (Rate / Property comparison) */
         .mode-toggle-wrap { margin: 14px 0 8px; }
         .mode-toggle-label { font-size: 10px; letter-spacing: 1px; color: #888; margin-bottom: 6px; text-transform: uppercase; }
-        .mode-toggle { display: flex; gap: 0; }
+        /* TWO ROWS OF THREE, not one row of six.
+           This was `display:flex` with `flex:1` on six buttons. Flex items do not
+           shrink below their content width by default (min-width:auto), so in the
+           CRM's sidebar — measured at 263px of usable width against 387px of
+           buttons — Price, Buydown and HELOC were laid out PAST the container edge.
+           overflow-x was visible, so they painted outside it rather than
+           scrolling: HELOC sat half off the edge and was awkward to even click.
+           A 3-column grid wraps to two rows at every width and cannot overflow. */
+        .mode-toggle { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
         .mode-toggle button {
-            flex: 1; padding: 8px 7px; font-size: 11px; line-height: 1.2;
+            padding: 8px 7px; font-size: 11px; line-height: 1.2;
             background: transparent; color: #888; cursor: pointer;
-            border: 1px solid #555; transition: all .2s;
+            border: 1px solid #555; border-radius: 6px;
+            min-width: 0;              /* long labels shrink instead of overflowing */
+            transition: all .2s;
         }
-        .mode-toggle button:first-child { border-radius: 6px 0 0 6px; border-right: none; }
-        .mode-toggle button:last-child { border-radius: 0 6px 6px 0; }
         .mode-toggle button.active { background: var(--gold); color: #000; border-color: var(--gold); font-weight: 600; }
 
         .sidebar-actions {
@@ -1329,9 +1337,29 @@ function setMode(newMode) {
     if (helocSheet) helocSheet.style.display = isHeloc ? '' : 'none';
     if (buydownSheet) buydownSheet.style.display = isBuydown ? '' : 'none';
     fsApplyColumnGovernance();
+    if (isHeloc) helocSeedFromSidebar();
     renderCards();
     recalc();
     notifyParentOfChange();
+}
+
+/* HELOC's own inputs are never seeded from the CRM, so entering the mode with a
+   contact already loaded still showed "Available equity —" and a $0 estimate.
+   Nothing was broken — the panel renders and the two validation bullets are
+   correct — but a mode that starts blank when the value IS known reads as a mode
+   that does nothing, which is how it was reported.
+   Estimated Home Value is the one HELOC field the CRM can actually supply:
+   getFeeSheetData() resolves purchase_price from ls_purchase_price, then
+   f_prop_value, so for an existing homeowner it already carries the property
+   value. The draw amount and the card rates are genuine decisions and are
+   deliberately NOT invented here.
+   ONLY FILLS AN EMPTY FIELD — a restored draft or anything typed always wins. */
+function helocSeedFromSidebar() {
+    const v = $('heloc_value');
+    if (!v || parseCurrency(v.value) > 0) return;
+    const pp = parseCurrency($('purchasePrice') ? $('purchasePrice').value : '');
+    if (!(pp > 0)) return;
+    v.value = _helocMoney(pp);
 }
 
 /* In 'price' and 'property' mode, readSidebarInputs() is called once PER COLUMN
@@ -2186,7 +2214,20 @@ function calcPriceColumn(col) {
 
 function recalc() {
     if (_currentMode === 'heloc') { helocRecalc(); return; }
-    if (_currentMode === 'buydown') { buydownRecalc(); return; }
+    if (_currentMode === 'buydown') {
+        /* #loanAmount and #downDollar are written by syncDerivedDisplays(), which
+           lives in the main recalc body BELOW this early return. So in buydown mode
+           they were never derived: type a purchase price and a down payment and
+           LOAN AMOUNT stayed on its "Auto-calc" placeholder forever.
+           bdInputs() was computing the loan correctly the whole time — it falls back
+           to purchasePrice − down rather than reading #loanAmount — so only the
+           DISPLAY was missing. But a blank loan amount next to a report asking for a
+           loan amount reads as the input never arriving, which is exactly how this
+           was reported. Derive the sidebar first, then build the schedule. */
+        syncDerivedDisplays(getInputs());
+        buydownRecalc();
+        return;
+    }
     if (_currentMode === 'property') {
         if (!propertyScenarios || propertyScenarios.length === 0) {
             propertyScenarios = defaultPropertyScenarios();
@@ -2676,14 +2717,15 @@ function buydownRecalc() {
     }
     const sheet = $('buydownSheet');
     if (!sheet) return;
-    if (errs.length) { sheet.innerHTML = _bdReportHtml(null, inp); return; }
+    /* Pass errs through so the placeholder names ONLY what is missing. */
+    if (errs.length) { sheet.innerHTML = _bdReportHtml(null, inp, errs); return; }
     sheet.innerHTML = _bdReportHtml(bdCompute(inp), inp);
 }
 
 function _bdMoney(v) { return '$' + Math.round(v).toLocaleString('en-US'); }
 function _bdMoney2(v) { return '$' + v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
 
-function _bdReportHtml(res, inp) {
+function _bdReportHtml(res, inp, errs) {
     const dateStr = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
     const timeStr = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     const name = ($('borrowerName') && $('borrowerName').value) || 'TBD';
@@ -2691,8 +2733,20 @@ function _bdReportHtml(res, inp) {
     const payerLabel = { seller: 'Seller credit', lender: 'Lender credit', builder: 'Builder credit', borrower: 'Borrower paid' }[inp.payer] || 'Seller credit';
 
     if (!res) {
+        /* NAME ONLY WHAT IS ACTUALLY MISSING. This was the fixed string "Enter a
+           note rate and loan amount to build the buydown schedule." — printed
+           whenever EITHER input was absent. With a purchase price and down payment
+           on the sidebar the loan is already known ($400,000 in the reported case)
+           and only the note rate was outstanding, but the sheet still asked for
+           both. That sent the reader to check a loan amount that was fine, and
+           straight past the one field that actually needed filling. */
+        const need = (errs && errs.length)
+            ? errs
+            : ['Enter a note rate and loan amount to build the buydown schedule.'];
         return _fsReportHeader(name, addr, dateStr)
-            + '<div style="padding:26px;text-align:center;color:#777;font-size:13px;">Enter a note rate and loan amount to build the buydown schedule.</div>'
+            + '<div style="padding:26px;text-align:center;color:#777;font-size:13px;line-height:1.7;">'
+            +   need.map(function (e) { return _fsEsc(e); }).join('<br>')
+            + '</div>'
             + _fsReportFooter(dateStr, timeStr);
     }
 
