@@ -11,7 +11,9 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
  * - get_application: fetch mortgage application by email/borrower_id/portal_user_id
  * - get_saved_homes: fetch saved listings
  * - get_all_showings: fetch all showings (admin CRM use)
- * - get_documents: fetch uploaded documents by contact_id, portal_user_id, or lead_id
+ * - get_documents: fetch uploaded documents for the portal_user's own contact
+ *   (portal_user_id ONLY since 2026-08-12 — contact_id/email/lead_id are no
+ *   longer accepted as identity; see the block comment on the action)
  */
 
 const cors = {
@@ -339,29 +341,61 @@ Deno.serve(async (req: Request) => {
 
     // ─── GET DOCUMENTS ───────────────────────────────────────────────────
     if (action === 'get_documents') {
-      const { contact_id, portal_user_id, lead_id, borrower_id, email } = body;
-
-      // If portal_user_id provided, resolve to contact_id first
-      let resolvedContactId = contact_id || null;
-      if (!resolvedContactId && portal_user_id) {
-        const { data: pu } = await sb.from('portal_users').select('contact_id').eq('id', portal_user_id).single();
-        resolvedContactId = pu?.contact_id || null;
+      /* ── THIS IS NARROWED, NOT AUTHENTICATED. ──────────────────────────────
+       *
+       * Say it plainly so nobody reads this as solved: the borrower portal
+       * issues NO session — portal-auth returns a user object and nothing else,
+       * and the browser keeps it in localStorage. So this function still cannot
+       * tell a signed-in borrower from anyone who knows the right uuid. Only the
+       * Supabase Auth migration fixes that; see
+       * docs/PORTAL-IDENTITY-2026-08-12.md.
+       *
+       * What changed (2026-08-12) is WHICH uuid you must know.
+       *
+       * It used to accept a bare `contact_id`, and contact_id is not secret: it
+       * is in admin URLs across lead-detail, communications, drip-builder,
+       * email-marketing and earnings-dashboard, in Supabase webhooks, and in
+       * n8n payloads. `portal_user_id` exists in 4 rows, is returned only by a
+       * successful password login, and appears nowhere else in the system.
+       *
+       * That matters more here than anywhere else in this function, because
+       * this action does not just return rows — it mints fresh signed URLs into
+       * the private borrower-documents bucket, with the service role, which
+       * bypasses that bucket's RLS entirely. Pay stubs, W2s, bank statements,
+       * tax returns.
+       *
+       * `contact_id` and `email` are no longer accepted as identity. The only
+       * caller (public/unified-portal.html:2565) already sends portal_user_id
+       * alongside contact_id, so this needs no frontend change. */
+      const { portal_user_id } = body;
+      if (!portal_user_id) {
+        return err('portal_user_id required — please sign out and sign in again', 400);
       }
-      if (!resolvedContactId && email) {
-        const { data: c } = await sb.from('contacts').select('id').eq('email', email.toLowerCase()).single();
-        resolvedContactId = c?.id || null;
-      }
+      const { data: pu } = await sb.from('portal_users').select('contact_id').eq('id', portal_user_id).maybeSingle();
+      const resolvedContactId = pu?.contact_id || null;
+      if (!resolvedContactId) return err('Portal user has no linked contact', 403);
 
       // Build OR filter to catch all docs for this person.
       // NOTE: portal_user_id is NOT a column on uploaded_documents — it's
       // resolved to contact_id above. Don't add it to the OR filter or the
       // query 500s.
-      const filters: string[] = [];
-      if (resolvedContactId) filters.push(`contact_id.eq.${resolvedContactId}`);
-      if (lead_id) filters.push(`lead_id.eq.${lead_id}`);
-      if (borrower_id) filters.push(`borrower_id.eq.${borrower_id}`);
+      /* lead_id and borrower_id are taken FROM THE CONTACT ROW, never from the
+       * body. They are OR'd into this filter, so a caller-supplied value did not
+       * narrow the result — it WIDENED it. Anyone holding one valid
+       * portal_user_id could have appended someone else's borrower_id and been
+       * handed signed URLs to their documents in the same response. Pinning the
+       * identity above is worthless while the filter still trusts the body. */
+      /* contacts has borrower_id but NOT lead_id — verified against
+       * information_schema, not assumed. uploaded_documents.lead_id therefore
+       * has no owner-side value to match, so that leg is dropped entirely rather
+       * than left reading from the body. Documents filed only under a lead_id
+       * with no contact_id are not reachable here; that is correct until there
+       * is an owner-side way to prove the lead belongs to this portal user. */
+      const { data: ownerRow } = await sb.from('contacts')
+        .select('borrower_id').eq('id', resolvedContactId).maybeSingle();
 
-      if (!filters.length) return err('contact_id, portal_user_id, lead_id, borrower_id, or email required');
+      const filters: string[] = [`contact_id.eq.${resolvedContactId}`];
+      if (ownerRow?.borrower_id) filters.push(`borrower_id.eq.${ownerRow.borrower_id}`);
 
       const { data, error } = await sb.from('uploaded_documents')
         .select('*')
@@ -370,15 +404,23 @@ Deno.serve(async (req: Request) => {
 
       if (error) return err(error.message, 500);
 
-      // Private bucket: sign each doc's file_path fresh at request time (never return a public
-      // or persisted URL). Signed at render so a borrower page left open doesn't accumulate
-      // expired links — the next get_documents re-signs. gdrive_file_url (Drive copy) is left
-      // as-is. 1-hour TTL.
+      /* Private bucket: sign each doc's file_path fresh at request time (never
+       * return a public or persisted URL). Signed at render so a borrower page
+       * left open doesn't accumulate expired links — the next get_documents
+       * re-signs. gdrive_file_url (Drive copy) is left as-is.
+       *
+       * TTL 5 MINUTES, was 1 hour (2026-08-12). These URLs need to survive only
+       * the moment between this response and the borrower clicking a link on the
+       * page that just rendered. An hour is a long time for a link that carries
+       * a pay stub and needs no credential to redeem — every one that reaches a
+       * log, a proxy or a shared screenshot stays live for that whole window.
+       * The page re-signs on every load, so nothing legitimate breaks. */
+      const SIGNED_URL_TTL_SECONDS = 300;
       const docs = data || [];
       await Promise.all(docs.map(async (d: any) => {
         const p = d.file_path || d.storage_path;
         if (p) {
-          const { data: s } = await sb.storage.from('borrower-documents').createSignedUrl(p, 3600);
+          const { data: s } = await sb.storage.from('borrower-documents').createSignedUrl(p, SIGNED_URL_TTL_SECONDS);
           d.file_url = s?.signedUrl || d.gdrive_file_url || null;
         } else {
           d.file_url = d.gdrive_file_url || null;
