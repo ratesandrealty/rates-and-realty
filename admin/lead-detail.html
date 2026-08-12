@@ -5610,7 +5610,18 @@ async function _waitForAuthClient(maxMs) {
   while (!window._supabaseClient && Date.now() - start < maxMs) {
     await new Promise(r => setTimeout(r, 50));
   }
-  return window._supabaseClient || null;
+  const c = window._supabaseClient || null;
+  /* The FALLBACK path has to settle the session too. getSupabaseClient() now
+     waits for it, but this branch only polls for the global to appear — and
+     supabase-client.js sets that global BEFORE the session restores, so
+     returning here without awaiting would hand back exactly the unauthenticated
+     client that produced the mortgage_applications 403. */
+  if (c && c.auth && typeof c.auth.getSession === 'function') {
+    try {
+      await Promise.race([c.auth.getSession(), new Promise(r => setTimeout(r, 3000))]);
+    } catch (_) { /* fall through unauthenticated rather than blocking init */ }
+  }
+  return c;
 }
 
 async function _getUserAccessToken() {
@@ -5655,6 +5666,23 @@ function _ldSetText(id, text) {
 
 /* ── LOAD ── */
 async function loadData() {
+  /* SESSION FIRST — one await that covers the whole load burst.
+   *
+   * This function and everything it calls use the shared client synchronously
+   * (307 `_authClient().` sites on this page against 12 that await one). They are
+   * not individually wrong: one client is shared, so once the session is
+   * restored every later call carries it. The exposure is the first few hundred
+   * milliseconds of page load, when supabase-js has not finished reading the
+   * persisted session and a query goes out with the anon key alone.
+   *
+   * Against RLS that is a 403 on EVERY policy at once — four policies, admin
+   * user, shared lead, all failing — because all of them resolve through
+   * auth.uid() and auth.uid() is NULL. Intermittent, because it is a race.
+   *
+   * Awaiting once here is worth more than converting 307 call sites: it makes
+   * the ordering true for all of them, and a future call site inherits it
+   * without having to know. */
+  try { if (typeof _waitForAuthClient === 'function') await _waitForAuthClient(6000); } catch (_) {}
   try {
     if (!contactId && !leadId) {
       /* #topbar-status DOES NOT EXIST in this page's markup — only #topbar-name
