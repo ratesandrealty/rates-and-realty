@@ -365,7 +365,10 @@ function feeBreakdown(r, sc, rinp){
       + row('Subtotal F', fmt(r.subtotalF), 'sub')
       + row('Total Other Costs (E+F)', fmt(r.totalOther), 'sub')
       + row('Total Closing Costs', fmt(r.totalClosing), 'sub')
-      + (r.lenderCreditLine?row('Less: Lender Credits', fmt(-r.lenderCreditLine)):'')
+      /* The credit is still subtracted inside cashToClose — only the LINE is
+         suppressed. Hiding the number from the arithmetic would raise the
+         borrower's cash to close by the credit amount. */
+      + ((r.lenderCreditLine && (window.__SEC||{}).lender_credits)?row('Less: Lender Credits', fmt(-r.lenderCreditLine)):'')
       + (govFinanced?row('Less: Financed ('+esc(govLabel)+')', fmt(-r.govFeeAmount)):'')
       + row('Down Payment', fmt(down))
       + row('Estimated Cash to Close', fmt(r.cashToClose), 'total')
@@ -387,7 +390,14 @@ function helocBreakdown(r, draw, value, cltv, balance, origPct, autopay){
       + row('Estimated Monthly Payment', _helocMoney(r.monthly), 'total')
       +'</div>';
 }
-function feeDetails(inner){ return '<details class="fee-details"><summary>View fee details</summary>'+inner+'</details>'; }
+/* The itemised A/B/C/E/F breakdown is opt-in. Every caller routes through this
+   one helper, so gating here covers rate, price and property modes without
+   three separate checks that could drift apart. Returns '' when not opted in —
+   no empty <details> stub, which would advertise that something is hidden. */
+function feeDetails(inner){
+    if(!(window.__SEC||{}).fee_schedule) return '';
+    return '<details class="fee-details"><summary>View fee details</summary>'+inner+'</details>';
+}
 
 // ── RATE / SINGLE render ──
 function renderRate(snap){
@@ -460,7 +470,7 @@ function renderRate(snap){
       + row('Total Loan Costs', fmt(recR.totalLoanCosts))
       + row('Total Other Costs', fmt(recR.totalOther))
       + row('Total Closing Costs', fmt(recR.totalClosing), 'sub')
-      + (rec.lenderCredits?row('Lender Credits', fmt(-recR.lenderCreditLine)):'')
+      + ((rec.lenderCredits && (window.__SEC||{}).lender_credits)?row('Lender Credits', fmt(-recR.lenderCreditLine)):'')
       + row('Down Payment', fmt(inp.downPayment))
       + row('Estimated Cash to Close', fmt(recR.cashToClose), 'total')
       +'</div>'
@@ -729,6 +739,10 @@ function renderError(msg){
            Rene took the link back. Unknown statuses fall through to not-found
            rather than rendering a sheet — fail closed on a public surface. */
         if(data.status && data.status !== 'ok'){ renderNotFound(data.status); return; }
+        /* Section visibility is OPT-IN and resolved server-side; an older payload
+           with no `sections` key means nothing was opted in, so default to all
+           false rather than all true. Failing open here would undo the point. */
+        window.__SEC = Object.assign({lender_credits:false,fee_schedule:false,people:false}, data.sections||{});
         const mode = (data.data && data.data.mode) || 'rate';
         document.title = (data.borrower_name?data.borrower_name+' — ':'')+'Loan Estimate | Rates & Realty';
         // Mirror the admin tool per mode: property → SFR/Condo/2-4 Unit comparison;

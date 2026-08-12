@@ -273,12 +273,22 @@ const SPECS = [
        + 'comp:/origComp/.test(JSON.stringify(r.data)),'
        + 'hasOrigFee:/origFee/.test(JSON.stringify(r.data))});})()',
        '{"status":"ok","comp":false,"hasOrigFee":true}'],
-      /* The Origination Fee row STAYS. It is a required borrower disclosure and it
-         feeds subtotalA -> total loan costs -> cash to close; hiding it would make
-         the sheet stop reconciling, which is a worse problem than the one being
-         fixed. Only the RATE is secret. */
-      ['/Origination Fee/.test(document.body.textContent)', true],
+      /* Sections are OPT-IN and this link has opted into none, so the itemised fee
+         schedule (which is where the Origination Fee row lives) must NOT render.
+         Note what this does and does not mean: the origination fee is still inside
+         cash-to-close, exactly as before — only the breakdown is withheld. The
+         payment hero must still draw, or "hidden sections" has quietly become
+         "broken page". */
+      /* STRUCTURAL, not textual. document.body.textContent includes inline
+         <script> source, and fee.html contains the literal row('Origination Fee')
+         in its own code — so a text match reports the breakdown as present even
+         when nothing rendered. This trap has now cost two assertions in this file;
+         assert on the DOM the visitor actually gets. */
+      ['!!document.querySelector(".fee-details")', false],
+      ['!!document.querySelector(".fee-body")', false],
+      ['[].some.call(document.querySelectorAll(".row .rl"), function(e){return /Origination Fee/.test(e.textContent);})', false],
       ['!!document.querySelector(".payhero .amt")', true],
+      ['document.body.textContent.replace(/\s+/g,"").length > 500', true],
     ],
   },
   {

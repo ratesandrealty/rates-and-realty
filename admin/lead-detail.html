@@ -4812,6 +4812,13 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
             <button onclick="openFeeSheetFullscreen()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;"><i class="fas fa-expand" style="margin-right:4px"></i>Fullscreen</button>
           </div>
         </div>
+        <!-- SHARED LINKS. Every /fee/<slug> ever minted for this borrower, with
+             views and age, and a revoke control. Until now these could only be
+             created, never listed or withdrawn — a link sent in July was still
+             live with no way for Rene to pull it. Views and age are shown
+             together deliberately: 29 views on a July link is the fact that tells
+             you whether it is still circulating. -->
+        <div id="fsShareLinks" style="margin-bottom:14px;"></div>
         <iframe id="feeSheetIframe" src="about:blank" style="width:100%;height:calc(100vh - 200px);border:1px solid #222;border-radius:10px;background:#1a1a1a;"></iframe>
       </div>
     </div>
@@ -18751,7 +18758,11 @@ function switchTab(name, btn) {
     if (typeof loadDripStatus === 'function') loadDripStatus();
   }
   if (name === 'showings') loadContactShowings();
-  if (name === 'fee-sheet') prefillFeeSheet();
+  if (name === 'fee-sheet') { prefillFeeSheet();
+    /* Refreshed on every open, not just the first: a link minted from the SMS
+       composer while this tab was already rendered would otherwise not appear. */
+    try { if (typeof fsLoadShareLinks === 'function') fsLoadShareLinks(); } catch(_){}
+  }
   if (name === 'deal-analyzer') { initDealAnalyzer(); if (typeof loadCmaHistory === 'function') loadCmaHistory(); }
 }
 
@@ -37607,6 +37618,125 @@ async function _tcCancelScheduled(id){
     _tcLoadThread();
   }catch(e){ showToast('Cancel failed: '+((e&&e.message)||e), true); }
 }
+/* ═══ SHARED FEE-SHEET LINKS — list + revoke ═══════════════════════════════
+   These links are public, anonymous and were permanent. Creating one was a
+   single button; there was no way to see what existed or to withdraw it, so a
+   link sent months ago stayed live and Rene had no control that did not go
+   through me. list_fee_sheet_snapshots / revoke_fee_sheet_snapshot are both
+   staff-only in the database — this is the surface for them, not the control. */
+function _fsAgeLabel(iso){
+  if(!iso) return '';
+  var d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (d <= 0) return 'today';
+  if (d === 1) return 'yesterday';
+  if (d < 30) return d + ' days ago';
+  var m = Math.floor(d / 30);
+  return m === 1 ? '1 month ago' : m + ' months ago';
+}
+async function fsLoadShareLinks(){
+  var box = document.getElementById('fsShareLinks'); if(!box) return;
+  var cid = (typeof lpCid==='function' ? lpCid() : null) || new URLSearchParams(location.search).get('contact_id');
+  if(!cid){ box.innerHTML=''; return; }
+  var rows = [];
+  try{
+    var cl = (typeof _waitForAuthClient==='function') ? await _waitForAuthClient() : _authClient();
+    var r = await (cl||_authClient()).rpc('list_fee_sheet_snapshots', { p_contact_id: cid });
+    if(r.error) throw r.error;
+    rows = Array.isArray(r.data) ? r.data : [];
+  }catch(e){
+    /* Reported, never swallowed: an empty panel and a failed lookup must not
+       look the same, or "no links" becomes indistinguishable from "could not
+       check whether any exist". */
+    box.innerHTML = '<div style="font-size:11px;color:#E5A0A0;padding:8px 10px;border:1px solid rgba(229,72,77,.3);border-radius:8px;">'
+      + 'Could not load shared links: ' + lpEsc((e&&e.message)||String(e)) + '</div>';
+    return;
+  }
+  if(!rows.length){ box.innerHTML=''; return; }
+
+  var live = rows.filter(function(x){ return x.status==='live'; }).length;
+  box.innerHTML =
+    '<div style="border:1px solid rgba(201,168,76,.22);border-radius:10px;padding:10px 12px;background:rgba(201,168,76,.04);">'
+    + '<div style="font-size:11px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">'
+    +   'Shared links &nbsp;<span style="color:#8f8f8f;font-weight:600;text-transform:none;letter-spacing:0;">'
+    +   live + ' live of ' + rows.length + '</span></div>'
+    + rows.map(function(x){
+        var isLive = x.status === 'live';
+        var col = isLive ? '#7BD88F' : (x.status==='revoked' ? '#E5848A' : '#9a948a');
+        return '<div style="display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:7px;margin-bottom:4px;'
+          + 'background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);'+(isLive?'':'opacity:.62;')+'">'
+          + '<span style="flex-shrink:0;font-size:10px;font-weight:800;color:'+col+';text-transform:uppercase;width:58px;">'+lpEsc(x.status)+'</span>'
+          + '<a href="https://homes.ratesandrealty.com/fee/'+lpEsc(x.slug)+'" target="_blank" rel="noopener"'
+          +   ' style="font-family:ui-monospace,monospace;font-size:12px;color:#ddd;text-decoration:underline;flex-shrink:0;">/fee/'+lpEsc(x.slug)+'</a>'
+          + '<span style="flex:1;min-width:0;font-size:11px;color:#8f8f8f;">'
+          +   '<strong style="color:#ccc;">'+(x.view_count||0)+'</strong> view'+((x.view_count===1)?'':'s')
+          +   ' · created ' + lpEsc(_fsAgeLabel(x.created_at))
+          +   (x.last_viewed_at ? ' · last opened ' + lpEsc(_fsAgeLabel(x.last_viewed_at)) : '')
+          + '</span>'
+          + (isLive
+              ? _fsSectionToggles(x)
+              + '<button type="button" onclick="fsRevokeLink(\''+lpEsc(x.slug)+'\',true)" style="flex-shrink:0;background:transparent;border:1px solid rgba(229,72,77,.45);color:#E5848A;border-radius:6px;font-size:10.5px;font-weight:700;padding:4px 10px;cursor:pointer;font-family:inherit;">Revoke</button>'
+              : (x.status==='revoked'
+                  ? '<button type="button" onclick="fsRevokeLink(\''+lpEsc(x.slug)+'\',false)" style="flex-shrink:0;background:transparent;border:1px solid rgba(255,255,255,.18);color:#9a948a;border-radius:6px;font-size:10.5px;font-weight:700;padding:4px 10px;cursor:pointer;font-family:inherit;">Restore</button>'
+                  : '<span style="flex-shrink:0;font-size:10.5px;color:#777;padding:4px 10px;">expired</span>'))
+          + '</div>';
+      }).join('')
+    + '</div>';
+}
+/* SECTION TOGGLES — opt-in, per link, defaulting hidden.
+   Three small checkboxes beside each live link rather than a settings dialog: the
+   decision is per-recipient ("is this one going to the borrower or their agent"),
+   so it belongs next to the link it applies to.
+   Labels say what becomes VISIBLE. A checkbox labelled with what it HIDES gets
+   read backwards about half the time, and reading this one backwards is how
+   compensation reaches an agent. */
+function _fsSectionToggles(x){
+  var sec = x.share_sections || {};
+  var defs = [['fee_schedule','Fee breakdown'],['lender_credits','Lender credits'],['people','Co-borrowers']];
+  return '<span style="flex-shrink:0;display:flex;gap:9px;align-items:center;margin-right:6px;">'
+    + defs.map(function(d){
+        var on = sec[d[0]] === true;
+        return '<label title="Show ' + d[1].toLowerCase() + ' on the shared page"'
+          + ' style="display:inline-flex;align-items:center;gap:4px;font-size:10px;color:' + (on?'#C9A84C':'#7f7a72') + ';cursor:pointer;white-space:nowrap;">'
+          + '<input type="checkbox"' + (on?' checked':'')
+          + ' onchange="fsSetSection(\'' + lpEsc(x.slug) + '\',\'' + d[0] + '\',this.checked)"'
+          + ' style="width:12px;height:12px;accent-color:#C9A84C;cursor:pointer;margin:0;">'
+          + lpEsc(d[1]) + '</label>';
+      }).join('')
+    + '</span>';
+}
+async function fsSetSection(slug, key, on){
+  try{
+    /* Read the CURRENT sections and post all three back. set_fee_sheet_sections
+       whitelists and rewrites every key, so sending one alone would silently reset
+       the other two to hidden — safe in one direction, but it would look like the
+       UI forgetting what Rene chose. */
+    var cur = {};
+    var cid = (typeof lpCid==='function' ? lpCid() : null);
+    var lr = await _authClient().rpc('list_fee_sheet_snapshots', { p_contact_id: cid });
+    if(!lr.error && Array.isArray(lr.data)){
+      var row = lr.data.filter(function(z){ return z.slug === slug; })[0];
+      if(row && row.share_sections) cur = row.share_sections;
+    }
+    cur[key] = !!on;
+    var r = await _authClient().rpc('set_fee_sheet_sections', { p_slug: slug, p_sections: cur });
+    if(r.error) throw r.error;
+    showToast((on ? 'Showing ' : 'Hiding ') + key.replace(/_/g,' ') + ' on /fee/' + slug);
+    fsLoadShareLinks();
+  }catch(e){
+    showToast('Could not update: ' + ((e&&e.message)||e), true);
+    fsLoadShareLinks();   // re-sync the checkbox to what the server actually holds
+  }
+}
+async function fsRevokeLink(slug, revoke){
+  if(revoke && !confirm('Revoke /fee/'+slug+'?\n\nAnyone who already has this link will see "no longer available". You can restore it afterwards.')) return;
+  try{
+    var r = await _authClient().rpc('revoke_fee_sheet_snapshot', { p_slug: slug, p_revoke: !!revoke });
+    if(r.error) throw r.error;
+    showToast(revoke ? ('Revoked /fee/'+slug) : ('Restored /fee/'+slug));
+    fsLoadShareLinks();
+  }catch(e){ showToast('Could not update link: '+((e&&e.message)||e), true); }
+}
+
 // ── SMS a fee sheet: freeze a snapshot → hosted short link → append to the message ──
 async function _tcFeeSheetLink(){
   var cid=(_tcState&&_tcState.cid) || (typeof lpCid==='function'?lpCid():null) || new URLSearchParams(location.search).get('contact_id');
@@ -37620,6 +37750,8 @@ async function _tcFeeSheetLink(){
     var ta=document.getElementById('tcBody');
     if(ta){ var cur=(ta.value||'').replace(/\s+$/,''); ta.value=(cur?cur+'\n':'')+res.url; _tcCharCount(); ta.focus(); }
     showToast('Fee sheet link added' + (res.slug ? ' · '+res.slug : ''));
+    // Keep the Shared-links panel truthful the moment a link is created.
+    try { if (typeof fsLoadShareLinks === 'function') fsLoadShareLinks(); } catch(_){}
   }catch(e){
     // e.g. "no fee sheet draft for this contact — build/save one first"
     showToast((e&&e.message)||String(e), true);
