@@ -158,7 +158,19 @@ async function list(lang: string) {
         title: fresh[b.key].title, body: fresh[b.key].body,
         source_hash: hashByKey[b.key], translated_at: new Date().toISOString(),
       }));
-    if (upserts.length) await sb.from("va_portal_help_i18n").upsert(upserts, { onConflict: "key,lang" });
+    /* READ THE ERROR. This was a bare await, and it hid a real failure for as
+       long as the feature existed: the cache's FK pointed at va_portal_help, so
+       every write was rejected and every page load re-translated from scratch —
+       a paid API call and its latency, on every view, reported as success.
+       A cache that cannot write must SAY so; the translation itself still
+       returns, so this degrades cost and speed, never correctness. */
+    if (upserts.length) {
+      const { error: cacheErr } = await sb.from("va_portal_help_i18n")
+        .upsert(upserts, { onConflict: "key,lang" });
+      if (cacheErr) {
+        console.error(`[va-help] TRANSLATION CACHE WRITE FAILED (${targetLang}) — every view will re-translate and re-bill: ${cacheErr.message}`);
+      }
+    }
   }
 
   return rows.map((b: any) => {

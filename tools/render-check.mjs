@@ -1499,6 +1499,48 @@ const SPECS = [
     minVisibleText: 200,
   },
   {
+    /* THE VA TRAINING PAGE, and the formatter both it and the ⓘ popup render
+       through.
+       The page's DATA comes from help_topics and the stub does not serve real
+       rows, so this deliberately does NOT assert section counts — that would be
+       asserting a fact about the stub. What it asserts is everything that is
+       true regardless of data: the shell renders, the script parses and runs,
+       and mdToHtml turns markdown into the right tags AND refuses the two things
+       that would make it a security hole.
+       That last part is the reason this spec exists. mdToHtml is hand-written
+       markup generation over author text; if it ever stopped escaping first, a
+       help topic would become script injection on every page that shows a ⓘ. */
+    name: 'VA training page renders and its markdown formatter is safe',
+    url: '/admin/va-training',
+    role: 'admin',
+    steps: [{ waitMs: 1500 }],
+    present: ['#sections', '#tocList', '#q'],
+    evals: [
+      ['typeof (window.HelpTopic && window.HelpTopic.mdToHtml)', 'function'],
+      // Structure it must produce.
+      ['/<h3>Heading<\\/h3>/.test(window.HelpTopic.mdToHtml("# Heading"))', true],
+      ['/<strong>b<\\/strong>/.test(window.HelpTopic.mdToHtml("**b**"))', true],
+      ['/<ul><li>one<\\/li><li>two<\\/li><\\/ul>/.test(window.HelpTopic.mdToHtml("- one\\n- two"))', true],
+      ['/<ol><li>a<\\/li><\\/ol>/.test(window.HelpTopic.mdToHtml("1. a"))', true],
+      ['/href="https:\\/\\/example.com"/.test(window.HelpTopic.mdToHtml("[x](https://example.com)"))', true],
+      /* ESCAPE-FIRST. Author text can never become markup: raw HTML stays inert,
+         and a javascript: link is left as literal text rather than becoming an
+         anchor. */
+      ['window.HelpTopic.mdToHtml("<img src=x onerror=alert(1)>").indexOf("<img") === -1', true],
+      ['window.HelpTopic.mdToHtml("<script>bad()<\\/script>").indexOf("<script") === -1', true],
+      /* ASSERT THE PROPERTY, NOT THE SUBSTRING. The first version of this checked
+         that "javascript:" did not appear anywhere in the output — and failed,
+         correctly, because a REJECTED link is left as inert escaped TEXT
+         ("<p>[x](javascript:alert(1))</p>"). The word appearing as prose is
+         harmless; what must never happen is it becoming an href. The bad
+         assertion would have pushed someone to "fix" working code. */
+      ['/href\\s*=\\s*"\\s*javascript:/i.test(window.HelpTopic.mdToHtml("[x](javascript:alert(1))"))', false],
+      ['window.HelpTopic.mdToHtml("[x](javascript:alert(1))").indexOf("<a ") === -1', true],
+      ['/href\\s*=\\s*"\\s*data:/i.test(window.HelpTopic.mdToHtml("[x](data:text/html,<script>1</script>)"))', false],
+    ],
+    minVisibleText: 60,
+  },
+  {
     name: 'inbox page is NOT scoped (whole mailbox is the product there)',
     url: '/admin/inbox',
     role: 'admin',

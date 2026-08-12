@@ -345,7 +345,7 @@
     function mountHelpButton() {
       if (document.querySelector('script[src*="/admin/js/help-button.js"]')) return;
       const hb = document.createElement('script');
-      hb.src = '/admin/js/help-button.js?v=0256ab3b63';
+      hb.src = '/admin/js/help-button.js?v=d508339ecc';
       document.head.appendChild(hb);
     }
     // Universal task capture (📌 + Ctrl+Shift+K). Same reasoning as the two

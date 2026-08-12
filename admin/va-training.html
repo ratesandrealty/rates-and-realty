@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VA Training | Rates &amp; Realty CRM</title>
+<script src="/admin/js/auth-guard.js?v=f6fb922860"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<script src="/api/env.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0a0a;color:#eee;font-family:'Segoe UI',Arial,sans-serif;min-height:100vh}
+a{text-decoration:none;color:inherit}
+
+.tb{background:#0d0d0d;border-bottom:1px solid #1a1a1a;padding:0 22px;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:60}
+.tb h1{font-size:1rem;font-weight:700;color:#eee;display:flex;align-items:center;gap:10px}
+.tb .sub{font-size:.72rem;color:#666;font-weight:400}
+.tb-act{display:flex;align-items:center;gap:8px}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;font-size:.76rem;font-weight:600;border-radius:7px;cursor:pointer;border:1px solid #2a2a2a;background:#141414;color:#aaa;font-family:inherit}
+.btn:hover{border-color:#C9A84C;color:#C9A84C}
+.btn.gold{background:#C9A84C;border-color:#C9A84C;color:#111}
+.btn.gold:hover{background:#d8ba63;color:#111}
+
+.wrap{display:grid;grid-template-columns:250px 1fr;gap:0;max-width:1400px;margin:0 auto;align-items:start}
+@media(max-width:900px){.wrap{grid-template-columns:1fr}#toc{display:none}}
+
+#toc{position:sticky;top:56px;max-height:calc(100vh - 56px);overflow-y:auto;padding:16px 10px 40px;border-right:1px solid #161616}
+.toc-h{font-size:.62rem;font-weight:700;color:#4a4a4a;text-transform:uppercase;letter-spacing:.12em;padding:10px 10px 6px}
+.toc-a{display:block;padding:6px 10px;border-radius:7px;font-size:.78rem;color:#8a8a8a;line-height:1.35;cursor:pointer}
+.toc-a:hover{background:#141414;color:#ccc}
+.toc-a.on{background:rgba(201,168,76,.12);color:#C9A84C;font-weight:600}
+.toc-a.empty{color:#4d4d4d;font-style:italic}
+
+.main{padding:20px 26px 80px;min-width:0}
+.searchbar{position:relative;margin-bottom:18px}
+.searchbar input{width:100%;box-sizing:border-box;background:#111;border:1px solid #242424;border-radius:10px;color:#eee;font-size:.86rem;padding:11px 14px 11px 38px;font-family:inherit;outline:none}
+.searchbar input:focus{border-color:rgba(201,168,76,.55)}
+.searchbar i{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:#555;font-size:.8rem}
+.hits{font-size:.72rem;color:#666;margin:-10px 0 14px 2px;min-height:14px}
+
+.sec{border:1px solid #1c1c1c;border-radius:12px;background:#0e0e0e;padding:18px 20px;margin-bottom:14px;scroll-margin-top:70px}
+.sec.is-empty{border-style:dashed;border-color:#242424;background:#0b0b0b}
+.sec-head{display:flex;align-items:flex-start;gap:10px;margin-bottom:10px}
+.sec-n{flex-shrink:0;width:24px;height:24px;border-radius:50%;background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.3);color:#C9A84C;font-size:.68rem;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:2px}
+.sec-t{flex:1;min-width:0;font-size:1.02rem;font-weight:700;color:#f0f0f0;line-height:1.3}
+.sec-tools{display:flex;gap:5px;flex-shrink:0}
+.tool{background:transparent;border:1px solid #262626;color:#777;border-radius:6px;font-size:.66rem;font-weight:600;padding:3px 8px;cursor:pointer;font-family:inherit}
+.tool:hover{border-color:#C9A84C;color:#C9A84C}
+.tool.danger:hover{border-color:#E5484D;color:#E5848A}
+.sec-vid{width:100%;border-radius:9px;background:#000;display:block;margin:0 0 12px;max-height:56vh}
+.todo{font-size:.8rem;color:#6a6a6a;font-style:italic;padding:6px 0}
+
+/* Body typography — mirrors .ht-desc in help-button.js so a section reads the
+   same here as it does in the ⓘ popup. One column, one formatter, one look. */
+.body{font-size:.9rem;line-height:1.68;color:#d6d6d6;word-break:break-word}
+.body p{margin:0 0 11px}.body p:last-child{margin-bottom:0}
+.body h3{font-size:.98rem;color:#C9A84C;margin:16px 0 7px;font-weight:700}
+.body h4{font-size:.9rem;color:#e6c76a;margin:14px 0 6px;font-weight:700}
+.body h5{font-size:.85rem;color:#cfcfcf;margin:12px 0 5px;font-weight:700}
+.body ul,.body ol{margin:0 0 11px;padding-left:22px}
+.body li{margin:0 0 5px}
+.body code{background:rgba(255,255,255,.07);border-radius:4px;padding:1px 5px;font-size:.82rem;font-family:ui-monospace,monospace}
+.body a{color:#C9A84C;text-decoration:underline}
+.body strong{color:#f5f5f5}
+mark{background:rgba(201,168,76,.32);color:#fff;border-radius:3px;padding:0 2px}
+
+.empty-state{text-align:center;padding:60px 20px;color:#666;font-size:.9rem}
+</style>
+</head>
+<body>
+
+<div class="tb">
+  <h1>📘 VA Training <span class="sub" id="tbSub"></span></h1>
+  <div class="tb-act">
+    <a class="btn" href="/dashboard/admin"><i class="fas fa-arrow-left"></i> Dashboard</a>
+    <button class="btn gold" id="addBtn" hidden onclick="addSection()">＋ Add section</button>
+  </div>
+</div>
+
+<div class="wrap">
+  <nav id="toc"><div class="toc-h">Contents</div><div id="tocList"></div></nav>
+  <main class="main">
+    <div class="searchbar">
+      <i class="fas fa-search"></i>
+      <input id="q" type="search" placeholder="Search the guide — try “escrow”, “appraisal”, “follow up”…" oninput="onSearch()" autocomplete="off">
+    </div>
+    <div class="hits" id="hits"></div>
+    <div id="sections"></div>
+  </main>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   VA TRAINING — a document assembled from help_topics, NOT a page with content
+   in it.
+
+   THE WHOLE POINT: every section here is a row in help_topics, the same table
+   the ⓘ buttons read. Rene writes a section once and it appears BOTH as a
+   section of this guide and as the ⓘ popup on whatever CRM element carries that
+   topic key. That is the only reason to build this rather than host a deck.
+
+   ADDING A SECTION IS WRITING A ROW. There is no list of sections in this file —
+   it renders whatever `collection = 'va_training'` returns, ordered by
+   sort_order. A new section is an insert; a reorder is an integer.
+
+   EMPTY SECTIONS ARE HIDDEN FROM THE VA and shown to the admin as "not written
+   yet". Same rule as the ⓘ buttons: a reader should never be handed a heading
+   with nothing under it, and the person who can fill it must be able to see that
+   it is waiting. The scaffold ships with 24 titles and no bodies, so this is a
+   checklist for Rene and an empty-until-ready guide for her.
+
+   EDITING REUSES THE ⓘ EDITOR. window.HelpTopic.open() is the same modal, the
+   same help_topic_upsert path, the same LoomRecorder, the same admin gate. A
+   second editor over one table is how two write paths start disagreeing about
+   what a field means.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const COLLECTION = 'va_training';
+let _rows = [], _sb = null, _isAdmin = false;
+
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function client(){
+  if(_sb) return _sb;
+  if(typeof window.getSupabaseClient==='function') _sb = await window.getSupabaseClient();
+  else if(window._supabaseClient) _sb = window._supabaseClient;
+  else _sb = window.supabase.createClient(window.APP_CONFIG.SUPABASE_URL, window.APP_CONFIG.SUPABASE_ANON_KEY);
+  return _sb;
+}
+function isAdmin(){ return (sessionStorage.getItem('rnr_app_role')||'').toLowerCase()==='admin'; }
+
+/* The SAME formatter the ⓘ popup uses, exported by help-button.js. Falls back to
+   escaped text if that script has not loaded — a guide that renders as plain
+   paragraphs is readable; one that renders raw markdown source is not. */
+function fmt(md){
+  if(window.HelpTopic && typeof window.HelpTopic.mdToHtml==='function') return window.HelpTopic.mdToHtml(md);
+  return '<p>'+esc(md).replace(/\n/g,'<br>')+'</p>';
+}
+
+function hasContent(r){ return !!((r.description && String(r.description).trim()) || r.video_url); }
+
+async function load(){
+  const cl = await client();
+  const r = await cl.from('help_topics').select('*').eq('collection', COLLECTION)
+              .eq('is_active', true).order('sort_order').order('topic_key');
+  if(r.error){
+    document.getElementById('sections').innerHTML =
+      '<div class="empty-state">Could not load the guide: '+esc(r.error.message)+'</div>';
+    return;
+  }
+  _rows = r.data || [];
+  render();
+}
+
+function visibleRows(){
+  /* Admin sees everything, including what is still to write. The VA sees only
+     what is finished. */
+  return _isAdmin ? _rows : _rows.filter(hasContent);
+}
+
+function render(){
+  const rows = visibleRows();
+  const done = _rows.filter(hasContent).length;
+  document.getElementById('tbSub').textContent =
+    _isAdmin ? ('· ' + done + ' of ' + _rows.length + ' written') : ('· ' + rows.length + ' sections');
+
+  const toc = document.getElementById('tocList');
+  toc.innerHTML = rows.map((r,i)=>
+    '<a class="toc-a'+(hasContent(r)?'':' empty')+'" data-k="'+esc(r.topic_key)+'" onclick="jump(\''+esc(r.topic_key)+'\')">'
+    + esc(r.title||r.topic_key) + (hasContent(r)?'':' ·') + '</a>').join('');
+
+  const host = document.getElementById('sections');
+  if(!rows.length){
+    host.innerHTML = '<div class="empty-state">Nothing has been written yet.'
+      + (_isAdmin ? ' Use <strong>＋ Add section</strong> to start.' : ' Check back shortly.') + '</div>';
+    return;
+  }
+  host.innerHTML = rows.map((r,i)=>sectionHtml(r,i)).join('');
+}
+
+function sectionHtml(r, i){
+  const written = hasContent(r);
+  const tools = _isAdmin
+    ? '<div class="sec-tools">'
+      + '<button class="tool" onclick="editSection(\''+esc(r.topic_key)+'\')" title="Edit text and video">✎ Edit</button>'
+      + '<button class="tool" onclick="move(\''+esc(r.topic_key)+'\',-1)" title="Move up">↑</button>'
+      + '<button class="tool" onclick="move(\''+esc(r.topic_key)+'\',1)" title="Move down">↓</button>'
+      + '<button class="tool danger" onclick="removeSection(\''+esc(r.topic_key)+'\')" title="Delete this section">🗑</button>'
+      + '</div>'
+    : '';
+  return '<section class="sec'+(written?'':' is-empty')+'" id="s-'+esc(r.topic_key)+'">'
+    + '<div class="sec-head"><span class="sec-n">'+(i+1)+'</span>'
+    +   '<span class="sec-t">'+esc(r.title||r.topic_key)+'</span>'+tools+'</div>'
+    /* Video ABOVE the text, so someone who would rather watch does not scroll
+       past the whole procedure to find it. Optional — text renders alone. */
+    + (r.video_url ? '<video class="sec-vid" controls preload="metadata" playsinline src="'+esc(r.video_url)+'"></video>' : '')
+    + (written
+        ? '<div class="body" data-body>'+fmt(r.description||'')+'</div>'
+        : '<div class="todo">Not written yet.</div>')
+    + '</section>';
+}
+
+function jump(key){
+  const el = document.getElementById('s-'+key);
+  if(el) el.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+/* ── SEARCH ────────────────────────────────────────────────────────────────
+   Filters SECTIONS and highlights hits inside the rendered body. Operates on
+   textContent, never on the markup, so a search for "p" cannot match a <p> tag
+   and wrap the document in <mark>. */
+function onSearch(){
+  const q = (document.getElementById('q').value||'').trim().toLowerCase();
+  const hits = document.getElementById('hits');
+  const rows = visibleRows();
+  if(!q){
+    render();
+    hits.textContent='';
+    return;
+  }
+  const matched = rows.filter(r =>
+    (r.title||'').toLowerCase().includes(q) || (r.description||'').toLowerCase().includes(q));
+  hits.textContent = matched.length
+    ? (matched.length + ' section' + (matched.length===1?'':'s') + ' mention “' + q + '”')
+    : ('Nothing mentions “' + q + '”');
+  document.getElementById('tocList').innerHTML = matched.map(r=>
+    '<a class="toc-a'+(hasContent(r)?'':' empty')+'" onclick="jump(\''+esc(r.topic_key)+'\')">'+esc(r.title||r.topic_key)+'</a>').join('');
+  document.getElementById('sections').innerHTML =
+    matched.length ? matched.map((r,i)=>sectionHtml(r,i)).join('')
+                   : '<div class="empty-state">No section mentions “'+esc(q)+'”.</div>';
+  highlight(q);
+}
+
+function highlight(q){
+  document.querySelectorAll('#sections [data-body], #sections .sec-t').forEach(function(el){
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+    const targets = [];
+    while(walker.nextNode()){
+      const n = walker.currentNode;
+      if(n.nodeValue && n.nodeValue.toLowerCase().includes(q)) targets.push(n);
+    }
+    targets.forEach(function(n){
+      const frag = document.createDocumentFragment();
+      let s = n.nodeValue, low = s.toLowerCase(), idx, from = 0;
+      while((idx = low.indexOf(q, from)) !== -1){
+        if(idx > from) frag.appendChild(document.createTextNode(s.slice(from, idx)));
+        const m = document.createElement('mark');
+        m.textContent = s.slice(idx, idx + q.length);
+        frag.appendChild(m);
+        from = idx + q.length;
+      }
+      if(from < s.length) frag.appendChild(document.createTextNode(s.slice(from)));
+      n.parentNode.replaceChild(frag, n);
+    });
+  });
+}
+
+/* ── ADMIN ─────────────────────────────────────────────────────────────────
+   Every write goes through help_topic_upsert / help_topic_delete, both of which
+   raise 'admin only' server-side. The buttons below are a convenience; they are
+   NOT the control, and hiding them protects nothing. */
+function editSection(key){
+  const r = _rows.find(x=>x.topic_key===key) || {};
+  if(!window.HelpTopic || typeof window.HelpTopic.open!=='function'){
+    alert('The help editor is not available on this page.'); return;
+  }
+  window.HelpTopic.open(key, r.title||key);
+  /* The modal writes straight to help_topics; re-read when it closes so the page
+     reflects the save without a reload. Polls for the overlay disappearing
+     rather than needing a callback the component does not expose. */
+  const t = setInterval(function(){
+    if(!document.getElementById('ht-ov')){ clearInterval(t); load(); }
+  }, 400);
+}
+
+async function addSection(){
+  const title = prompt('Section title'); if(!title || !title.trim()) return;
+  /* The key is derived from the title, not typed, so keys stay in the
+     crm./va. convention instead of becoming ad-hoc at 60 rows. */
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40);
+  if(!slug){ alert('That title has no letters or numbers in it.'); return; }
+  const key = 'va.training.' + slug;
+  if(_rows.some(r=>r.topic_key===key)){ alert('A section with that name already exists.'); return; }
+  const last = _rows.length ? Math.max.apply(null, _rows.map(r=>r.sort_order||0)) : 0;
+  try{
+    const cl = await client();
+    const r = await cl.rpc('help_topic_upsert', {
+      p_key:key, p_title:title.trim(), p_description:null, p_video_url:null,
+      p_video_slug:null, p_area:'va', p_sort_order:last+10, p_is_active:true,
+      p_collection:COLLECTION
+    });
+    if(r.error) throw r.error;
+    await load();
+    editSection(key);          // straight into writing it
+  }catch(e){ alert('Could not add the section: '+((e&&e.message)||e)); }
+}
+
+async function move(key, dir){
+  const rows = _rows.slice();
+  const i = rows.findIndex(r=>r.topic_key===key);
+  const j = i + dir;
+  if(i<0 || j<0 || j>=rows.length) return;
+  /* Swap the two sort_order VALUES rather than renumbering everything — two
+     writes instead of twenty-four, and it cannot renumber a row somebody else
+     is editing. */
+  const a = rows[i], b = rows[j];
+  const av = a.sort_order||0, bv = b.sort_order||0;
+  try{
+    const cl = await client();
+    const r1 = await cl.rpc('help_topic_upsert', { p_key:a.topic_key, p_sort_order:(av===bv? bv+1 : bv) });
+    if(r1.error) throw r1.error;
+    const r2 = await cl.rpc('help_topic_upsert', { p_key:b.topic_key, p_sort_order:av });
+    if(r2.error) throw r2.error;
+    await load();
+  }catch(e){ alert('Could not reorder: '+((e&&e.message)||e)); }
+}
+
+async function removeSection(key){
+  const r = _rows.find(x=>x.topic_key===key) || {};
+  const warn = hasContent(r)
+    ? 'Delete “'+(r.title||key)+'”?\n\nThis section HAS content and it will be lost. It also disappears from any ⓘ button using this topic.'
+    : 'Delete the empty section “'+(r.title||key)+'”?';
+  if(!confirm(warn)) return;
+  try{
+    const cl = await client();
+    const res = await cl.rpc('help_topic_delete', { p_key:key });
+    if(res.error) throw res.error;
+    await load();
+  }catch(e){ alert('Could not delete: '+((e&&e.message)||e)); }
+}
+
+/* Scroll-spy for the contents rail. */
+function spy(){
+  const secs = Array.prototype.slice.call(document.querySelectorAll('#sections .sec'));
+  if(!secs.length) return;
+  let cur = secs[0].id;
+  for(const s of secs){ if(s.getBoundingClientRect().top <= 90) cur = s.id; }
+  document.querySelectorAll('#tocList .toc-a').forEach(function(a){
+    a.classList.toggle('on', 's-'+a.getAttribute('data-k') === cur);
+  });
+}
+window.addEventListener('scroll', spy, { passive:true });
+
+(async function init(){
+  /* Wait for the role gate before deciding what to render — _isAdmin decides
+     whether unwritten sections are visible at all, so rendering first would show
+     the admin a VA's view and then flip it. */
+  try{ if(window._rrGateReady) await window._rrGateReady; }catch(_){}
+  _isAdmin = isAdmin();
+  document.getElementById('addBtn').hidden = !_isAdmin;
+  await load();
+  spy();
+})();
+</script>
+</body>
+</html>
