@@ -33,12 +33,21 @@
   var DIALER_CSS = `
   /* dial pad — lives inside the same modal, not a second one */
   .cm-pad{display:flex;flex-direction:column;gap:10px;width:100%;}
-  .cm-pad-input{width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid rgba(201,168,76,0.28);border-radius:10px;color:#F5F0E8;padding:11px 12px;font-size:19px;letter-spacing:.5px;text-align:center;font-family:inherit;font-variant-numeric:tabular-nums;}
+  /* PLACEHOLDER MUST FIT. At 19px + .5px letter-spacing, "(555) 123-4567" ran
+     past the input and rendered as "(555) 123-45" — a truncated example number
+     reads as a truncated REAL number, which is the one thing a dial field must
+     never suggest. 17px, no letter-spacing, and padding trimmed so the full
+     example fits at the modal's narrowest. */
+  .cm-pad-input{width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid rgba(201,168,76,0.28);border-radius:10px;color:#F5F0E8;padding:11px 8px;font-size:17px;letter-spacing:0;text-align:center;font-family:inherit;font-variant-numeric:tabular-nums;}
+  .cm-pad-input::placeholder{color:#6b665c;font-size:15px;letter-spacing:0;}
   .cm-pad-input:focus{outline:none;border-color:rgba(201,168,76,0.7);}
   .cm-pad-note{min-height:15px;font-size:11.5px;line-height:1.4;color:#8a8475;text-align:center;}
   .cm-pad-note.is-err{color:#E05252;}
   .cm-pad-keys{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;}
-  .cm-pad-key{height:42px;border-radius:9px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.03);color:#F5F0E8;font-size:17px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .12s,border-color .12s;}
+  /* Same family, size and weight as the number above them — the keypad used to
+     mix 17px/600 keys under a 19px/letter-spaced field, so the two halves of one
+     control looked like two controls. */
+  .cm-pad-key{height:42px;border-radius:9px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.03);color:#F5F0E8;font-size:17px;font-weight:500;font-variant-numeric:tabular-nums;cursor:pointer;font-family:inherit;transition:background .12s,border-color .12s;}
   .cm-pad-key:hover{background:rgba(201,168,76,0.14);border-color:rgba(201,168,76,0.4);}
   .cm-pad-key:active{transform:scale(.97);}
   .cm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 9999; backdrop-filter: blur(4px); }
@@ -47,6 +56,12 @@
   .cm-close { position: absolute; top: 14px; right: 14px; width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.06); border: none; color: #888; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
   .cm-close:hover { background: rgba(255,255,255,0.1); color: #fff; }
   .cm-avatar-wrap { display: flex; justify-content: center; margin: 8px 0 14px; position: relative; }
+  /* PAD MODE: there is no person yet, so an 84px gold disc reading "#" was the
+     largest thing on a screen whose subject is the number you are typing. Shrunk
+     and de-emphasised — it becomes a marker, not a portrait. The contact modal
+     keeps the full-size avatar, where it identifies someone real. */
+  .cm-pad-mode .cm-avatar { width: 40px; height: 40px; font-size: 18px; background: rgba(201,168,76,0.14); color: #C9A84C; border: 1px solid rgba(201,168,76,0.3); }
+  .cm-pad-mode .cm-avatar-wrap { margin: 2px 0 8px; }
   .cm-avatar { width: 84px; height: 84px; border-radius: 50%; background: linear-gradient(135deg, #d4b85a, #a8862e); display: flex; align-items: center; justify-content: center; font-family: 'Playfair Display', Georgia, serif; font-size: 28px; font-weight: 600; color: #1a1208; letter-spacing: 0.02em; position: relative; z-index: 2; }
   .cm-pulse { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 84px; height: 84px; border-radius: 50%; border: 2px solid #C9A84C; opacity: 0; }
   .cm-pulse.ringing { animation: cmPulse 1.6s ease-out infinite; }
@@ -72,10 +87,14 @@
   .cm-btn.secondary { background: rgba(255,255,255,0.06); color: #ccc; }
   .cm-btn.secondary:hover { background: rgba(255,255,255,0.1); color: #fff; }
   .cm-btn.secondary.active { background: rgba(201,168,76,0.2); color: #C9A84C; }
-  .cm-btn.call { width: 64px; height: 64px; background: #4CAF7D; color: #06200f; box-shadow: 0 0 0 0 rgba(76,175,125,0.5); }
-  .cm-btn.call:hover { background: #5cc28d; }
+  /* CALL IS THE VISUAL CENTRE, in the CRM's gold rather than a stock green that
+     belongs to no other control on the site. 72px so nothing on the pad competes
+     with it — the recording toggle beside it is deliberately ~18px tall. */
+  .cm-btn.call { width: 72px; height: 72px; background: linear-gradient(135deg,#C9A84C,#7A5020); color: #1A0E00; box-shadow: 0 0 0 0 rgba(201,168,76,0.5), 0 6px 18px rgba(0,0,0,0.45); }
+  .cm-btn.call:hover { background: linear-gradient(135deg,#d8b95f,#8a5c25); }
   .cm-btn.call.pulsing { animation: cmCallPulse 2s ease-out infinite; }
-  @keyframes cmCallPulse { 0% { box-shadow: 0 0 0 0 rgba(76,175,125,0.5); } 70% { box-shadow: 0 0 0 14px rgba(76,175,125,0); } 100% { box-shadow: 0 0 0 0 rgba(76,175,125,0); } }
+  @keyframes cmCallPulse { 0% { box-shadow: 0 0 0 0 rgba(201,168,76,0.5), 0 6px 18px rgba(0,0,0,0.45); } 70% { box-shadow: 0 0 0 14px rgba(201,168,76,0), 0 6px 18px rgba(0,0,0,0.45); } 100% { box-shadow: 0 0 0 0 rgba(201,168,76,0), 0 6px 18px rgba(0,0,0,0.45); } }
+  .cm-btn.call .cm-btn-icon { width: 24px; height: 24px; }
   .cm-btn.hangup { width: 64px; height: 64px; background: #E05454; color: #fff; }
   .cm-btn.hangup:hover { background: #ec6666; }
   .cm-btn-label { font-size: 10px; color: #666; text-align: center; margin-top: 6px; letter-spacing: 0.06em; text-transform: uppercase; }
@@ -111,7 +130,15 @@
     flex: 0 0 auto !important;
     aspect-ratio: 1 / 1 !important;
   }
-  #callModal .cm-btn.call,
+  /* CALL IS BIGGER THAN HANGUP AND BIGGER THAN EVERYTHING ELSE.
+     These two shared a rule at 64px, which quietly overrode the .cm-btn.call
+     sizing above (measured in the browser: 64px, not the 72 the class asks for
+     — an !important block written for the round-button reset was deciding the
+     visual hierarchy of the whole modal by accident). Split so Call can lead. */
+  #callModal .cm-btn.call {
+    width: 72px !important;
+    height: 72px !important;
+  }
   #callModal .cm-btn.hangup {
     width: 64px !important;
     height: 64px !important;
@@ -299,16 +326,30 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
         + (on ? '<span style="width:7px;height:7px;border-radius:50%;background:#E5484D;display:inline-block;"></span> Recording'
               : 'Not recorded — no transcript') + '</div>';
     }
-    return '<button type="button" id="cmRecToggle" title="' + tip + '" style="display:flex;align-items:center;gap:7px;'
-      + 'margin:10px auto 0;padding:5px 11px;border-radius:999px;font-size:11px;font-weight:700;cursor:pointer;width:max-content;'
-      + (on ? 'background:rgba(224,82,82,.12);border:1px solid rgba(224,82,82,.38);color:#F07878;'
-            : 'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.16);color:#9a948a;') + '">'
-      + (on ? '<span style="width:7px;height:7px;border-radius:50%;background:#E5484D;display:inline-block;"></span> Record this call'
-            : 'Recording off') + '</button>'
-      + '<div style="text-align:center;font-size:10px;line-height:1.4;margin-top:5px;color:'
-      + (on ? '#7a746a' : '#C9A84C') + ';">'
-      + (on ? 'Announced at the start. Transcript + AI summary after.'
-            : 'No announcement, no transcript, no AI summary.') + '</div>';
+    /* SMALL AND SECONDARY — one line, not three.
+       This was a pill plus two lines of caption, the "off" caption in gold, sitting
+       directly under the Call button. Three lines of coloured text beside the one
+       control that matters made the recording choice look like the primary
+       decision on the surface. It is not: it is a default the user rarely changes.
+       The full consequence text is still there, in title= — the same wording, one
+       hover away, and unchanged in meaning. */
+    return '<button type="button" id="cmRecToggle" title="' + tip + '" style="display:inline-flex;align-items:center;gap:6px;'
+      + 'margin:12px auto 0;padding:3px 9px;border-radius:999px;font-size:10px;font-weight:600;cursor:pointer;width:max-content;'
+      + 'background:transparent;border:1px solid ' + (on ? 'rgba(224,82,82,.32)' : 'rgba(255,255,255,.14)') + ';'
+      + 'color:' + (on ? '#C98080' : '#7f7a72') + ';">'
+      + (on ? '<span style="width:6px;height:6px;border-radius:50%;background:#E5484D;display:inline-block;"></span> Recording on'
+            : '<span style="width:6px;height:6px;border-radius:50%;border:1px solid #6b665c;display:inline-block;"></span> Recording off')
+      + '</button>'
+      /* ONE line, and ONLY in the OFF state.
+         The three lines this replaced included a caption under BOTH states. The
+         "on" caption was reassurance nobody needs on every call; the "off" one is
+         a real consequence — no announcement, no transcript, no AI summary — and
+         a render-check spec asserts it is VISIBLE, not merely hoverable. That
+         spec is right: hiding a data-loss warning in a title= is how it stops
+         being read. So the off-state warning stays on screen, compressed to a
+         single 10px line instead of two. */
+      + (on ? '' : '<div style="text-align:center;font-size:10px;line-height:1.35;margin-top:4px;color:#C9A84C;">'
+              + 'No announcement, no transcript, no AI summary.</div>');
   }
   /* rerender is a parameter because the DIAL PAD reuses this control and must
      NOT call renderReady() — that repaints the whole action area and would
@@ -765,6 +806,11 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
   // or legacy openCallModal(name, phone, contactId)
   window.openCallModal = function(arg, phoneArg, contactIdArg) {
     if (!modal) bindRefs();
+    /* Clear pad-mode styling on EVERY open. RRDialer.openPad() calls this first
+       and re-adds the class afterwards, so clearing here cannot fight it — but a
+       contact call opened after a pad call would otherwise inherit the 40px
+       avatar. */
+    if (modal) modal.classList.remove('cm-pad-mode');
     var contact;
     if (arg && typeof arg === 'object') {
       contact = arg;
@@ -851,6 +897,11 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       var phoneEl = document.getElementById('cmPhone');
       var statusText = document.getElementById('cmStatusText');
       if (avatar) avatar.textContent = '#';
+      /* Scopes the pad-only avatar/spacing rules above. Removed again by
+         openCallModal() for a real contact, so the class cannot leak between a
+         pad call and the next contact call in the same session. */
+      var _modalEl = document.getElementById('callModal');
+      if (_modalEl) _modalEl.classList.add('cm-pad-mode');
       if (nameEl) nameEl.textContent = 'New call';
       if (phoneEl) phoneEl.textContent = '';
       if (statusText) statusText.textContent = 'Enter a number';

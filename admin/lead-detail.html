@@ -28,7 +28,7 @@
     .pac-icon{display:none!important;}
     .pac-logo::after{display:none!important;}
   </style>
-  <script src="/admin/js/auth-guard.js?v=69c5616a5f"></script>
+  <script src="/admin/js/auth-guard.js?v=8021890298"></script>
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
   <!-- Loaded after auth-guard so window._supabaseClient exists when fnFetch reads it. -->
   <script src="/admin/js/fn-call.js?v=85d03d2a98"></script>
@@ -41,7 +41,7 @@
        runtime, and removes any load-order question on the page where the dialer
        matters most. Both mounts are idempotent (window._rrDialerLoaded plus the
        script-src check in auth-guard), so this does not double-load. -->
-  <script src="/admin/js/dialer.js?v=440cb69075"></script>
+  <script src="/admin/js/dialer.js?v=b525b1fa95"></script>
   <script src="/admin/js/crm-comms.js?v=d37133d86b"></script>
   <script src="/admin/js/notif-bell.js?v=ce05693d65"></script>
   <script>
@@ -9860,8 +9860,12 @@ async function saveLeadDetails() {
       first_name: getVal('f-first-name'),
       last_name:  getVal('f-last-name'),
       email:      getVal('f-email'),
-      phone:      getVal('f-phone'),
-      secondary_phone: getVal('f-phone2'),
+      /* STRIP ON SAVE. These inputs now render formatted, so getVal would have
+         written "(323) 975-5646" into contacts.phone. _lpPhoneForSave returns
+         undefined for a MASKED value; the spread below drops undefined keys, so a
+         masked field omits the column instead of overwriting a real number. */
+      phone:      _lpPhoneForSave(getVal('f-phone')),
+      secondary_phone: _lpPhoneForSave(getVal('f-phone2')),
       /* Home address → contacts. Kept OUT of lFields, where property_address
          lives: writing a residence into the subject-property column would
          misstate the loan file. */
@@ -12809,7 +12813,12 @@ function lpVoeCardHtml(v){
   const ownerOpts=LP_VOE_OWNERS.map(o=>'<option value="'+o.v+'"'+((v.follow_up_owner||'')===o.v?' selected':'')+'>'+o.t+'</option>').join('');
   const vLabel = v.vendor_id ? (v.vendor_name||_lpVendorNames[v.vendor_id]||'Vendor selected') : 'Select vendor (optional)';
   const overdue = v.follow_up_at && st!=='received' && (new Date(v.follow_up_at).getTime()<Date.now());
-  const txtF=(field,ph)=>'<input type="text" id="lpVoeF-'+k+'-'+field+'" placeholder="'+ph+'" value="'+lpEsc(v[field]||'')+'" onchange="lpVoeField(\''+k+'\',\''+field+'\',this.value)" style="'+inp+'">';
+  /* A LABEL THAT SURVIVES BEING FILLED. These were placeholder-only, so the
+     moment a value was typed the field lost its name and the card became a
+     column of unlabelled boxes — you had to clear a field to find out what it
+     was. The placeholder stays as the example; the label is now permanent. */
+  const fLbl='display:block;font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:#8f8a80;margin-bottom:3px;';
+  const txtF=(field,ph)=>'<label style="display:block;min-width:0;"><span style="'+fLbl+'">'+lpEsc(ph)+'</span><input type="text" id="lpVoeF-'+k+'-'+field+'" placeholder="'+ph+'" value="'+lpEsc(v[field]||'')+'" onchange="lpVoeField(\''+k+'\',\''+field+'\',this.value)" style="'+inp+'"></label>';
   /* HEADER — what the card says when it is CLOSED, and the reason the grid
      works: state chip, who, and which employer. Everything below is detail.
      The employer falls back to the label and then to a placeholder, so a card
@@ -12827,7 +12836,17 @@ function lpVoeCardHtml(v){
 
   /* data-order-id is the deep-link target. Absent on an unsaved card, which is
      correct — nothing can link to an order that has no row yet. */
-  return '<div'+(v.id?' data-order-id="'+lpEsc(v.id)+'"':'')+' data-voe-key="'+lpEsc(k)+'" style="position:relative;border:1px solid '+(overdue?'#E5484D':'rgba(255,255,255,.08)')+';border-radius:8px;padding:8px;background:rgba(255,255,255,.02);'+_lpActRowCss(stKey)+'">'
+  /* AN EMPTY CARD MUST NOT WEIGH THE SAME AS A LIVE ONE.
+     Every card rendered at identical weight, so a not_ordered placeholder with
+     nothing in it competed for attention with a VOE that is actually out and
+     waiting on an employer. Dimmed border, flatter background and reduced
+     opacity on the untouched ones; anything ordered or beyond keeps full weight.
+     `dormant` is deliberately not just status — a not_ordered card someone has
+     started filling in (employer, HR, borrower) is real work and stays bright. */
+  const dormant = (st === 'not_ordered') && !overdue
+    && !(v.employer_name || v.hr_contact_email || v.hr_contact_first_name || v.borrower_contact_id || v.label);
+  const dormantCss = dormant ? 'opacity:.62;background:rgba(255,255,255,.012);' : '';
+  return '<div'+(v.id?' data-order-id="'+lpEsc(v.id)+'"':'')+' data-voe-key="'+lpEsc(k)+'" style="position:relative;border:1px solid '+(overdue?'#E5484D':(dormant?'rgba(255,255,255,.05)':'rgba(255,255,255,.08)'))+';border-radius:8px;padding:8px;background:rgba(255,255,255,.02);'+dormantCss+_lpActRowCss(stKey)+'">'
     /* The whole header is the toggle. A caret alone is a small target in a
        dense panel, and there is nothing else in this strip to click. */
     +'<div onclick="lpVoeToggle(\''+k+'\')" style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">'
@@ -13468,9 +13487,9 @@ function lpVoeRenderActivity(box, a){
   if(a.ordered_at) head.push('Ordered '+_lpFmtDT(a.ordered_at));
   if(a.last_follow_up_at) head.push('Last follow-up '+_lpFmtDT(a.last_follow_up_at));
   if(a.hr_name||a.hr_email) head.push('HR: '+lpEsc([a.hr_name,a.hr_email].filter(Boolean).join(' · ')));
-  let html='<div style="border-top:1px solid rgba(255,255,255,.06);padding-top:6px;"><div style="font-size:9.5px;color:#8f8f8f;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">VOE Activity</div>';
-  if(head.length) html+='<div style="font-size:10px;color:#aaa;margin-bottom:5px;">'+head.join(' &nbsp;·&nbsp; ')+'</div>';
-  if(!ev.length){ html+='<div style="font-size:10px;color:#777;">No emails yet.</div>'; }
+  let html='<div style="border-top:1px solid rgba(255,255,255,.06);padding-top:6px;"><div style="font-size:11px;color:#C9A84C;text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:6px;">VOE Activity</div>';
+  if(head.length) html+='<div style="font-size:11.5px;color:#b4b4b4;margin-bottom:7px;line-height:1.5;">'+head.join(' &nbsp;·&nbsp; ')+'</div>';
+  if(!ev.length){ html+='<div style="font-size:11.5px;color:#8a8a8a;padding:4px 0;">No emails yet.</div>'; }
   else {
     // Per-event row markup — unchanged (do NOT alter row markup or the click-to-open behavior).
     /* STATE, NOT DIRECTION. This row used to read e.direction and nothing else,
@@ -13487,14 +13506,14 @@ function lpVoeRenderActivity(box, a){
       const when=e.at?_lpFmtDT(e.at):'';
       // Optional body glimpse — single truncated line under the subject/meta; omitted entirely when empty.
       const preview=(e.preview==null?'':String(e.preview)).trim();
-      const previewHtml=preview?('<div style="color:#777;font-size:9px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+lpEsc(preview)+'</div>'):'';
+      const previewHtml=preview?('<div style="color:#8a8a8a;font-size:11px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+lpEsc(preview)+'</div>'):'';
       /* A failure says so in words as well as colour. Colour alone is not a
          state anyone can be relied on to read, and it is the one row where
          being missed has already cost days. */
-      const failNote=failed?('<div style="color:#FF8A8A;font-size:9px;font-weight:700;margin-top:1px;">This email was never delivered — resend it.</div>'):'';
-      return '<div class="lpVoeEvRow" data-email-id="'+lpEsc(String(e.id==null?'':e.id))+'" style="display:flex;gap:6px;align-items:flex-start;font-size:10px;padding:4px 6px;border-radius:6px;margin-bottom:2px;cursor:pointer;'+_lpActRowCss(key)+'">'
+      const failNote=failed?('<div style="color:#FF8A8A;font-size:11.5px;font-weight:700;margin-top:3px;">This email was never delivered — resend it.</div>'):'';
+      return '<div class="lpVoeEvRow" data-email-id="'+lpEsc(String(e.id==null?'':e.id))+'" style="display:flex;gap:9px;align-items:flex-start;font-size:12.5px;line-height:1.45;padding:8px 10px;border-radius:7px;margin-bottom:5px;cursor:pointer;'+_lpActRowCss(key)+'">'
         +_lpActChip(key)
-        +'<span style="flex:1;min-width:0;"><span style="color:'+(failed?'#FFD9D9':'#ddd')+';'+(failed?'font-weight:600;':'')+'">'+lpEsc(e.subject||(inbound?'Reply':'VOE request'))+'</span><span style="color:#888;"> — '+party+(when?(' · '+when):'')+'</span>'+previewHtml+failNote+'</span></div>';
+        +'<span style="flex:1;min-width:0;">'+'<span style="display:block;color:'+(failed?'#FFD9D9':'#e6e6e6')+';font-weight:'+(failed?'700':'600')+';">'+lpEsc(e.subject||(inbound?'Reply':'VOE request'))+'</span>'+'<span style="display:block;color:#8f8f8f;font-size:11px;margin-top:2px;">'+party+(when?(' · '+when):'')+'</span>'+previewHtml+failNote+'</span></div>';
     };
     // Group by thread_key (the HR email tying a send+reply trail). One distinct thread ⇒ render flat
     // (keep the common single-HR case clean); multiple threads ⇒ one labeled group each.
@@ -22679,7 +22698,43 @@ window.addEventListener('scroll', function() {
 
 /* ── HELPERS ── */
 function getVal(id) { return (document.getElementById(id)||{}).value || ''; }
-function setVal(id, v) { const el = document.getElementById(id); if (el) el.value = v || ''; }
+/* PHONE INPUT IDS — the display-formatting set. Kept as one list so a new phone
+   field is one line, not a new bug. Matches Contact Info (f-phone / f-phone2),
+   1003 §1A (f_cell_phone / f_home_phone), the co-borrower block (cb_*) and the
+   listing-alert rep field. */
+const RR_PHONE_INPUT_IDS = ['f-phone','f-phone2','f_cell_phone','f_home_phone',
+  'cb_cell_phone','cb_home_phone','cb_employer_phone','al_rep_phone'];
+const RR_PHONE_INPUT_SET = RR_PHONE_INPUT_IDS.reduce(function(m,i){ m[i]=1; return m; }, {});
+
+/* FORMAT ON RENDER. setVal is the funnel every 1003 / Contact Info field is
+   populated through, so formatting here covers the programmatic path in one
+   place — which is why 3239755646 was reaching the screen raw while the sidebar
+   three inches away rendered (323) 975-5646: the sidebar formats on render, the
+   inputs never did.
+   MASKED VALUES PASS THROUGH UNTOUCHED — RRPhone.format returns them as-is, so a
+   role that sees (•••) •••-••42 is not reformatted into something dialable. */
+function setVal(id, v) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  let out = v || '';
+  if (out && RR_PHONE_INPUT_SET[id] && window.RRPhone && typeof window.RRPhone.format === 'function') {
+    out = window.RRPhone.format(out);
+  }
+  el.value = out;
+}
+
+/* FORMAT WHAT THE USER TYPES TOO. Delegated + capture so it works for fields
+   that render later, and on 'change' rather than 'input' so it never fights the
+   caret mid-typing. Storage is unaffected: every save path strips through
+   _lpPhoneForSave / RRPhone.digits. */
+document.addEventListener('change', function (e) {
+  const el = e && e.target;
+  if (!el || el.tagName !== 'INPUT' || !RR_PHONE_INPUT_SET[el.id]) return;
+  if (!window.RRPhone || typeof window.RRPhone.format !== 'function') return;
+  if (window.RRPhone.isMasked && window.RRPhone.isMasked(el.value)) return;
+  const f = window.RRPhone.format(el.value);
+  if (f !== el.value) el.value = f;
+}, true);
 
 /* SSN display masking (display-only). The real value stays in the input's .value
    at all times so the existing save/debounce path (save1003 reads .value) is
@@ -25380,6 +25435,18 @@ async function save1003() {
   if (!cid) { toast('No contact ID found.', true); return; }
 
   const gv = id => document.getElementById(id)?.value || null;
+  /* PHONE GETTER — STRIP ON SAVE. The other half of formatting on render: these
+     inputs now display "(323) 975-5646", and gv() would have written that string
+     straight into the column. Display only, never storage.
+     Returns undefined for a MASKED value so the caller can omit the column
+     entirely rather than persisting bullets over a real number — same contract
+     as _lpPhoneForSave. */
+  const gph = id => {
+    const raw = document.getElementById(id)?.value;
+    if (raw == null || String(raw).trim() === '') return null;
+    if (window.RRPhone && window.RRPhone.isMasked && window.RRPhone.isMasked(raw)) return undefined;
+    return (window.RRPhone ? window.RRPhone.digits(raw) : String(raw).replace(/\D/g, '')) || null;
+  };
   const gr = name => document.querySelector(`input[name="${name}"]:checked`)?.value || null;
   // Numeric getter: empty string → null (Postgres numeric columns reject '').
   const gnum = id => { const v = document.getElementById(id)?.value; if (v === '' || v == null) return null; const n = parseFloat(v); return isNaN(n) ? null : n; };
@@ -25397,9 +25464,9 @@ async function save1003() {
     marital_status: gv('f_marital_status'),
     dependents_count: parseInt(gv('f_dependents_count')) || 0,
     dependents_ages: gv('f_dependents_ages'),
-    home_phone: gv('f_home_phone'),
-    cell_phone: gv('f_cell_phone'),
-    work_phone: gv('f_work_phone'),
+    home_phone: gph('f_home_phone'),
+    cell_phone: gph('f_cell_phone'),
+    work_phone: gph('f_work_phone'),
     email: gv('f_email'),
     current_address_street: gv('f_current_street'),
     current_address_unit: gv('f_current_unit'),
@@ -25449,8 +25516,8 @@ async function save1003() {
     co_borrower_dob: toISODate(gv('cb_dob')),
     co_borrower_citizenship: gv('cb_citizenship'),
     co_borrower_marital_status: gv('cb_marital_status'),
-    co_borrower_cell_phone: gv('cb_cell_phone'),
-    co_borrower_home_phone: gv('cb_home_phone'),
+    co_borrower_cell_phone: gph('cb_cell_phone'),
+    co_borrower_home_phone: gph('cb_home_phone'),
     co_borrower_email: gv('cb_email'),
     co_borrower_dl_number: gv('cb_dl_number'),
     co_borrower_dl_state: gv('cb_dl_state'),
@@ -25462,7 +25529,7 @@ async function save1003() {
     co_borrower_housing_type: gv('cb_housing_type'),
     co_borrower_base_income: parseFloat(gv('cb_base_income')) || 0,
     co_borrower_employer: gv('cb_employer'),
-    co_borrower_employer_phone: gv('cb_employer_phone'),
+    co_borrower_employer_phone: gph('cb_employer_phone'),
     co_borrower_title: gv('cb_title'),
     co_borrower_start_date: toISODate(gv('cb_start_date')),
     co_borrower_decl_judgments: gr('cb_judgments') === 'yes',
@@ -25570,6 +25637,13 @@ async function save1003() {
       var fid = m[0], inlineCol = m[1], coCol = m[2], isDate = m[3];
       var raw = (document.getElementById(fid) || {}).value;
       raw = (raw == null || raw === '') ? null : raw;
+      /* STRIP ON SAVE — the co-borrower half of the same rule. These inputs now
+         render formatted, so writing .value straight through would put
+         "(323) 975-5646" into co_borrower_cell_phone. Masked values are left
+         alone rather than being reduced to their two visible digits. */
+      if (raw && typeof RR_PHONE_INPUT_SET !== 'undefined' && RR_PHONE_INPUT_SET[fid] && window.RRPhone) {
+        raw = window.RRPhone.isMasked(raw) ? null : (window.RRPhone.digits(raw) || null);
+      }
       cleanData[coCol] = isDate ? toISODate(raw) : raw;
       delete cleanData[inlineCol];
     });
@@ -26395,7 +26469,20 @@ async function load1003(overrideCid) {
     // co-borrower is active, inline columns otherwise; co-active also blanks the
     // personal fields that have no co twin. SSN is handled in the vault block below.
     (function() {
-      const svc = function(id, val) { const el = document.getElementById(id); if (el) el.value = (val == null ? '' : val); };
+      /* THIS is the funnel for §1A, not setVal — which is why f_cell_phone was
+         still rendering 3239755646 raw after setVal was made phone-aware.
+         Measured in the browser rather than assumed: with the Application tab
+         open, f-phone read "(323) 975-5646" and f_cell_phone read "3239755646"
+         on the same contact and the same page. Two setters, one formatted. */
+      const svc = function(id, val) {
+        const el = document.getElementById(id); if (!el) return;
+        let out = (val == null ? '' : val);
+        if (out && typeof RR_PHONE_INPUT_SET !== 'undefined' && RR_PHONE_INPUT_SET[id]
+            && window.RRPhone && typeof window.RRPhone.format === 'function') {
+          out = window.RRPhone.format(out);
+        }
+        el.value = out;
+      };
       _LP_1A_FIELDS.forEach(function(m) { svc(m[0], _coActive ? data[m[2]] : data[m[1]]); });
       if (_coActive) _LP_1A_NOTWIN.forEach(function(m) { svc(m[0], ''); });
     })();
@@ -26612,8 +26699,9 @@ async function load1003(overrideCid) {
     sv('cb_dob', data.co_borrower_dob);
     sv('cb_citizenship', data.co_borrower_citizenship);
     sv('cb_marital_status', data.co_borrower_marital_status);
-    sv('cb_cell_phone', data.co_borrower_cell_phone);
-    sv('cb_home_phone', data.co_borrower_home_phone);
+    /* Format on render, same as setVal does for the primary borrower fields. */
+    sv('cb_cell_phone', window.RRPhone ? window.RRPhone.format(data.co_borrower_cell_phone||'') : data.co_borrower_cell_phone);
+    sv('cb_home_phone', window.RRPhone ? window.RRPhone.format(data.co_borrower_home_phone||'') : data.co_borrower_home_phone);
     sv('cb_email', data.co_borrower_email);
     // co_borrower_dl_number / _state / _expiry are NOT in the mortgage_applications_secure
     // view that _fetchAppRowForContact reads, so they arrive undefined above. Pull them
@@ -26639,7 +26727,7 @@ async function load1003(overrideCid) {
     sv('cb_housing_type', data.co_borrower_housing_type);
     sv('cb_base_income', data.co_borrower_base_income);
     sv('cb_employer', data.co_borrower_employer);
-    sv('cb_employer_phone', data.co_borrower_employer_phone);
+    sv('cb_employer_phone', window.RRPhone ? window.RRPhone.format(data.co_borrower_employer_phone||'') : data.co_borrower_employer_phone);
     sv('cb_title', data.co_borrower_title);
     sv('cb_start_date', data.co_borrower_start_date);
     // co_borrower_self_employed removed — not in schema
@@ -38842,7 +38930,8 @@ async function saveNewLender() {
     loan_types:       loanTypes,
     rep_name:         document.getElementById('al_rep_name').value.trim() || null,
     rep_email:        document.getElementById('al_rep_email').value.trim() || null,
-    rep_phone:        document.getElementById('al_rep_phone').value.trim() || null,
+    /* Strip on save — this input formats on render like the rest. */
+    rep_phone:        _lpPhoneForSave(document.getElementById('al_rep_phone').value) || null,
     website:          document.getElementById('al_website').value.trim() || null,
     min_credit_score:   parseInt(document.getElementById('al_credit').value) || null,
     max_ltv:            parseFloat(document.getElementById('al_ltv').value) || null,
