@@ -356,11 +356,39 @@ Deno.serve(async (req) => {
       return ok({ success: true, ...fresh, history: (history || []).reverse() });
     }
     if (action === "score_all") {
-            /* READ FILTER: score_all has NO predicate, so every merged-away duplicate
-         was being re-scored and re-written on every run. The limit is 1000
-         against 1046 rows with no ORDER BY, so which contacts were missed — and
-         whether a ghost was among them — varied per run. */
-      const { data: ids } = await sb.from("contacts").select("id").is("merged_into_contact_id", null).limit(body.limit || 1000);
+      /* READ FILTER: score_all had NO predicate, so every merged-away duplicate
+         was re-scored and re-written on every run. */
+
+      /* ORDER, added 2026-08-11 — the fix that actually matters.
+         There was no ORDER BY, so PostgREST returned rows in whatever order
+         Postgres supplied and each run scored an arbitrary subset. Contacts
+         missed by one run were not preferred by the next, so a contact could go
+         unscored indefinitely: 243 of 1043 had NEVER been scored, and the oldest
+         surviving score was from 2026-06-15.
+
+         Stalest first, never-scored before everything, turns that into a
+         rotation with bounded staleness. */
+
+      /* LIMIT, sized from measurement rather than taste. A run with limit 5000
+         was killed by the edge runtime at 89s having scored 339:
+           546 WORKER_RESOURCE_LIMIT — "not having enough compute resources"
+         Throughput was flat at ~3.7/sec throughout, so it did not slow down, it
+         hit a ceiling. 200 is ~59% of that observed ceiling. The headroom is
+         deliberate and it is not padding: per-contact cost varies with how many
+         activity_events, sms_log and history rows a contact has, so 339 is one
+         sample of a moving number, and a batch that is killed writes no response
+         at all. 200 that returns 200-OK beats 320 that sometimes returns 546.
+
+         CLAMPED, not defaulted. The cron job body says limit 5000; a default
+         would leave that untouched and the job would go on dying. The clamp
+         binds every caller, including ones added later. */
+      const MAX_BATCH = 200;
+      const batch = Math.max(1, Math.min(Number(body.limit) || MAX_BATCH, MAX_BATCH));
+
+      const { data: ids } = await sb.from("contacts").select("id")
+        .is("merged_into_contact_id", null)
+        .order("last_scored_at", { ascending: true, nullsFirst: true })
+        .limit(batch);
       const results = [];
       for (const row of ids || []) {
         try {
@@ -368,7 +396,22 @@ Deno.serve(async (req) => {
           results.push({ id: row.id, total: r.total, tier: r.tier, delta: r.delta });
         } catch (e: any) { results.push({ id: row.id, error: e?.message || String(e) }); }
       }
-      return ok({ success: true, scored: results.length, sample: results.slice(0, 10) });
+      /* Report coverage, not just work done. `scored` alone reads like success
+         while most of the book goes untouched — which is how this stayed
+         invisible. requested_limit surfaces the clamp instead of silently
+         ignoring what the caller asked for. */
+      const { count: liveTotal } = await sb.from("contacts")
+        .select("id", { count: "exact", head: true }).is("merged_into_contact_id", null);
+      const { count: neverScored } = await sb.from("contacts")
+        .select("id", { count: "exact", head: true })
+        .is("merged_into_contact_id", null).is("last_scored_at", null);
+      return ok({
+        success: true, scored: results.length, batch_size: batch,
+        requested_limit: body.limit ?? null,
+        live_contacts: liveTotal ?? null, never_scored_remaining: neverScored ?? null,
+        errors: results.filter((r: any) => r.error).length,
+        sample: results.slice(0, 10),
+      });
     }
     if (action === "recalculate_visible") {
       if (!Array.isArray(body.contact_ids)) return err("contact_ids array required");
