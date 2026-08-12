@@ -322,6 +322,59 @@ const SPECS = [
     ],
   },
   {
+    /* THE BUYDOWN SCHEDULE MUST FOLLOW THE STORED STRUCTURE — BOTH DIRECTIONS.
+     *
+     * A 1-1 buydown drawn as a 2-1 is a wrong payment schedule on a document a
+     * borrower has been sent, so this asserts the mapping in both directions:
+     * a 1-1 payload must produce −1%/−1% and a 2-1 payload −2%/−1%. Asserting
+     * only one direction would pass just as happily on a renderer that always
+     * drew that one — which is exactly the failure being guarded against.
+     *
+     * SYNTHETIC PAYLOADS, called straight into renderBuydown. Pointing this at a
+     * real /fee/<slug> would bind the spec to a borrower's live link, bump its
+     * view_count on every run, and break the day that link is revoked. The slug
+     * in the URL is deliberately nonsense — the page renders "not found" and the
+     * render functions are still defined, which is all this needs.
+     *
+     * The loan-amount fallback is asserted here too: bd.loan is empty on BOTH
+     * real snapshots because it is an optional override nobody types in, so the
+     * figure comes from purchasePrice − down. $750,000 less 5% = $712,500.
+     */
+    name: 'buydown share link honours the stored structure (1-1 and 2-1)',
+    url: '/fee/zzznotarealslug',   // alphanumeric: the worker's /fee/ route is [A-Za-z0-9]+ and a hyphen 404s before fee.html loads
+    anonymous: true,
+    present: ['#app'],
+    evals: [
+      ['typeof renderBuydown', 'function'],
+      [`(function(){
+        function mk(struct){ return { created_at:'2026-08-12T00:00:00Z', borrower_name:'ZZ Probe',
+          data:{ mode:'buydown', common:{ purchasePrice:'$750,000', downPct:'5' },
+                 buydown:{ loan:'', rate:'6.875', term:'30', payer:'lender', structure:struct } } }; }
+        function draw(s){ renderBuydown(mk(s)); return document.getElementById('app').innerText.replace(/\\s+/g,' '); }
+        var one = draw('1-1'), two = draw('2-1');
+        return JSON.stringify({
+          one_has_minus1: /−1%/.test(one),
+          one_has_minus2: /−2%/.test(one),
+          two_has_minus2: /−2%/.test(two),
+          one_says_1_1:  /1-1 temporary buydown/i.test(one),
+          two_says_2_1:  /2-1 temporary buydown/i.test(two),
+          loan_fallback: /712,500/.test(one)
+        });
+      })()`,
+       '{"one_has_minus1":true,"one_has_minus2":false,"two_has_minus2":true,'
+       + '"one_says_1_1":true,"two_says_2_1":true,"loan_fallback":true}'],
+      /* An unfinished quote must SAY so rather than draw a $0 schedule — the
+         state uby9s8x was actually sent in, with no loan basis at all. */
+      [`(function(){
+        renderBuydown({ created_at:'2026-08-12T00:00:00Z', borrower_name:'ZZ Probe',
+          data:{ mode:'buydown', common:{ purchasePrice:'', downPct:'20' },
+                 buydown:{ loan:'', rate:'6.875', term:'30', payer:'seller', structure:'2-1' } } });
+        var t = document.getElementById('app').innerText;
+        return /not finished yet/i.test(t) && !/\\$0\\.00/.test(t);
+      })()`, true],
+    ],
+  },
+  {
     /* THE PUBLIC FEE LINK, AS A STRANGER SEES IT — signed out, UNSTUBBED, on a
        REAL slug that has been sent and viewed 29 times. The redaction's whole
        purpose is what an anonymous holder of the URL receives, so a stubbed run

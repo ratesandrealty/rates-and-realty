@@ -14,6 +14,7 @@ AS $function$
 declare
   v_role text; v_data jsonb; v_slug text; v_name text; v_url text; v_tries int := 0;
   v_people jsonb; v_expires timestamptz;
+  v_bd jsonb; v_loan numeric; v_pp numeric; v_dp numeric; v_rate numeric;
 begin
   v_role := coalesce(nullif(current_setting('request.jwt.claims', true),'')::jsonb->>'role','');
   if not (public.is_admin() or v_role='service_role'
@@ -23,6 +24,21 @@ begin
 
   select data into v_data from public.fee_sheet_drafts where contact_id = p_contact_id;
   if v_data is null then raise exception 'no fee sheet draft for this contact — build/save one first'; end if;
+
+  /* ── BUYDOWN MUST BE RENDERABLE ─────────────────────────────────────────── */
+  if (v_data->>'mode') = 'buydown' then
+    v_bd   := coalesce(v_data->'buydown', '{}'::jsonb);
+    v_loan := public._fs_num(v_bd->>'loan');
+    v_pp   := public._fs_num(v_data->'common'->>'purchasePrice');
+    v_dp   := coalesce(public._fs_num(v_data->'common'->>'downPct'), 0);
+    v_rate := public._fs_num(v_bd->>'rate');
+    if coalesce(v_loan,0) <= 0 and coalesce(greatest(0, v_pp - (v_pp * v_dp / 100)), 0) <= 0 then
+      raise exception 'buydown has no loan amount and no purchase price — the link would tell the borrower the quote is unfinished';
+    end if;
+    if coalesce(v_rate,0) <= 0 then
+      raise exception 'buydown has no note rate — the link would tell the borrower the quote is unfinished';
+    end if;
+  end if;
 
   select nullif(trim(coalesce(first_name,'')||' '||coalesce(last_name,'')),'')
     into v_name from public.contacts where id = p_contact_id;
@@ -61,11 +77,7 @@ begin
   values (v_slug, p_contact_id, v_data, v_name, auth.uid(), v_expires);
 
   v_url := 'https://homes.ratesandrealty.com/fee/' || v_slug;
-  insert into public.short_links(slug, destination_url, contact_id)
-  values (v_slug, v_url, p_contact_id)
-  on conflict (slug) do nothing;
-
   return jsonb_build_object('slug', v_slug, 'url', v_url, 'borrower_name', v_name,
                             'expires_at', v_expires,
-                            'people', coalesce(v_people,'[]'::jsonb));
+                            'people', coalesce(v_people, '[]'::jsonb));
 end; $function$;
