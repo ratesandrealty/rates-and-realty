@@ -802,6 +802,8 @@
                 <select id="bd_structure" onchange="buydownRecalc()">
                     <option value="2-1">2-1 Buydown (yr1 −2%, yr2 −1%)</option>
                     <option value="1-1">1-1 Buydown (yr1 −1%, yr2 −1%)</option>
+                    <option value="1-0">1-0 Buydown (yr1 −1%)</option>
+                    <option value="3-2-1">3-2-1 Buydown (yr1 −3%, yr2 −2%, yr3 −1%)</option>
                 </select>
             </div>
             <div class="field"><label>Note Rate %</label><input type="number" id="bd_rate" step="0.125" min="0" max="20" placeholder="6.875" oninput="buydownRecalc()"></div>
@@ -2978,8 +2980,31 @@ function bridgeAddendumHtml(inp, results) {
       + '</div></div>';
 }
 
+/* ── STRUCTURES ARE DATA, NOT BRANCHES ──────────────────────────────────────
+ *
+ * A temporary buydown IS a list of annual rate reductions, so that is what this
+ * holds. Everything downstream already walks the list — bdCompute maps over it,
+ * the schedule table renders a row per entry, and the "year N onward" line is
+ * cuts.length + 1 — so adding 4-3-2-1 later is ONE ARRAY, not a code path.
+ *
+ * This was `structure === '1-1' ? [1,1] : [2,1]`, which had a trap in it beyond
+ * being unextendable: every unrecognised value silently fell through to 2-1. A
+ * typo, or a structure the UI offered and the schedule did not know, drew a 2-1
+ * schedule under whatever label the sheet said. Unknown now returns null and the
+ * callers refuse to render, which is the same fail-closed shape as the rest of
+ * this file.
+ *
+ * Excludes UWM's LLPA variants deliberately — Rene does not offer them, and an
+ * option nobody sells is a way to send a quote that cannot be honoured. */
+const BD_STRUCTURES = {
+    '1-0':   [1],
+    '1-1':   [1, 1],
+    '2-1':   [2, 1],
+    '3-2-1': [3, 2, 1],
+};
 function bdSchedule(structure) {
-    return (structure === '1-1') ? [1, 1] : [2, 1];
+    var c = BD_STRUCTURES[structure];
+    return c ? c.slice() : null;
 }
 
 function bdInputs() {
@@ -2999,6 +3024,10 @@ function bdInputs() {
 
 function bdCompute(inp) {
     const cuts = bdSchedule(inp.structure);
+    /* Unknown structure -> no schedule. Returning a default here is how a
+       mislabelled sheet gets drawn; buydownRecalc turns this into a visible
+       message instead. */
+    if (!cuts) return null;
     const notePmt = bdPmt(inp.loan, inp.noteRate, inp.term);
     const years = cuts.map(function (cut, idx) {
         const rate = Math.max(0, inp.noteRate - cut);
@@ -3024,7 +3053,11 @@ function buydownRecalc() {
     if (!sheet) return;
     /* Pass errs through so the placeholder names ONLY what is missing. */
     if (errs.length) { sheet.innerHTML = _bdReportHtml(null, inp, errs); return; }
-    sheet.innerHTML = _bdReportHtml(bdCompute(inp), inp);
+    const res = bdCompute(inp);
+    /* An unknown structure is named, not silently drawn as something else. */
+    if (!res) { sheet.innerHTML = _bdReportHtml(null, inp,
+        ['Unrecognised buydown structure "' + inp.structure + '" — pick one from the list.']); return; }
+    sheet.innerHTML = _bdReportHtml(res, inp);
 }
 
 function _bdMoney(v) { return '$' + Math.round(v).toLocaleString('en-US'); }

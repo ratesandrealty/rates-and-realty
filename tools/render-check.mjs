@@ -340,7 +340,7 @@ const SPECS = [
      * real snapshots because it is an optional override nobody types in, so the
      * figure comes from purchasePrice − down. $750,000 less 5% = $712,500.
      */
-    name: 'buydown share link honours the stored structure (1-1 and 2-1)',
+    name: 'buydown share link honours the stored structure (1-0, 1-1, 2-1, 3-2-1)',
     url: '/fee/zzznotarealslug',   // alphanumeric: the worker's /fee/ route is [A-Za-z0-9]+ and a hyphen 404s before fee.html loads
     anonymous: true,
     present: ['#app'],
@@ -351,18 +351,31 @@ const SPECS = [
           data:{ mode:'buydown', common:{ purchasePrice:'$750,000', downPct:'5' },
                  buydown:{ loan:'', rate:'6.875', term:'30', payer:'lender', structure:struct } } }; }
         function draw(s){ renderBuydown(mk(s)); return document.getElementById('app').innerText.replace(/\\s+/g,' '); }
-        var one = draw('1-1'), two = draw('2-1');
+        var one = draw('1-1'), two = draw('2-1'), zero = draw('1-0'), three = draw('3-2-1');
+        var rows = function(t){ return (t.match(/note rate −/g) || []).length; };
         return JSON.stringify({
           one_has_minus1: /−1%/.test(one),
           one_has_minus2: /−2%/.test(one),
           two_has_minus2: /−2%/.test(two),
           one_says_1_1:  /1-1 temporary buydown/i.test(one),
           two_says_2_1:  /2-1 temporary buydown/i.test(two),
-          loan_fallback: /712,500/.test(one)
+          loan_fallback: /712,500/.test(one),
+          /* 3-2-1 is the one with a THIRD schedule row and a year-4 line. A
+             renderer that ignored the structure would draw two rows here. */
+          three_rows:    rows(three),
+          three_has_minus3: /−3%/.test(three),
+          three_year4:   /Year 4 onward/i.test(three),
+          three_says_321: /3-2-1 temporary buydown/i.test(three),
+          /* 1-0 is the opposite edge: ONE row, year 2 onward. */
+          zero_rows:     rows(zero),
+          zero_year2:    /Year 2 onward/i.test(zero),
+          two_rows:      rows(two)
         });
       })()`,
        '{"one_has_minus1":true,"one_has_minus2":false,"two_has_minus2":true,'
-       + '"one_says_1_1":true,"two_says_2_1":true,"loan_fallback":true}'],
+       + '"one_says_1_1":true,"two_says_2_1":true,"loan_fallback":true,'
+       + '"three_rows":3,"three_has_minus3":true,"three_year4":true,"three_says_321":true,'
+       + '"zero_rows":1,"zero_year2":true,"two_rows":2}'],
       /* An unfinished quote must SAY so rather than draw a $0 schedule — the
          state uby9s8x was actually sent in, with no loan basis at all. */
       [`(function(){

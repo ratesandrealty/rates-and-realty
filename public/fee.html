@@ -834,7 +834,21 @@ function _bdPmt(P, ratePct, years){
     if(r===0) return P/n;
     return P*r/(1-Math.pow(1+r,-n));
 }
-function _bdSchedule(structure){ return (structure==='1-1')?[1,1]:[2,1]; }
+/* STRUCTURES ARE DATA — mirrors BD_STRUCTURES in tools/fee-sheet.html. A
+   buydown IS a list of annual reductions; bdCompute maps over it, the schedule
+   table renders a row per entry, and the "year N onward" line is length + 1, so
+   adding 4-3-2-1 later is one array in two files rather than a code path in two
+   files.
+   Unknown returns null and renderBuydown refuses. The old form fell through to
+   [2,1] for ANY unrecognised value, which on a borrower-facing link means
+   drawing a 2-1 schedule under whatever label the sheet says. */
+const BD_STRUCTURES = {
+  '1-0':   [1],
+  '1-1':   [1, 1],
+  '2-1':   [2, 1],
+  '3-2-1': [3, 2, 1],
+};
+function _bdSchedule(structure){ var c = BD_STRUCTURES[structure]; return c ? c.slice() : null; }
 function _bdMoney(v){ return '$'+Math.round(v).toLocaleString('en-US'); }
 function _bdMoney2(v){ return '$'+v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,','); }
 
@@ -865,6 +879,16 @@ function renderBuydown(snap){
     }
 
     const cuts=_bdSchedule(structure);
+    /* Refuse rather than default. A link is the one place a wrong schedule under
+       a right label cannot be caught by the person reading it. */
+    if(!cuts){
+      document.getElementById('app').innerHTML='<div class="hero">'
+        +'<div class="eyebrow">Temporary Buydown</div>'+headerName(name,data)
+        +'</div><div class="sec"><div class="card"><div style="padding:22px;text-align:center;color:#777;font-size:13px;line-height:1.7;">'
+        +'This buydown quote is not finished yet.<br>Reach out to Rene for an updated one.'
+        +'</div></div></div>'+disclaimer(snap.created_at)+preparedBlock();
+      return;
+    }
     const notePmt=_bdPmt(loan, noteRate, term);
     const years=cuts.map((cut,idx)=>{
         const rate=Math.max(0, noteRate-cut);
