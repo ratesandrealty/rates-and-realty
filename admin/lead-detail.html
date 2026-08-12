@@ -34692,11 +34692,31 @@ async function fetchIntelligence(forceRefresh) {
   try {
     const body = { contact_id: cid };
     if (forceRefresh) body.force_refresh = true;
+    /* FRONTEND FIRST (2026-08-12). Sends the USER'S session token, not the anon
+       key. The anon key is printed in this page's source and identifies nobody,
+       so contact-intelligence — which spends AI credits and reads a borrower's
+       whole record — currently answers anyone who reads the HTML.
+       This ships and is confirmed working BEFORE the guard lands on the
+       function, per the rule in CLAUDE.md: done in this order a mistake here
+       shows up as a page that still works, because the function is not yet
+       enforcing. Done backwards it is an outage, and you cannot tell whether
+       the token or the guard is at fault because both changed at once. */
+    const _tok = await _getUserAccessToken();
     const res = await fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/contact-intelligence', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY },
+      headers: Object.assign(
+        { 'Content-Type': 'application/json', 'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY },
+        _tok ? { 'Authorization': 'Bearer ' + _tok } : {}
+      ),
       body: JSON.stringify(body)
     });
+    /* Report a refusal instead of swallowing it. This returned `data` whatever
+       the status, so a 401 became a banner that silently renders nothing — the
+       failure mode that hid the last one of these for twelve minutes. */
+    if (!res.ok) {
+      console.warn('[intelligence] HTTP ' + res.status + (res.status === 401 || res.status === 403 ? ' — not permitted for this session' : ''));
+      return null;
+    }
     const data = await res.json();
     _intelCache = data;
     return data;
