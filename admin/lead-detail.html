@@ -11563,6 +11563,12 @@ async function lpLoadContacts(cid){
       +'</div>';
   }).join('');
 }
+/* Transaction-contact ROW keys (loan_contacts.role) -> vendor_directory.role.
+   Only listed where the two vocabularies disagree; everything else passes
+   through unchanged. 'appraisal_company' is a loan_contacts slot name with
+   saved rows behind it, so it cannot be renamed — see the note on
+   LP_CONTACT_ROLES and the ROLE_LABELS comment in admin/vendor-directory.html. */
+const LP_VENDOR_ROLE_FOR_ROW = { appraisal_company: 'appraisal' };
 let _lpVendorSuggestTimer = null;
 function lpVendorClose(box){ if(!box) return; box.style.display='none'; box.innerHTML=''; box._idx=-1; box._vendors=null; }
 async function lpVendorSuggest(role, inputEl){
@@ -11583,7 +11589,16 @@ async function lpVendorSuggest(role, inputEl){
         if(res.error) throw res.error;
         rows = res.data || [];
       } else {
-        let res = await _authClient().rpc('vendor_directory_search', { p_role: role, p_query: q, p_limit: 8 });
+        /* ROW KEY -> VENDOR ROLE. These are two different vocabularies that
+           mostly coincide, and where they diverge the search silently returns
+           nothing. LP_CONTACT_ROLES (loan_contacts slots) calls the appraisal
+           row 'appraisal_company'; vendor_directory has no such role — its three
+           appraisal vendors are role 'appraisal'. So the appraisal row's search
+           always returned zero and fell through to the all-roles fallback below,
+           which is why clicking First Name on Appraisal Company listed a title
+           officer, two realtors and an escrow officer. */
+        const vRole = LP_VENDOR_ROLE_FOR_ROW[role] || role;
+        let res = await _authClient().rpc('vendor_directory_search', { p_role: vRole, p_query: q, p_limit: 8 });
         if(res.error) throw res.error;
         rows = res.data || [];
         // Fallback: many roles have no role-specific rows yet — search ALL roles (p_role:null).
@@ -11591,6 +11606,15 @@ async function lpVendorSuggest(role, inputEl){
           const alt = await _authClient().rpc('vendor_directory_search', { p_role: null, p_query: q, p_limit: 8 });
           if(!alt.error) rows = alt.data || [];
         }
+        /* MATCHES FOR THIS ROW FIRST. Once the fallback fires the list is every
+           role mixed together in usage order, so the one vendor who actually
+           belongs to this row can sit fourth. Stable sort: exact-role rows keep
+           their relative ranking, everything else follows. */
+        rows = rows.slice().sort(function(a,b){
+          const am = (a && a.role === vRole) ? 0 : 1;
+          const bm = (b && b.role === vRole) ? 0 : 1;
+          return am - bm;
+        });
       }
     }catch(e){ (window.showToast||function(){})((isPartner?'Partner':'Directory')+' search failed: '+(e&&e.message||e), true); }
     box._idx = -1;
@@ -11608,7 +11632,20 @@ async function lpVendorSuggest(role, inputEl){
       } else {
         title = [v.name, v.company].filter(Boolean).join(' — ') || '(unnamed)';
         sub = [v.email, v.phone].filter(Boolean).join(' · ');
-        badge = ' <span class="lp-role-tag">'+lpEsc(lpRoleLabel(role))+'</span>';
+        /* THE VENDOR'S OWN ROLE, not the row's. This badged lpRoleLabel(role) —
+           the row you clicked — so every result claimed to be whatever you were
+           filling in: a title officer at Fidelity National Title badged
+           "Appraisal Company". A badge that echoes your own input tells you
+           nothing and actively misleads, because it looks like confirmation that
+           the directory holds four appraisers when it holds none of them.
+           Rows matching this row's role are marked so the real ones read as
+           different from the borrowed ones. */
+        const vRole2 = LP_VENDOR_ROLE_FOR_ROW[role] || role;
+        const isMatch = (v.role === vRole2);
+        badge = ' <span class="lp-role-tag"'
+              + (isMatch ? '' : ' style="opacity:.7;border-style:dashed;"')
+              + ' title="' + (isMatch ? 'Matches this row' : 'From a different role — shown because no ' + lpEsc(lpRoleLabel(vRole2)) + ' matched') + '">'
+              + lpEsc(lpRoleLabel(v.role) || '—') + '</span>';
       }
       return '<div class="lp-vsopt" data-id="'+lpEsc(v.id)+'" onmousedown="event.preventDefault();" onclick="lpVendorDirPick(\''+role+'\',\''+lpEsc(v.id)+'\',this)" onmouseover="lpVendorHover(this)" style="padding:7px 10px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05);"><div style="font-weight:600;color:#ddd;font-size:12px;">'+lpEsc(title)+badge+'</div>'+(sub?'<div style="font-size:10px;color:#888;margin-top:1px;">'+lpEsc(sub)+'</div>':'')+'</div>';
     }).join('');
@@ -14538,8 +14575,22 @@ async function lpVendorAddSave(type,btn){
     if(r.error) throw r.error;
     const v=Array.isArray(r.data)?r.data[0]:r.data;
     const id=(v&&(v.id!=null?v.id:v))||null;
-    if(id!=null){ _lpVendCache[type]=[{id:id,name:name,company:g('company')}].concat(_lpVendCache[type]||[]); lpOrderVendorPick(type,id); }
-    else { const d=document.getElementById('lpVendDrop-'+type); if(d) d.style.display='none'; }
+    /* SAY IT WORKED. Verified live: the RPC returns 200 with a uuid and the row
+       IS created — but the only visible consequence was the dropdown closing,
+       with the button still reading "Saving…" inside it. A successful save that
+       looks exactly like a dead button is why this was reported as "Save vendor
+       does nothing". The vendor was being created every time. */
+    if(id!=null){
+      _lpVendCache[type]=[{id:id,name:name,company:g('company')}].concat(_lpVendCache[type]||[]);
+      lpOrderVendorPick(type,id);
+      (window.showToast||function(){})('Vendor saved — ' + name + ' selected for ' + _lpCat(type) + '.');
+    }
+    else {
+      const d=document.getElementById('lpVendDrop-'+type); if(d) d.style.display='none';
+      /* The RPC answered but gave back no id, so nothing can be selected. That is
+         not a success and must not be silent. */
+      (window.showToast||function(){})('Vendor saved, but it could not be selected — reopen the list and pick it.', true);
+    }
   }catch(e){ btn.disabled=false; btn.textContent='Save vendor'; alert('Could not save vendor: '+(e.message||'error')); }
 }
 /* ── Vendor Directory Manager (reusable across all loans) ── */
