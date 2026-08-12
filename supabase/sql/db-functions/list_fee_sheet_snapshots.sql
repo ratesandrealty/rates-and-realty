@@ -17,18 +17,28 @@ begin
   end if;
   select coalesce(jsonb_agg(x order by x.created_at desc), '[]'::jsonb) into v_out
   from (
-    select slug, borrower_name, contact_id, created_at, view_count, last_viewed_at,
-           revoked_at, expires_at, share_sections,
-           /* Does this snapshot even HAVE a bridge addendum? The per-link toggle
-              is only offered when it does — a checkbox for a section that does
-              not exist reads as a broken toggle, and enabling it would be
-              refused server-side anyway. */
-           coalesce((data->'bridge'->>'on')::boolean, false) as has_bridge,
-           case when revoked_at is not null then 'revoked'
-                when expires_at is not null and expires_at <= now() then 'expired'
+    select s.slug, s.borrower_name, s.contact_id, s.created_at, s.view_count, s.last_viewed_at,
+           s.revoked_at, s.expires_at, s.share_sections,
+           s.data->>'mode' as snapshot_mode,
+           s.share_sections->>'mode' as mode_override,
+           (select jsonb_agg(jsonb_build_object(
+                     'key', k->>'key', 'label', k->>'label',
+                     'available', public._fs_has_section(s.data, k->>'key'),
+                     'on', coalesce((s.share_sections->>(k->>'key'))::boolean, false))
+                   order by ord)
+              from jsonb_array_elements(public._fs_share_section_keys()) with ordinality t(k, ord)
+           ) as sections,
+           (select jsonb_agg(jsonb_build_object(
+                     'key', m->>'key', 'label', m->>'label',
+                     'available', public._fs_has_mode(s.data, m->>'key'))
+                   order by ord)
+              from jsonb_array_elements(public._fs_share_mode_keys()) with ordinality t(m, ord)
+           ) as modes,
+           case when s.revoked_at is not null then 'revoked'
+                when s.expires_at is not null and s.expires_at <= now() then 'expired'
                 else 'live' end as status
-    from public.fee_sheet_snapshots
-    where p_contact_id is null or contact_id = p_contact_id
+    from public.fee_sheet_snapshots s
+    where p_contact_id is null or s.contact_id = p_contact_id
   ) x;
   return v_out;
 end; $function$;

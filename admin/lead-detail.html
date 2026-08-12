@@ -38208,46 +38208,78 @@ async function fsLoadShareLinks(){
    Labels say what becomes VISIBLE. A checkbox labelled with what it HIDES gets
    read backwards about half the time, and reading this one backwards is how
    compensation reaches an agent. */
+/* ── PER-LINK VISIBILITY, RENDERED FROM WHAT THE SERVER SERVES ──────────────
+ *
+ * NOTHING HERE IS HARDCODED. The section keys, their labels, whether this
+ * snapshot HAS each one, and which modes it can be shown as all arrive on the
+ * row from list_fee_sheet_snapshots. Add a key to _fs_share_section_keys and it
+ * appears here with no change to this file — which was the point: the previous
+ * version hardcoded three keys and posted all of them back on every change, so a
+ * key added server-side would have been silently reset to hidden the next time
+ * any other section was toggled.
+ *
+ * The setter merges a patch now, so even a stale client cannot clear a key it
+ * has never heard of. Belt and braces, because this is the control that decides
+ * whether a borrower's agent sees Rene's compensation.
+ *
+ * UNAVAILABLE SECTIONS ARE NOT RENDERED. A checkbox for a section the snapshot
+ * does not contain reads as a broken toggle, and switching it on is refused
+ * server-side anyway.
+ */
 function _fsSectionToggles(x){
-  var sec = x.share_sections || {};
-  /* `bridge` is only offered when the snapshot HAS one — a checkbox for a
-     section that does not exist reads as a broken toggle, and switching it on
-     would be refused server-side anyway. */
-  var defs = [['fee_schedule','Fee breakdown'],['lender_credits','Lender credits'],['people','Co-borrowers']];
-  if (x.has_bridge) defs.push(['bridge','Bridge addendum']);
-  return '<span style="flex-shrink:0;display:flex;gap:9px;align-items:center;margin-right:6px;">'
-    + defs.map(function(d){
-        var on = sec[d[0]] === true;
-        return '<label title="Show ' + d[1].toLowerCase() + ' on the shared page"'
-          + ' style="display:inline-flex;align-items:center;gap:4px;font-size:10px;color:' + (on?'#C9A84C':'#7f7a72') + ';cursor:pointer;white-space:nowrap;">'
-          + '<input type="checkbox"' + (on?' checked':'')
-          + ' onchange="fsSetSection(\'' + lpEsc(x.slug) + '\',\'' + d[0] + '\',this.checked)"'
-          + ' style="width:12px;height:12px;accent-color:#C9A84C;cursor:pointer;margin:0;">'
-          + lpEsc(d[1]) + '</label>';
-      }).join('')
-    + '</span>';
+  var secs = Array.isArray(x.sections) ? x.sections.filter(function(d){ return d.available; }) : [];
+  var modes = Array.isArray(x.modes) ? x.modes.filter(function(d){ return d.available; }) : [];
+  var out = '<span style="flex-shrink:0;display:flex;gap:9px;align-items:center;margin-right:6px;flex-wrap:wrap;">';
+
+  /* MODE FIRST — it decides WHICH sheet the borrower sees, and the section
+     toggles decide what is on it. Only offered when the snapshot actually holds
+     more than one renderable mode; a single-mode snapshot has no choice to make
+     and a dropdown with one entry is furniture. */
+  if(modes.length > 1){
+    var curMode = x.mode_override || x.snapshot_mode || '';
+    out += '<label title="Which comparison the borrower sees on this link"'
+        +  ' style="display:inline-flex;align-items:center;gap:4px;font-size:10px;color:#8f8f8f;white-space:nowrap;">'
+        +  '<select onchange="fsSetSection(\'' + lpEsc(x.slug) + '\',\'mode\',this.value)"'
+        +    ' style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);border-radius:5px;'
+        +    'color:#ddd;font-size:10px;padding:1px 4px;font-family:inherit;cursor:pointer;">'
+        +    modes.map(function(m){
+              return '<option value="' + lpEsc(m.key) + '"' + (m.key===curMode?' selected':'') + '>'
+                   + lpEsc(m.label) + '</option>';
+            }).join('')
+        +  '</select></label>';
+  }
+
+  out += secs.map(function(d){
+      var on = d.on === true;
+      return '<label title="Show ' + lpEsc(String(d.label||'').toLowerCase()) + ' on the shared page"'
+        + ' style="display:inline-flex;align-items:center;gap:4px;font-size:10px;color:' + (on?'#C9A84C':'#7f7a72') + ';cursor:pointer;white-space:nowrap;">'
+        + '<input type="checkbox"' + (on?' checked':'')
+        + ' onchange="fsSetSection(\'' + lpEsc(x.slug) + '\',\'' + lpEsc(d.key) + '\',this.checked)"'
+        + ' style="width:12px;height:12px;accent-color:#C9A84C;cursor:pointer;margin:0;">'
+        + lpEsc(d.label) + '</label>';
+    }).join('');
+  return out + '</span>';
 }
 async function fsSetSection(slug, key, on){
   try{
-    /* Read the CURRENT sections and post all three back. set_fee_sheet_sections
-       whitelists and rewrites every key, so sending one alone would silently reset
-       the other two to hidden — safe in one direction, but it would look like the
-       UI forgetting what Rene chose. */
-    var cur = {};
-    var cid = (typeof lpCid==='function' ? lpCid() : null);
-    var lr = await _authClient().rpc('list_fee_sheet_snapshots', { p_contact_id: cid });
-    if(!lr.error && Array.isArray(lr.data)){
-      var row = lr.data.filter(function(z){ return z.slug === slug; })[0];
-      if(row && row.share_sections) cur = row.share_sections;
-    }
-    cur[key] = !!on;
-    var r = await _authClient().rpc('set_fee_sheet_sections', { p_slug: slug, p_sections: cur });
+    /* ONE KEY, NOT THE WHOLE MAP. set_fee_sheet_sections merges a patch, so
+       sending only what changed is now correct AND safer: the old
+       read-all-post-all dance existed because the setter rewrote every key, and
+       it is exactly how a key this client did not know about would have been
+       reset to hidden.
+       `mode` carries a string; every other key is a boolean. '' clears the mode
+       override and falls back to the snapshot's own mode. */
+    var patch = {};
+    patch[key] = (key === 'mode') ? String(on || '') : !!on;
+    var r = await _authClient().rpc('set_fee_sheet_sections', { p_slug: slug, p_sections: patch });
     if(r.error) throw r.error;
-    showToast((on ? 'Showing ' : 'Hiding ') + key.replace(/_/g,' ') + ' on /fee/' + slug);
+    showToast(key === 'mode'
+      ? ('Showing ' + (on || 'the saved mode') + ' on /fee/' + slug)
+      : ((on ? 'Showing ' : 'Hiding ') + key.replace(/_/g,' ') + ' on /fee/' + slug));
     fsLoadShareLinks();
   }catch(e){
     showToast('Could not update: ' + ((e&&e.message)||e), true);
-    fsLoadShareLinks();   // re-sync the checkbox to what the server actually holds
+    fsLoadShareLinks();   // re-sync the control to what the server actually holds
   }
 }
 async function fsRevokeLink(slug, revoke){
