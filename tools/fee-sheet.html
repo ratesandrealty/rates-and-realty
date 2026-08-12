@@ -723,6 +723,39 @@
     <!-- SCENARIO CARDS (purchase/refi) -->
     <div id="scenarioCards"></div>
 
+    <!-- ── BRIDGE LOAN ADDENDUM ────────────────────────────────────────────
+         An ADDENDUM, not a scenario. The rate options above compare PERMANENT
+         financing; the bridge is a fact about the transaction that is true
+         whichever of them is chosen, so making it a fourth column would compare
+         unlike things. Rendered once, under all the columns.
+         Opt-in: unchecked, it draws nothing at all. -->
+    <div id="bridgeBlock" style="display:none;margin-top:14px;border-top:1px solid rgba(255,255,255,.08);padding-top:10px;">
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;margin-bottom:8px;">
+            <input type="checkbox" id="br_on" onchange="bridgeToggle()" style="accent-color:#C9A84C;cursor:pointer;width:14px;height:14px;">
+            <span style="font-size:11px;font-weight:700;color:#C9A84C;">Bridge loan addendum</span>
+        </label>
+        <div id="br_fields" style="display:none;">
+            <div class="field"><label>Departing home value</label><input type="text" id="br_value" placeholder="$800,000" oninput="recalc()"></div>
+            <div class="field"><label>Existing mortgage balance</label><input type="text" id="br_balance" placeholder="$450,000" oninput="recalc()"></div>
+            <div class="field"><label>Max CLTV %</label><input type="number" step="1" id="br_cltv" value="80" oninput="recalc()"></div>
+            <div class="field"><label>Bridge rate %</label><input type="number" step="0.125" id="br_rate" placeholder="10.5" oninput="recalc()"></div>
+            <div class="field"><label>Term (months)</label><input type="number" step="1" id="br_months" value="9" oninput="recalc()"></div>
+            <div class="field"><label>Points %</label><input type="number" step="0.25" id="br_points" value="2" oninput="recalc()"></div>
+            <div class="field"><label>Other bridge fees</label><input type="text" id="br_fees" placeholder="$1,495" oninput="recalc()"></div>
+            <div class="field"><label>Repayment</label>
+                <select id="br_mode" onchange="recalc()">
+                    <!-- IO FIRST AND DEFAULT. Amortising a bridge over 9 months
+                         produces a payment dominated by principal (~$22k on a
+                         $190k bridge) that means nothing beside a 30-year
+                         mortgage. Available, but never the default. -->
+                    <option value="io" selected>Interest-only (typical)</option>
+                    <option value="amortized">Amortised over the term</option>
+                </select>
+            </div>
+            <div class="field"><label>Repaid from the sale of</label><input type="text" id="br_payoff" placeholder="123 Departing St, City, CA" oninput="recalc()"></div>
+        </div>
+    </div>
+
     <div class="sidebar-actions">
         <button class="btn-gold" onclick="generate()">Generate Fee Sheet</button>
         <button class="btn-outline" onclick="window.print()">Print / PDF</button>
@@ -1336,6 +1369,13 @@ function setMode(newMode) {
     if (sheet) sheet.style.display = isOwnPanel ? 'none' : '';
     if (helocSheet) helocSheet.style.display = isHeloc ? '' : 'none';
     if (buydownSheet) buydownSheet.style.display = isBuydown ? '' : 'none';
+    /* The bridge addendum is offered ONLY in Single Rate and Rate Comparison —
+       see the mode-scope note above bridgeAddendumHtml(). In the per-column
+       modes the during-overlap figure differs per column, so one addendum would
+       be wrong for most of them; in Buydown and HELOC there is no permanent
+       loan on the sheet for it to sit alongside. Hidden, not half-rendered. */
+    bridgeSyncVisibility(newMode);
+
     fsApplyColumnGovernance();
     if (isHeloc) helocSeedFromSidebar();
     renderCards();
@@ -2046,6 +2086,8 @@ function render(inp, results) {
             '</div>';
         })()}
 
+        ${bridgeAddendumHtml(inp, results)}
+
         ${_fsReportFooter(dateStr, timeStr)}
     `;
 
@@ -2673,6 +2715,209 @@ function bdPmt(P, ratePct, years) {
 /* Reduction schedule per structure. Year 3+ is always the note rate — stated
    explicitly rather than implied, because "what happens in year three" is the
    question a borrower asks about a buydown. */
+/* ── BRIDGE LOAN ARITHMETIC ──────────────────────────────────────────────────
+ *
+ * PINNED BY tools/test-bridge-math.mjs, which lifts this function out of this
+ * file at runtime and checks it against hand-worked figures. Change the formula
+ * and that test fails — which is the point. Same treatment as the buydown.
+ *
+ * THE HAND-WORKED CASE, so the numbers below can be checked without running
+ * anything. $800,000 departing home, $450,000 owing, 80% CLTV, 10.5%, 9 months,
+ * 2 points, $1,495 fees, interest-only:
+ *     max lien        800,000 x 0.80            = 640,000
+ *     bridge amount   640,000 - 450,000         = 190,000
+ *     monthly (IO)    190,000 x 0.105 / 12      =   1,662.50
+ *     total interest  1,662.50 x 9              =  14,962.50
+ *     points          190,000 x 0.02            =   3,800.00
+ *     TOTAL COST      14,962.50 + 3,800 + 1,495 =  20,257.50
+ *
+ * WHY TOTAL COST IS THE HEADLINE and not the monthly payment. Every other mode
+ * on this sheet leads with a monthly figure because the borrower lives with it
+ * for thirty years. A bridge is carried for a few months and then repaid, so the
+ * number that decides whether it is worth doing is what the whole thing costs.
+ * Leading with $1,662.50/mo would understate a $20,257.50 decision.
+ *
+ * AMORTISED IS AVAILABLE AND IS NOT THE DEFAULT. The same $190,000 over 9 months
+ * amortising is ~$22,045/mo, because at that term the payment is almost entirely
+ * principal. That is a true number and a useless comparison next to a 30-year
+ * P&I, so it has to be asked for.
+ */
+function bridgeCompute(b) {
+    const value   = parseCurrency(b.value) || 0;
+    const balance = parseCurrency(b.balance) || 0;
+    const cltv    = parseFloat(b.cltv)   || 0;
+    const rate    = parseFloat(b.rate)   || 0;
+    const months  = parseFloat(b.months) || 0;
+    const ptsPct  = parseFloat(b.points) || 0;
+    const fees    = parseCurrency(b.fees) || 0;
+    const io      = (b.mode !== 'amortized');
+
+    /* Equity available ABOVE the existing lien, not the whole value — a bridge
+       is a second position behind a mortgage that is still outstanding. */
+    const maxLien = value * cltv / 100;
+    const amount  = Math.max(0, maxLien - balance);
+    const r = rate / 1200;
+
+    let monthly = 0, totalInterest = 0;
+    if (amount > 0 && months > 0) {
+        if (io) {
+            monthly = amount * r;
+            totalInterest = monthly * months;      // principal untouched until payoff
+        } else {
+            monthly = (r === 0) ? (amount / months)
+                                : amount * r / (1 - Math.pow(1 + r, -months));
+            /* Fully amortising over the term, so everything paid above the
+               principal is interest. */
+            totalInterest = Math.max(0, monthly * months - amount);
+        }
+    }
+    const pointsAmt = amount * ptsPct / 100;
+    return {
+        maxLien, amount, monthly, totalInterest,
+        pointsAmt, fees, io, months, rate,
+        totalCost: totalInterest + pointsAmt + fees
+    };
+}
+
+function bridgeInputs() {
+    const v = id => { const e = $(id); return e ? e.value : ''; };
+    return {
+        on:      !!($('br_on') && $('br_on').checked),
+        value:   v('br_value'),  balance: v('br_balance'), cltv:  v('br_cltv'),
+        rate:    v('br_rate'),   months:  v('br_months'),  points: v('br_points'),
+        fees:    v('br_fees'),   mode:    v('br_mode'),    payoff: v('br_payoff')
+    };
+}
+/* CALLED FROM setMode AND FROM INIT, which is the whole reason it is a function.
+   The panel's markup is display:none — correct for the five modes that must not
+   offer it, wrong for the DEFAULT mode. setMode is not run at page load, so the
+   sheet opened in Rate Comparison with the bridge option invisible until the
+   user clicked a mode button and came back. Caught in the browser, not by
+   reading: every mode I clicked through was right, because clicking is what
+   fixed it. */
+function bridgeSyncVisibility(mode) {
+    const el = document.getElementById('bridgeBlock');
+    if (el) el.style.display = (mode === 'rate' || mode === 'single') ? '' : 'none';
+}
+function bridgeToggle() {
+    const on = !!($('br_on') && $('br_on').checked);
+    const f = $('br_fields'); if (f) f.style.display = on ? '' : 'none';
+    recalc();
+}
+
+/* ── BRIDGE ADDENDUM — RENDER ────────────────────────────────────────────────
+ *
+ * MODE SCOPE, stated rather than left to be discovered:
+ *
+ *   Single Rate, Rate Comparison  -> RENDERED. Every column shares one purchase
+ *                                    and one set of sidebar inputs, so there is
+ *                                    exactly one during-overlap figure per
+ *                                    column and they can sit in one table.
+ *   Price Comparison              -> NOT RENDERED, deliberately. Each column is a
+ *                                    DIFFERENT purchase price with a different
+ *                                    permanent payment, so "carrying both" is a
+ *                                    different number per column. One addendum
+ *                                    would be wrong for at least two of them,
+ *                                    and three addenda is not an addendum.
+ *   Property Comparison           -> NOT RENDERED, same reason.
+ *   Buydown, HELOC                -> NOT RENDERED. Self-contained modes with
+ *                                    their own sheets and their own inputs; the
+ *                                    bridge panel is not even shown in the
+ *                                    sidebar there.
+ *
+ * The panel is hidden outside rate/single, so this is belt and braces — but a
+ * render guard that depends on a display:none somewhere else is how a half-right
+ * section eventually appears.
+ */
+function bridgeAddendumHtml(inp, results) {
+    if (!inp || (inp.mode !== 'rate' && inp.mode !== 'single')) return '';
+    const b = bridgeInputs();
+    if (!b.on) return '';
+    const r = bridgeCompute(b);
+
+    const m2 = v => '$' + (Number(v) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const m0 = v => '$' + Math.round(Number(v) || 0).toLocaleString('en-US');
+
+    /* An unfinished addendum says so instead of printing a $0 bridge, which
+       reads as a real quote of nothing. */
+    if (!(r.amount > 0) || !(r.rate > 0) || !(r.months > 0)) {
+        return '<div style="margin-top:16px;padding:14px 16px;border:1px solid #e0d5b0;border-radius:8px;background:#FFFDF5;font-size:12.5px;color:#7a6a3a;">'
+            + '<strong>Bridge loan addendum</strong> — enter the departing home value, the existing balance, a rate and a term to build it.'
+            + '</div>';
+    }
+
+    /* THE PAYOFF ASSUMPTION IS PRINTED, NOT ASSUMED. A bridge with no stated
+       exit is the thing that goes wrong, so it is on the page in words. Absent,
+       it says so loudly rather than quietly omitting the line. */
+    const payoff = (b.payoff || '').trim();
+    const payoffLine = payoff
+        ? 'Repaid in full from the sale of <strong>' + _fsEsc(payoff) + '</strong>.'
+        : '<span style="color:#B4462A;font-weight:700;">Repayment source not stated — enter the departing property.</span>';
+
+    const rows = results.map((res) => {
+        const perm = Number(res.totalMonthly) || 0;
+        return '<tr class="row-item">'
+            + '<td>' + _fsEsc(res.headerLabel || 'Option') + '</td>'
+            + '<td style="text-align:right;">' + m2(perm) + '</td>'
+            + '<td style="text-align:right;">' + m2(r.monthly) + '</td>'
+            + '<td style="text-align:right;font-weight:700;">' + m2(perm + r.monthly) + '</td>'
+            + '</tr>';
+    }).join('');
+
+    return ''
+      + '<div style="margin-top:18px;padding:0 4px;">'
+      + '<h2 style="font-family:\'Playfair Display\',Georgia,serif;font-size:19px;margin:14px 0 4px;">Bridge Loan Addendum</h2>'
+      + '<div style="font-size:12px;color:#555;margin-bottom:14px;">'
+      +   'A short-term loan against the departing home, used before it sells. It sits alongside whichever option above is chosen — it does not replace it.'
+      + '</div>'
+
+      /* TOTAL COST IS THE HEADLINE. Every other section on this sheet leads with
+         a monthly payment because the borrower lives with it for thirty years. A
+         bridge is carried for months and then repaid, so what it COSTS is the
+         number the decision turns on. */
+      + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">'
+      +   '<div style="flex:1;min-width:150px;border:1px solid #C9A84C;border-radius:8px;padding:12px 14px;background:#FFFDF5;">'
+      +     '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#8a6d1f;">Total cost of the bridge</div>'
+      +     '<div style="font-size:22px;font-weight:700;color:#1a1208;">' + m0(r.totalCost) + '</div>'
+      +     '<div style="font-size:11px;color:#666;margin-top:2px;">interest + points + fees over ' + r.months + ' months</div>'
+      +   '</div>'
+      +   '<div style="flex:1;min-width:150px;border:1px solid #ddd;border-radius:8px;padding:12px 14px;">'
+      +     '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#777;">Bridge amount</div>'
+      +     '<div style="font-size:22px;font-weight:700;color:#333;">' + m0(r.amount) + '</div>'
+      +     '<div style="font-size:11px;color:#666;margin-top:2px;">' + b.cltv + '% CLTV less the existing balance</div>'
+      +   '</div>'
+      +   '<div style="flex:1;min-width:150px;border:1px solid #ddd;border-radius:8px;padding:12px 14px;">'
+      +     '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#777;">Bridge payment</div>'
+      +     '<div style="font-size:22px;font-weight:700;color:#333;">' + m2(r.monthly) + '</div>'
+      +     '<div style="font-size:11px;color:#666;margin-top:2px;">' + (r.io ? 'interest-only' : 'amortised') + ' at ' + r.rate.toFixed(3) + '%</div>'
+      +   '</div>'
+      + '</div>'
+
+      /* THE DISCLOSURE THAT MATTERS, and it is not optional. While the departing
+         home is unsold the borrower carries BOTH loans. Showing the two payments
+         separately without their sum understates the position they are actually
+         in — the same reason the buydown prints the note-rate payment beside the
+         year-one payment. */
+      + '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">'
+      +   '<thead><tr>'
+      +     '<th style="text-align:left;padding:7px 6px;border-bottom:2px solid #C9A84C;">While the departing home is unsold</th>'
+      +     '<th style="text-align:right;padding:7px 6px;border-bottom:2px solid #C9A84C;">New mortgage</th>'
+      +     '<th style="text-align:right;padding:7px 6px;border-bottom:2px solid #C9A84C;">Bridge</th>'
+      +     '<th style="text-align:right;padding:7px 6px;border-bottom:2px solid #C9A84C;">Both, monthly</th>'
+      +   '</tr></thead><tbody>'
+      +   rows
+      + '</tbody></table>'
+
+      + '<div style="margin-top:12px;font-size:12px;color:#555;line-height:1.6;">'
+      +   '<div style="margin-bottom:6px;">' + payoffLine + '</div>'
+      +   'Term ' + r.months + ' months at ' + r.rate.toFixed(3) + '%, ' + (r.io ? 'interest-only' : 'amortised over the term') + '. '
+      +   'Interest ' + m0(r.totalInterest) + ' &middot; points ' + m0(r.pointsAmt) + ' &middot; other fees ' + m0(r.fees) + '. '
+      +   (r.io ? 'The balance of ' + m0(r.amount) + ' is repaid in one payment at closing on the sale; it does not reduce over the term. ' : '')
+      +   'If the sale takes longer than ' + r.months + ' months the bridge must be extended or refinanced, usually at further cost. '
+      +   'Estimate only &mdash; not a commitment to lend.'
+      + '</div></div>';
+}
+
 function bdSchedule(structure) {
     return (structure === '1-1') ? [1, 1] : [2, 1];
 }
@@ -3342,6 +3587,7 @@ function _fsAddrWire() {
 _fsAddrWire();
 
 renderCards();
+bridgeSyncVisibility(_currentMode);   // setMode does not run at load; see the note on it
 recalc();
 
 // URL param prefill for iframe / fullscreen mode

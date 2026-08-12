@@ -570,14 +570,45 @@ Deno.serve(async (req) => {
 
       console.log(`[twilio-voice] webhook To="${to}" From="${from}" CallSid="${callSid}" rec="${recordingStatus}"`);
 
+      /* ── A CAPTURE THAT FAILED IS A WRITE, NOT AN ABSENCE ──────────────────
+       *
+       * Twilio posts RecordingStatus 'failed' or 'absent' with NO RecordingUrl.
+       * The success branch below is keyed on the URL, so those posts used to
+       * fall through to the TwiML branches doing nothing at all — and the row
+       * kept whatever it was stamped at dial time. That is the stamp-on-success
+       * shape this project keeps rediscovering: 'recorded' meant "we asked
+       * Twilio to record", and nothing ever said otherwise.
+       *
+       * Measured before this was added: 4 rows carried recording_disposition
+       * 'recorded' and TWO OF THEM HAD NO recording_url — one completed
+       * outbound call with no capture, and one inbound row stuck at 'ringing'
+       * that never connected. Both asserted a recording that does not exist.
+       *
+       * Mirrors calls_log.transcript_status exactly, which is the same problem
+       * already solved once on this table: a failure is written down, so
+       * "requested and failed" cannot look like "requested and succeeded". */
+      if (!recordingUrl && (recordingStatus === 'failed' || recordingStatus === 'absent')) {
+        if (callSid) {
+          const { error: dErr } = await sb.from('calls_log')
+            .update({ recording_disposition: 'unavailable' })
+            .eq('twilio_call_sid', callSid);
+          if (dErr) console.error('[twilio-voice] disposition downgrade failed:', dErr.message);
+          console.error(`[twilio-voice] RECORDING ${recordingStatus.toUpperCase()} for sid=${callSid} — disposition set to 'unavailable'`);
+        }
+        return new Response('', { status: 200, headers: corsHeaders });
+      }
+
       // Recording status callback → log url, return empty 200 (Twilio ignores body)
       if (recordingUrl) {
         if (callSid) {
           /* AWAITED, and .select()ing the id back, because the transcription
            * kick-off below needs to know WHICH row this recording landed on.
            * The previous fire-and-forget .then() could not tell anyone. */
+          /* The disposition is RESOLVED here, not at dial. This is the first
+             moment a recording is known to exist, so it is the only honest place
+             to write 'recorded'. */
           const { data: updated, error: updErr } = await sb.from('calls_log')
-            .update({ recording_url: recordingUrl })
+            .update({ recording_url: recordingUrl, recording_disposition: 'recorded' })
             .eq('twilio_call_sid', callSid)
             .select('id');
           if (updErr) console.error('[twilio-voice] recording update err:', updErr.message);
@@ -708,7 +739,12 @@ Deno.serve(async (req) => {
         if (callSid) {
           try {
             await sb.from('calls_log')
-              .update({ recording_disposition: rec.ok ? 'recorded' : 'unavailable' })
+              /* 'requested', not 'recorded'. At dial time all that is known is
+                 whether we ASKED Twilio to record; whether anything was captured
+                 is resolved by the recording status callback. A preflight
+                 failure is a genuine 'unavailable' — the disclosure could not
+                 play, so record= was never sent and nothing will be captured. */
+              .update({ recording_disposition: rec.ok ? 'requested' : 'unavailable' })
               .eq('twilio_call_sid', callSid);
           } catch (e) { console.error('[twilio-voice] inbound disposition stamp failed:', String(e)); }
         }
@@ -867,8 +903,14 @@ Deno.serve(async (req) => {
          * whole job was to fail the RECORDING closed when the disclosure could
          * not be played, and there is no disclosure on this path any more — so
          * gating capture on whether an unrelated endpoint answers would drop
-         * recordings for no reason at all. Outbound now always records. */
-        const disposition = 'recorded';
+         * recordings for no reason at all. Outbound now always records.
+         *
+         * 'requested', NOT 'recorded'. Every outbound call asks Twilio to
+         * record, but asking is not capturing — the recording status callback
+         * resolves this to 'recorded' or 'unavailable'. Stamping the outcome at
+         * dial time is how a failed capture came to look identical to a
+         * successful one. */
+        const disposition = 'requested';
         /* DUAL. Identical start trigger to record-from-answer, so the notice
          * ordering below is unchanged. Here the parent leg is the staff
          * member's browser client, so channel 1 is staff — which does match
