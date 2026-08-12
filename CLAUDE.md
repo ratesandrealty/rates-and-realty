@@ -547,9 +547,25 @@ on the contacts where it matters.
 **The per-call recording toggle is gone** (same date, Rene's decision: always
 record, always transcribe). No switch in the dialer, the lead-detail modal or the
 power dialer; no `Record` param on `Device.connect`; `canRecord()` no longer
-takes a `wanted` flag. `calls_log.recording_disposition` is KEPT — a failed
-capture and a deliberate skip are different facts, and historical rows still say
-`off`. New outbound rows are stamped `recorded` at dial time.
+takes a `wanted` flag.
+
+**`calls_log.recording_disposition` is KEPT, and it has FOUR states.** It used to
+be stamped at DIAL time and never corrected, so a capture that was attempted and
+failed was indistinguishable from one that worked — measured, 4 rows said
+`recorded` and two of them had no `recording_url`. It now mirrors
+`transcript_status`:
+
+| value | meaning | written |
+|---|---|---|
+| `requested` | we asked Twilio to record; outcome not known yet | dial time |
+| `recorded` | a recording exists | the status callback, on a URL |
+| `unavailable` | capture attempted and FAILED, or the inbound disclosure could not play so `record=` was never sent | the status callback / preflight |
+| `off` | historical only — the per-call toggle | — |
+
+**Never stamp `recorded` at dial time.** Twilio posts `RecordingStatus`
+`failed`/`absent` with NO `RecordingUrl`, and the callback's success branch keys
+on the URL — so those posts used to fall through doing nothing. A failed capture
+must be a WRITE, not an absence.
 
 **Channel 1 is NOT always staff here.** Twilio puts the parent leg on channel 1
 and Conversational Intelligence assumes channel 1 is the Agent. True for the

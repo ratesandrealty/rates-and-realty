@@ -23,6 +23,62 @@
   var _sb = null;
 
   function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  /* ── BODY FORMATTING ────────────────────────────────────────────────────
+   *
+   * A PROCEDURE NEEDS HEADINGS AND LISTS. The old renderer was esc() plus
+   * white-space:pre-wrap, which is fine for a one-line tooltip and unreadable
+   * for a 27-step guide. va-tasks' mdToHtml was no better: **bold** and <br>,
+   * nothing else.
+   *
+   * THIS IS NOT A SANITIZER, and that distinction is the reason it is safe to
+   * hand-write. CLAUDE.md's rule is never to hand-roll an HTML sanitizer — a
+   * sanitizer takes untrusted HTML and tries to remove the dangerous parts,
+   * which is famously hard. This ESCAPES EVERYTHING FIRST and then re-introduces
+   * a fixed set of tags of its own making. No byte the author typed can ever
+   * become markup, so there is nothing to sanitize. The vendored DOMPurify stays
+   * the tool for the other direction (inbound mail, signature HTML).
+   *
+   * Links are the one place a scheme could sneak in, so `[text](url)` accepts
+   * http/https/mailto only and drops anything else back to plain text.
+   */
+  function mdToHtml(md) {
+    var lines = String(md == null ? '' : md).replace(/\r\n?/g, '\n').split('\n');
+    var out = [], list = null;
+    function closeList() { if (list) { out.push('</' + list + '>'); list = null; } }
+    function inline(s) {
+      s = esc(s);
+      s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+      s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+      /* The URL is already escaped, so quotes cannot break out of the attribute;
+         the scheme test is about javascript:/data:, not injection. */
+      s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function (m, t, u) {
+        return /^(https?:|mailto:)/i.test(u)
+          ? '<a href="' + u + '" target="_blank" rel="noopener">' + t + '</a>' : m;
+      });
+      return s;
+    }
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i], m;
+      if (!ln.trim()) { closeList(); continue; }
+      if ((m = ln.match(/^(#{1,3})\s+(.*)$/))) {
+        closeList(); out.push('<h' + (m[1].length + 2) + '>' + inline(m[2]) + '</h' + (m[1].length + 2) + '>'); continue;
+      }
+      if (/^\s*[-*]\s+/.test(ln)) {
+        if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; }
+        out.push('<li>' + inline(ln.replace(/^\s*[-*]\s+/, '')) + '</li>'); continue;
+      }
+      if (/^\s*\d+[.)]\s+/.test(ln)) {
+        if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; }
+        out.push('<li>' + inline(ln.replace(/^\s*\d+[.)]\s+/, '')) + '</li>'); continue;
+      }
+      closeList();
+      out.push('<p>' + inline(ln) + '</p>');
+    }
+    closeList();
+    return out.join('');
+  }
   function isAdmin() { return (sessionStorage.getItem('rnr_app_role') || '').toLowerCase() === 'admin'; }
 
   async function client() {
@@ -75,7 +131,19 @@
       '.ht-edit:hover{background:rgba(201,168,76,.14)}',
       '.ht-body{padding:16px;overflow-y:auto;display:flex;flex-direction:column;gap:12px}',
       '.ht-video{width:100%;border-radius:10px;background:#000;display:block;max-height:52vh}',
-      '.ht-desc{font-size:13px;line-height:1.6;color:#dcdcdc;white-space:pre-wrap;word-break:break-word}',
+      /* pre-wrap is GONE deliberately: the body is markdown now, so newlines are
+         structure the renderer consumed, and keeping pre-wrap would double every
+         gap it already produced. */
+      '.ht-desc{font-size:13px;line-height:1.6;color:#dcdcdc;word-break:break-word}',
+      '.ht-desc p{margin:0 0 9px}.ht-desc p:last-child{margin-bottom:0}',
+      '.ht-desc h3{font-size:14.5px;color:#C9A84C;margin:14px 0 6px;font-weight:700}',
+      '.ht-desc h4{font-size:13px;color:#e6c76a;margin:12px 0 5px;font-weight:700}',
+      '.ht-desc h5{font-size:12.5px;color:#cfcfcf;margin:10px 0 4px;font-weight:700}',
+      '.ht-desc ul,.ht-desc ol{margin:0 0 9px;padding-left:20px}',
+      '.ht-desc li{margin:0 0 4px}',
+      '.ht-desc code{background:rgba(255,255,255,.07);border-radius:4px;padding:1px 5px;font-size:12px;font-family:ui-monospace,monospace}',
+      '.ht-desc a{color:#C9A84C}',
+      '.ht-desc strong{color:#f0f0f0}',
       '.ht-empty{font-size:13px;color:#8a8a8a;text-align:center;padding:10px 0}',
       '.ht-label{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#8a8a8a;font-weight:600}',
       '.ht-input,.ht-area{width:100%;box-sizing:border-box;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#eee;font-size:13px;padding:9px 11px;outline:none;font-family:inherit}',
@@ -96,25 +164,80 @@
     document.head.appendChild(s);
   }
 
+  /* ── WHICH TOPICS HAVE CONTENT ──────────────────────────────────────────
+   *
+   * THE CHANGE THAT MAKES A ROLLOUT POSSIBLE. mount() used to append a ⓘ to any
+   * element carrying the attribute, without ever asking whether that topic had
+   * anything to show. So adding a button and writing its text were coupled, the
+   * only safe order was "write first, then get a developer to add the
+   * attribute", and a developer sat in the loop for every SOP. That is why there
+   * were six attributes in the whole CRM — and why THREE of them
+   * (crm.lead.pricing, crm.lead.loe, crm.lead.esign) were buttons that opened
+   * and said "No help for this topic yet."
+   *
+   * Now the attribute is just a MARKER. Attributes can be added everywhere in
+   * one pass with no authoring, and each ⓘ appears by itself the moment Rene
+   * saves that topic. Writing becomes pure writing.
+   *
+   * ONE query per page, shared by every element on it. Failure is silent and
+   * mounts NOTHING rather than mounting everything — a page briefly missing its
+   * help buttons is a smaller wrong than a page full of buttons that open empty.
+   */
+  var _keysPromise = null;
+  function contentKeys() {
+    if (_keysPromise) return _keysPromise;
+    _keysPromise = (async function () {
+      var cl = await client(); if (!cl) return null;
+      try {
+        var r = await cl.rpc('help_topics_list');
+        if (r.error) throw r.error;
+        var set = Object.create(null);
+        (r.data || []).forEach(function (t) {
+          if (t.is_active === false) return;
+          var hasText = t.description && String(t.description).trim();
+          if (hasText || t.video_url) { set[t.topic_key] = 1; _cache[t.topic_key] = t; }
+        });
+        return set;
+      } catch (e) { console.warn('[help] topic list', e && e.message); return null; }
+    })();
+    return _keysPromise;
+  }
+  /* Admins get every marked element regardless, because an admin needs to reach
+     the editor to CREATE the content — a button that only appears once content
+     exists can never be the way content gets written. */
+  function invalidateKeys() { _keysPromise = null; }
+
   // ── mount ───────────────────────────────────────────────────────────────
   function mount(root) {
     injectCss();
     root = root || document;
     var nodes = root.querySelectorAll('[data-help-topic]:not([data-help-mounted])');
-    Array.prototype.forEach.call(nodes, function (el) {
-      el.setAttribute('data-help-mounted', '1');
-      var key = el.getAttribute('data-help-topic');
-      var title = el.getAttribute('data-help-title') || '';
-      if (el.hasAttribute('data-help-self')) {
-        el.style.cursor = 'pointer';
-        el.addEventListener('click', function (e) { e.preventDefault(); open(key, title); });
-        return;
-      }
-      var btn = document.createElement('button');
-      btn.type = 'button'; btn.className = 'help-i-btn'; btn.setAttribute('aria-label', 'Help'); btn.title = 'Help';
-      btn.textContent = 'ⓘ';
-      btn.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); open(key, title); });
-      el.appendChild(btn);
+    if (!nodes.length) return;
+    contentKeys().then(function (have) {
+      Array.prototype.forEach.call(nodes, function (el) {
+        if (el.getAttribute('data-help-mounted')) return;
+        var key = el.getAttribute('data-help-topic');
+        var title = el.getAttribute('data-help-title') || '';
+        /* Admin sees all; everyone else sees only what has been written. A null
+           `have` means the lookup failed — mount nothing rather than guess. */
+        if (!isAdmin() && (!have || !have[key])) return;
+        el.setAttribute('data-help-mounted', '1');
+        if (el.hasAttribute('data-help-self')) {
+          el.style.cursor = 'pointer';
+          el.addEventListener('click', function (e) { e.preventDefault(); open(key, title); });
+          return;
+        }
+        var btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'help-i-btn'; btn.setAttribute('aria-label', 'Help'); btn.title = 'Help';
+        /* An admin looking at a topic with nothing in it gets a dimmed marker —
+           still clickable, visibly "not written yet", and not mistakable for
+           help that exists. */
+        var empty = !have || !have[key];
+        if (empty) { btn.style.opacity = '.42'; btn.title = 'No help written yet — click to add'; }
+        btn.textContent = 'ⓘ';
+        btn.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); open(key, title); });
+        el.appendChild(btn);
+      });
     });
   }
 
@@ -154,7 +277,7 @@
     var body = document.getElementById('ht-body');
     var html = '';
     if (t.video_url) html += '<video class="ht-video" controls preload="metadata" playsinline src="' + esc(t.video_url) + '"></video>';
-    if (t.description && String(t.description).trim()) html += '<div class="ht-desc">' + esc(t.description) + '</div>';
+    if (t.description && String(t.description).trim()) html += '<div class="ht-desc">' + mdToHtml(t.description) + '</div>';
     if (!t.video_url && !(t.description && String(t.description).trim())) {
       html += '<div class="ht-empty">No help for this topic yet.' + (isAdmin() ? ' Tap ✎ Edit to add a video or description.' : '') + '</div>';
     }
@@ -297,6 +420,10 @@
       if (r.error) throw r.error;
       var saved = { topic_key: key, title: draft.title || '', description: draft.description || '', video_url: draft.video_url || '', video_slug: draft.video_slug || '', area: draft.area || 'both' };
       _cache[key] = saved;
+      /* The key set decides which markers get a ⓘ, so writing a topic has to
+         invalidate it — otherwise the button Rene just earned does not appear
+         until a reload, which reads as the save not having worked. */
+      invalidateKeys();
       renderView(key, saved, titleHint);
     } catch (e) {
       if (errEl) errEl.textContent = '⚠ ' + ((e && e.message) || 'Save failed');
@@ -304,8 +431,31 @@
     }
   }
 
-  window.HelpTopic = { mount: mount, open: open, close: closePopup, _cache: _cache };
+  window.HelpTopic = {
+    mount: mount, open: open, close: closePopup, _cache: _cache,
+    /* Exported so the SOP page renders bodies through the SAME formatter the ⓘ
+       popup uses. Two renderers over one column is how the same text starts
+       looking different in two places. */
+    mdToHtml: mdToHtml,
+    invalidate: invalidateKeys
+  };
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { mount(); });
-  else mount();
+  /* MOUNTED TWICE, ON PURPOSE. The first pass runs at DOM ready; the second runs
+     once auth-guard has settled the role, because whether an element gets a ⓘ
+     now depends on isAdmin(), and `rnr_app_role` is written asynchronously. A
+     single early pass would hide every unwritten topic from the one person who
+     can write it. mount() is idempotent — data-help-mounted makes the second
+     pass a no-op for anything already handled. */
+  function mountAll() {
+    mount();
+    try {
+      if (window._rrGateReady && typeof window._rrGateReady.then === 'function') {
+        window._rrGateReady.then(function () { invalidateKeys(); mount(); }, function () {});
+      } else {
+        setTimeout(function () { invalidateKeys(); mount(); }, 1200);
+      }
+    } catch (_) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountAll);
+  else mountAll();
 })();
