@@ -5682,6 +5682,24 @@ async function loadData() {
         .single();
       if (error) throw error;
       contactData = data || {};
+      /* MIRROR ONTO window (2026-08-12). `contactData` is a top-level `let`, and
+         top-level `let` goes into the global LEXICAL environment — it never
+         becomes a window property. So `window.contactData` was permanently
+         undefined, and the 19 call sites written as
+         `(window.contactData && contactData.email)` short-circuited to '' every
+         time, no matter what the record held.
+         That is why Email CMA said "No borrower email on file" for Karina Bernal
+         while the sidebar three inches away rendered bernalkarina@yahoo.com —
+         the sidebar reads the bare binding (line ~6410), emailCMA read the window
+         one. Proven on the live page with a real admin session:
+           windowCD "undefined" / lexicalEmail "bernalkarina@yahoo.com" /
+           windowEmail "(none)" / sidebarShows "bernalkarina@yahoo.com"
+         It had been found once before and worked around at ONE call site (the SMS
+         composer, see the comment near lpOpenTextComposer) rather than fixed, so
+         the other eighteen kept failing silently.
+         Same object reference, so later mutations of contactData are visible
+         through both names. */
+      window.contactData = contactData;
 
       // loan_number + lender_submission_status are non-sensitive operational fields NOT
       // exposed by the contacts_secure view — read them from the base table via the
@@ -22205,11 +22223,11 @@ function renderTimeline(activeStage) {
      The breakpoint is MEASURED, not guessed. Render the labels, then ask the
      layout whether any cell is hiding part of its own; a hard-coded width would
      go stale the moment a label or font changed. */
+  /* Fresh render always starts from labels, and MUST clear the compact flag —
+     otherwise _tlMeasure's one-way guard bails out and leaves clipped labels on
+     screen, which is the exact bug this whole block exists to prevent. */
   bar.innerHTML = _tlCells(active, activeIdx, false);
-  var clipped = Array.prototype.some.call(bar.children, function(c){
-    return c.scrollWidth > c.clientWidth + 1;
-  });
-  if (clipped) bar.innerHTML = _tlCells(active, activeIdx, true);
+  bar.removeAttribute('data-tl-compact');
 
   // Sync status bubble
   var stageDef = STAGES.find(function(s){return s.key===active;});
@@ -22220,6 +22238,70 @@ function renderTimeline(activeStage) {
     bubble.style.borderColor = stageDef.color + '66';
     bubble.style.color = stageDef.color;
   }
+
+  /* MEASURE LAST, AND AFTER LAYOUT (2026-08-12 — this had regressed).
+     The measurement used to sit immediately after the first innerHTML, ABOVE
+     the status-bubble sync. The bubble is a sibling in the same flex row, so
+     writing its text widens it and squeezes the strip — AFTER the strip had
+     already been measured as fitting. First render therefore decided "not
+     clipped" against a layout that no longer existed a few lines later, and
+     nothing re-measured until a window resize. Reproduced at 1440px: 4 of 9
+     cells clipped (FollowUp needed 42px in 29px), while 1100px passed because
+     the media query at ~line 1528 gives the strip its own full-width row there.
+     Wider window, worse clipping — which is why it read as random.
+
+     rAF so the browser has actually laid out the bubble before we ask. */
+  _tlMeasure(bar, active, activeIdx);
+}
+
+/* ONE-WAY ONLY: labels -> compact, never the reverse.
+ *
+ * I first wrote this to also drop back to labels when they fit again, and that
+ * broke 1100px — every one of the nine cells rendered its label and clipped.
+ * Going back to labels needs a measurement of a layout that does not exist yet,
+ * and the guard I added for it read scrollWidth on cells whose overflow rules
+ * differ from the compact ones, so it did not catch the overflow and kept the
+ * labels. Widening is handled correctly and simply by renderTimeline() starting
+ * from labels every time it runs; that is what the resize path calls. */
+function _tlMeasure(bar, active, activeIdx) {
+  /* SYNCHRONOUS, deliberately. My first version deferred this to
+     requestAnimationFrame and that was wrong twice over: it left a visible frame
+     of clipped labels, and it lost the 1100px case entirely because the decision
+     landed after anything looking at the strip. Reading scrollWidth forces a
+     synchronous layout, so the status bubble's new width — the thing the old
+     ordering missed — is already accounted for here. No frame of delay needed. */
+  if (!bar || !bar.isConnected) return;
+  if (bar.getAttribute('data-tl-compact') === '1') return;
+  var clipped = Array.prototype.some.call(bar.children, function (c) {
+    return c.scrollWidth > c.clientWidth + 1;
+  });
+  if (clipped) {
+    bar.innerHTML = _tlCells(active, activeIdx, true);
+    bar.setAttribute('data-tl-compact', '1');
+  }
+}
+
+/* The window-resize listener below only fires on WINDOW resize. The strip is
+   squeezed by its own SIBLINGS changing width — a longer borrower name, the
+   status or temperature bubble updating, a control appearing — none of which
+   resize the window. Watching the element itself catches all of them. */
+if (typeof ResizeObserver !== 'undefined') {
+  var _tlRO = null, _tlROT = null;
+  document.addEventListener('DOMContentLoaded', function () {
+    var bar = document.getElementById('pipelineTimeline');
+    if (!bar || _tlRO) return;
+    _tlRO = new ResizeObserver(function () {
+      if (_tlROT) clearTimeout(_tlROT);
+      /* Calls renderTimeline, not _tlMeasure: renderTimeline starts from labels
+         and re-decides, which is the only correct way to widen back out. The
+         debounce plus the one-way _tlMeasure keeps this from oscillating — a
+         re-render that lands on the same choice produces no further size change. */
+      _tlROT = setTimeout(function () {
+        if (_tlStage) renderTimeline(_tlStage);
+      }, 120);
+    });
+    _tlRO.observe(bar);
+  });
 }
 
 /* Resizing across the breakpoint has to re-decide compact vs full — otherwise
