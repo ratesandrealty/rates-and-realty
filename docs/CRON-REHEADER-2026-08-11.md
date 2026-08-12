@@ -91,8 +91,24 @@ verify_jwt change, and `send-scheduled-sms` returned
 | function | status |
 |---|---|
 | `voe-inbound-poll` (job 37) | **done and proven** — it turned out to be open, not guarded; see the correction above |
-| `proactive-followups` (jobs 20, 21) | **step 3 of 5** — dual-accept deployed and proven; jobs re-headered; awaiting a natural run |
+| `proactive-followups` (jobs 20, 21) | **DONE, all 5 steps proven** |
 | `market-rate` (job 24) | **excluded by decision.** Working; gateway-level; leave alone |
+
+Final state of `proactive-followups`, measured after the legacy branch was
+deleted (all probes `?dry_run=true`):
+
+| caller | result |
+|---|---|
+| `internal_call_headers()` | **200** `dry_run`, `would_send: true` |
+| legacy `x-cron-secret` from vault | **403** |
+| legacy `?secret=` query parameter | **403** |
+
+Removing the query-parameter path matters on its own: it put a live credential
+in the URL, where it lands in request logs and in `net._http_response` rows.
+
+`cron_secret_get('proactive_followups_secret')` now has no caller. The vault
+entry is left in place — it costs nothing and a wrong deletion is
+unrecoverable.
 
 ### Why `proactive-followups` needed a dual-accept step
 
