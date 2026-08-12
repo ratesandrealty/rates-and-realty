@@ -65,10 +65,33 @@
     catch (e) { console.warn('[staff-chat] threads:', e && e.message); _threads = []; }
     renderThreads(); renderBadge();
   }
+  /* READ RECEIPTS. staff_thread_read_state returns the MINIMUM last_read_at
+     across the other participants, or null if any of them has never opened the
+     thread. Held per active thread and cleared on switch, so a stale value from
+     the previous conversation cannot mark this one's messages read. */
+  var _readAt = null;
+
+  async function loadReadState() {
+    _readAt = null;
+    if (!_active) return;
+    try {
+      var r = await rpc('staff_thread_read_state', { p_thread: _active });
+      _readAt = (r && r.read_at) ? new Date(r.read_at).getTime() : null;
+    } catch (e) {
+      /* A failure here must cost the receipt, not the conversation — leave
+         _readAt null and render no marker rather than blocking messages. */
+      console.warn('[staff-chat] read state:', e && e.message);
+    }
+  }
+
   async function reloadActive() {
     if (!_active) return;
     try { var rows = await rpc('staff_thread_messages', { p_thread: _active, p_limit: 50 }) || []; _msgs = rows.slice().reverse(); renderMessages(); }
     catch (e) { console.warn('[staff-chat] messages:', e && e.message); }
+    /* After the messages are on screen. The receipt is an annotation on them, so
+       it must never be the thing that delays them appearing. */
+    await loadReadState();
+    renderMessages();
   }
   async function openThread(id) {
     _active = id;
@@ -177,8 +200,28 @@
   function messagesHtml() {
     if (!_active) return '<div class="sc-empty">Select a conversation.</div>';
     if (!_msgs.length) return '<div class="sc-empty">No messages yet — say hi 👋</div>';
-    return _msgs.map(function (m) {
+    /* THE MARKER GOES ON THE LAST OWN MESSAGE ONLY. Labelling every read message
+       produces a column of "Read" down the thread that says nothing the last one
+       does not — the question is "has she got to the bottom", and only the
+       newest message answers it. Deleted messages are skipped: a tombstone
+       carrying a read receipt is noise about something nobody can see. */
+    var lastMine = -1;
+    for (var li = _msgs.length - 1; li >= 0; li--) {
+      if (_msgs[li].mine && !_msgs[li].is_deleted) { lastMine = li; break; }
+    }
+
+    return _msgs.map(function (m, idx) {
       var mine = !!m.mine;
+      /* Read only when the other side's last_read_at is at or after this
+         message. Anything else — never opened, opened before this was sent, or
+         the lookup failed — renders NOTHING rather than "Delivered" or "Unread".
+         A receipt that guesses is worse than no receipt: "unread" would be read
+         as a fact about her when it may be a fact about a failed RPC. */
+      var readMark = '';
+      if (idx === lastMine && _readAt != null) {
+        var sent = new Date(m.created_at).getTime();
+        if (!isNaN(sent) && _readAt >= sent) readMark = '<span class="sc-msg-read" title="Seen by everyone else in this conversation">✓ Read</span>';
+      }
 
       /* TOMBSTONE. A deleted message keeps its place rather than vanishing: a
          thread that silently loses messages leaves the other person reading a
@@ -206,7 +249,7 @@
       return '<div class="sc-msg' + (mine ? ' mine' : '') + '">'
         + (mine ? '' : '<div class="sc-msg-who">' + esc(localPart(m.sender_email)) + '</div>')
         + menuHtml + bodyHtml + attHtml
-        + '<div class="sc-msg-time">' + esc(rel(m.created_at)) + '</div></div>';
+        + '<div class="sc-msg-time">' + esc(rel(m.created_at)) + readMark + '</div></div>';
     }).join('');
   }
 
@@ -978,6 +1021,9 @@
       '.sc-msgbubble{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);color:#e6e6e6;padding:7px 11px;border-radius:4px 12px 12px 12px;font-size:13px;line-height:1.4;word-break:break-word;white-space:pre-wrap}',
       '.sc-msg.mine .sc-msgbubble{background:rgba(201,168,76,.16);border-color:rgba(201,168,76,.3);color:#fff;border-radius:12px 4px 12px 12px}',
       '.sc-msg-time{font-size:9px;color:#666;margin-top:2px}',
+      /* Read receipt, inline with the timestamp. Deliberately quiet — it is a
+         reassurance, not an event, and it sits on every message you send. */
+      '.sc-msg-read{color:#7ee2a3;font-weight:700;margin-left:6px}',
       '.sc-composer{display:flex;gap:6px;align-items:center;padding:10px 12px}',
       '.sc-composer input{flex:1 1 auto;min-width:0;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#eee;font-size:13px;padding:8px 11px;outline:none;font-family:inherit}',
       '.sc-send{flex:0 0 auto;background:#C9A84C;border:none;color:#111;font-weight:700;font-size:12px;border-radius:8px;padding:0 14px;height:34px;cursor:pointer;font-family:inherit}',
