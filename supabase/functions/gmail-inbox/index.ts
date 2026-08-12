@@ -262,6 +262,46 @@ function filterRealAttachments(atts: any[], html: string): any[] {
   })
 }
 
+/* THE COMPLEMENT OF filterRealAttachments — the parts it drops.
+ *
+ * That filter is right to drop them: a signature logo must not become an
+ * attachment chip. But dropping them from the payload ENTIRELY is why the body
+ * then renders a broken image. The markup still says <img src="cid:…">, and the
+ * client was handed no attachmentId for that cid, so it had nothing to resolve
+ * it with — the browser cannot fetch a cid: URL, and the alt text ("image0.jpeg")
+ * is what shows instead. Signatures "vanishing" is the same fact: they are
+ * mostly a table of cid: logos.
+ *
+ * So the parts are returned SEPARATELY, on `inline_images`, never merged back
+ * into `attachments`. The two lists answer different questions — "what did the
+ * sender attach" versus "what does this markup need in order to draw" — and
+ * merging them is the phantom-attachment bug this file already fixed once.
+ *
+ * The membership test is deliberately IDENTICAL to filterRealAttachments' — same
+ * escape, same case-insensitive cid: match — so a part can never be missing from
+ * both lists, or present in both. */
+function collectInlineImages(payload: any, html: string): any[] {
+  const body = String(html || '')
+  if (!body) return []
+  const raw: any[] = []
+  collectAttachments(payload, raw)
+  const out: any[] = []
+  for (const a of raw) {
+    if (!a.contentId) continue
+    const id = a.contentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    if (!new RegExp('cid:' + id, 'i').test(body)) continue
+    out.push({
+      content_id: a.contentId,
+      attachment_id: a.attachmentId,
+      part_id: a.partId,
+      mime_type: a.mimeType,
+      filename: a.filename,
+      size: a.size,
+    })
+  }
+  return out
+}
+
 // Gmail message → email_log row shape (plus a non-column `participants` for matching).
 function messageToRow(mailbox: string, threadId: string, msg: any) {
   const headers = msg.payload && msg.payload.headers
@@ -838,6 +878,11 @@ serve(async (req) => {
           message_id: hdr(mh, 'Message-ID'),
           date: r.created_at, body_html: r.body_html, body_text: r.body_text,
           attachments: r.attachments || [], unread: (msgs[i].labelIds || []).includes('UNREAD'),
+          /* Computed HERE, off msgs[i], for the same reason reply_to and
+             message_id are: `rows` objects are spread into the email_log insert
+             and there is no such column. persistMessages strips `participants`
+             and nothing else. */
+          inline_images: collectInlineImages(msgs[i]?.payload, r.body_html || ''),
         }
       })
       return ok({ thread_id: threadId, matched: m, persisted, messages, escrow })

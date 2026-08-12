@@ -1806,7 +1806,7 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
           integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
           crossorigin="anonymous" defer></script>
     <script src="/admin/js/attachment-viewer.js?v=e8f2b14c9f"></script>
-  <script src="/admin/js/inbox.js?v=10a206227a" defer></script>
+  <script src="/admin/js/inbox.js?v=f86467b4e6" defer></script>
   <!-- Places loads its own Maps bundle ON DEMAND, when a field is attached — not
        on every lead-detail open. This tag is only the ~4KB helper. -->
   <script src="/admin/js/places-autocomplete.js" defer></script>
@@ -12021,7 +12021,18 @@ function lpRenderTracker(rows){
     if(r.order_type==='voe' && (Number(r.total)||0) > 1) lbl += ' ' + (Number(r.done)||0) + '/' + (Number(r.total)||0);
     // not_required renders green; order_tracker labels it "Completed" — show "Don't need" instead.
     const stateLbl = (r.status==='not_required') ? "Don't need" : (r.state||'');
-    return '<div title="'+lpEsc(stateLbl)+'" style="display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;background:rgba(255,255,255,.03);border:1px solid '+c+'55;border-radius:12px;padding:13px 16px;min-width:0;">'
+    /* THE TILE IS A BUTTON NOW. It reported a status and did nothing with it, so
+       reading "Appraisal — Needs Revision" meant scrolling the Processing tab
+       hunting for the row. Both tracker bars are already inside #tab-processing,
+       so this is a scroll, not a tab change — no navigation to undo. */
+    const ot = lpEsc(r.order_type||'');
+    return '<div role="button" tabindex="0" data-tracker-type="'+ot+'"'
+      +' title="'+lpEsc(stateLbl)+' — click to jump to '+lpEsc(lbl)+'"'
+      +' onclick="lpFocusOrderType(\''+ot+'\')"'
+      +' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();lpFocusOrderType(\''+ot+'\');}"'
+      +' style="display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;background:rgba(255,255,255,.03);border:1px solid '+c+'55;border-radius:12px;padding:13px 16px;min-width:0;cursor:pointer;transition:background .15s,border-color .15s;"'
+      +' onmouseover="this.style.background=\'rgba(255,255,255,.07)\';this.style.borderColor=\''+c+'\';"'
+      +' onmouseout="this.style.background=\'rgba(255,255,255,.03)\';this.style.borderColor=\''+c+'55\';">'
       +'<span style="width:12px;height:12px;border-radius:50%;background:'+c+';flex-shrink:0;box-shadow:0 0 7px '+c+'99;"></span>'
       +'<span style="display:flex;flex-direction:column;line-height:1.25;min-width:0;">'
         +'<span style="font-size:15px;font-weight:700;color:#e8e8e8;white-space:nowrap;">'+lpEsc(lbl)+'</span>'
@@ -12029,6 +12040,41 @@ function lpRenderTracker(rows){
       +'</span></div>';
   }).join('');
   bars.forEach(function(b){ b.innerHTML = html; });
+}
+
+/* ── TILE → SECTION ──────────────────────────────────────────────────────────
+ * Anchors on data-order-type, which lpRenderOrders stamps on every row and the
+ * VOE section carries too. Deliberately NOT reusing lpFocusOrderFromHash: that
+ * one resolves a specific order ROW ID from a deep link, and a tile has no id to
+ * offer — a "Not Ordered" type has no loan_orders row at all.
+ *
+ * Retries briefly for the same reason the hash resolver does: the orders body
+ * renders asynchronously, and a click landing during that window would otherwise
+ * silently do nothing. Falls back to the Third-Party Orders card so a click
+ * always moves the page somewhere sensible rather than appearing dead.
+ */
+function lpFocusOrderType(type){
+  if(!type) return;
+  var tries=0;
+  (function attempt(){
+    var panel=document.getElementById('tab-processing');
+    var el=panel && panel.querySelector('[data-order-type="'+type+'"]');
+    if(!el){
+      if(++tries<12) return setTimeout(attempt,250);
+      var card=document.getElementById('lpOrdersBody');
+      if(card){ try{ card.scrollIntoView({behavior:'smooth',block:'center'}); }catch(_){ } }
+      return;
+    }
+    /* Expand before scrolling, so the scroll measures the final height — same
+       reasoning as the deep-link resolver, and VOE cards collapse. */
+    var vk=el.getAttribute && el.getAttribute('data-voe-key');
+    if(vk && typeof lpVoeExpand==='function'){ try{ lpVoeExpand(vk); }catch(_){ } }
+    try{ el.scrollIntoView({behavior:'smooth',block:'center'}); }catch(_){ }
+    var prev=el.style.boxShadow;
+    el.style.transition='box-shadow .3s';
+    el.style.boxShadow='0 0 0 2px rgba(201,168,76,.85)';
+    setTimeout(function(){ el.style.boxShadow=prev||''; }, 2600);
+  })();
 }
 
 async function lpLoadOrders(cid){
@@ -12704,7 +12750,12 @@ function lpRenderOrders(){
        in the UI (one card per type), but the LINK carries the order row id, so
        the anchor keeps working if the type-to-row mapping ever changes. Absent
        when no order row exists yet for that type. */
-    let html='<div'+(o.id?' data-order-id="'+lpEsc(o.id)+'"':'')+' style="'+rowStyle+'">'
+    /* data-order-type is the TILE's anchor, and is deliberately separate from
+       data-order-id above. The id is absent until an order row exists, but the
+       tile is drawn from order_tracker for every type including "Not Ordered" —
+       so anchoring the tile on the id would leave exactly the tiles most worth
+       jumping to (the ones with nothing done yet) pointing at nothing. */
+    let html='<div data-order-type="'+lpEsc(row.type)+'"'+(o.id?' data-order-id="'+lpEsc(o.id)+'"':'')+' style="'+rowStyle+'">'
       +'<div style="display:grid;grid-template-columns:62px 1fr 104px 52px;gap:8px;align-items:center;">'
         +'<span class="lp-role-tag">'+lpEsc(row.label)+'</span>'
         +'<button type="button" onclick="lpVendorOpen(\''+row.type+'\')" style="text-align:left;'+sel+'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'+(o.vendor_id?'color:#ddd;':'color:#777;')+'">'+lpEsc(vLabel)+' ▾</button>'
@@ -12741,7 +12792,7 @@ function lpRenderOrders(){
     }
     return html+lpDropZoneHtml(row.type)+'</div>';
   }).join('')
-  + '<div id="lpVoeSection" style="margin-top:12px;border-top:1px solid rgba(255,255,255,.08);padding-top:10px;">'
+  + '<div id="lpVoeSection" data-order-type="voe" style="margin-top:12px;border-top:1px solid rgba(255,255,255,.08);padding-top:10px;">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">'
         + '<span style="font-size:11px;font-weight:700;color:#C9A84C;">VOE Orders'+(_lpVoeNotReq?' <span style="font-size:9px;font-weight:700;color:#50c878;background:rgba(80,200,120,.12);border:1px solid rgba(80,200,120,.4);border-radius:7px;padding:1px 6px;margin-left:4px;vertical-align:middle;">✓ Don\'t need</span>':'')+'</span>'
         + '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">'
@@ -18567,9 +18618,18 @@ function _lpEscRenderFind(ref, hits, cid){
     /* Subject WRAPS now (up to two lines) instead of being ellipsised. The point
        of this panel is deciding whether a thread belongs to this lead, and the
        distinguishing part of an escrow subject is usually at the end. */
-    return '<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border:1px solid rgba(255,255,255,.08);'
+    return '<div class="lpEscRow" data-tid="'+lpEsc(t.id)+'" data-mb="'+lpEsc(t.__mailbox||'')+'"'
+      + ' style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border:1px solid rgba(255,255,255,.08);'
       + 'background:rgba(255,255,255,.02);border-radius:7px;margin-bottom:6px;">'
-      + '<span style="flex:1;min-width:0;">'
+      /* The checkbox is its own click target — see the guard in the row handler.
+         It must not open the thread, or selecting three to file would open three
+         popups. */
+      + '<input type="checkbox" class="lpEscPick" data-tid="'+lpEsc(t.id)+'" data-mb="'+lpEsc(t.__mailbox||'')+'"'
+      +   ' title="Select to file with others" style="flex-shrink:0;margin-top:2px;accent-color:#C9A84C;cursor:pointer;width:14px;height:14px;">'
+      /* OPENS THE THREAD. Deciding whether mail belongs to a lead from a subject
+         line alone is guesswork — the whole point of the panel is that judgement,
+         and it needed the body. Same sandboxed viewer as the Inbox. */
+      + '<span class="lpEscOpen" title="Open this thread" style="flex:1;min-width:0;cursor:pointer;">'
       +   '<span style="display:block;font-size:12.5px;color:#e6e6e6;line-height:1.35;overflow-wrap:anywhere;'
       +     'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">'+subj+'</span>'
       +   '<span style="display:block;font-size:10.5px;color:#8f8f8f;margin-top:3px;overflow-wrap:anywhere;">'
@@ -18584,12 +18644,131 @@ function _lpEscRenderFind(ref, hits, cid){
      human decides, and the decision lands through `tag`. */
   _lpEscFindMsg(errHtml
     + '<div style="font-size:10px;color:#8f8f8f;margin-bottom:4px;">'
-    +   hits.length+' thread'+(hits.length===1?'':'s')+' mention '+lpEsc(ref)+' — file the ones that belong to this lead.</div>'
+    +   hits.length+' thread'+(hits.length===1?'':'s')+' mention '+lpEsc(ref)+' — open one to read it, or tick several and file them together.</div>'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">'
+    +   '<label style="display:flex;align-items:center;gap:5px;font-size:10.5px;color:#8f8f8f;cursor:pointer;">'
+    +     '<input type="checkbox" id="lpEscPickAll" style="accent-color:#C9A84C;cursor:pointer;width:14px;height:14px;">Select all</label>'
+    +   '<button type="button" id="lpEscFileSel" disabled'
+    +     ' style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;'
+    +     'font-size:11px;font-weight:700;padding:5px 12px;cursor:pointer;font-family:inherit;opacity:.45;">File selected</button>'
+    +   '<span id="lpEscSelCount" style="font-size:10.5px;color:#8f8f8f;"></span>'
+    + '</div>'
     + rows);
 
-  Array.prototype.forEach.call(document.querySelectorAll('#lpEscrowFindBox .lpEscFileBtn'), function(b){
-    b.addEventListener('click', function(){ _lpEscFileThread(b, cid); });
+  var box=_lpEscFindBox(); if(!box) return;
+
+  Array.prototype.forEach.call(box.querySelectorAll('.lpEscFileBtn'), function(b){
+    b.addEventListener('click', function(ev){ ev.stopPropagation(); _lpEscFileThread(b, cid); });
   });
+
+  /* Row → popup. Bound on the subject block rather than the whole row so the
+     checkbox and the File button keep their own behaviour without needing the
+     handler to guess what was clicked. */
+  Array.prototype.forEach.call(box.querySelectorAll('.lpEscOpen'), function(s){
+    s.addEventListener('click', function(){
+      var row=s.closest('.lpEscRow'); if(!row) return;
+      _lpEscOpenThread(row.getAttribute('data-tid'), row.getAttribute('data-mb'), cid);
+    });
+  });
+
+  var picks=function(){ return Array.prototype.slice.call(box.querySelectorAll('.lpEscPick')); };
+  var chosen=function(){ return picks().filter(function(c){ return c.checked && !c.disabled; }); };
+  var sync=function(){
+    var n=chosen().length;
+    var btn=document.getElementById('lpEscFileSel');
+    var cnt=document.getElementById('lpEscSelCount');
+    if(btn){ btn.disabled=!n; btn.style.opacity=n?'1':'.45'; }
+    if(cnt) cnt.textContent=n?(n+' selected'):'';
+    var all=document.getElementById('lpEscPickAll');
+    var avail=picks().filter(function(c){ return !c.disabled; });
+    if(all) all.checked = avail.length>0 && n===avail.length;
+  };
+  picks().forEach(function(c){
+    c.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    c.addEventListener('change', sync);
+  });
+  var all=document.getElementById('lpEscPickAll');
+  if(all) all.addEventListener('change', function(){
+    picks().forEach(function(c){ if(!c.disabled) c.checked=all.checked; });
+    sync();
+  });
+  var selBtn=document.getElementById('lpEscFileSel');
+  if(selBtn) selBtn.addEventListener('click', function(){ _lpEscFileSelected(chosen(), cid, sync); });
+  sync();
+}
+
+/* Opens the thread in the Inbox's own sandboxed viewer rather than a second one.
+   allowTag is left on: reading a thread and deciding it belongs here is the same
+   judgement the File button makes, and refusing it in the popup would send the
+   user back to the row to do what the popup just showed them was right.
+   onChanged refreshes both this panel's sibling list and the filed-threads panel,
+   so filing from inside the popup does not leave a stale "File here" behind. */
+function _lpEscOpenThread(tid, mb, cid){
+  if(!tid || !mb) return;
+  if(!window.GmailInbox || typeof window.GmailInbox.openThread!=='function'){
+    if(typeof showToast==='function') showToast('The mail viewer is not available on this page.', true);
+    return;
+  }
+  try{
+    window.GmailInbox.openThread({
+      client: _authClient(), mailbox: mb, threadId: tid, allowTag: true,
+      onChanged: function(){
+        if(typeof lpLoadEmailThreads==='function'){ try{ lpLoadEmailThreads(cid); }catch(_){} }
+      }
+    });
+  }catch(e){
+    if(typeof showToast==='function') showToast('Could not open the thread: '+((e&&e.message)||'error'), true);
+  }
+}
+
+/* FILE SEVERAL. Sequential, not Promise.all: `tag` writes the human tag, closes
+   any contradiction row and backfills contact_id across the thread's messages,
+   and firing a dozen of those at gmail-inbox concurrently is how one of them
+   comes back 429 and the panel reports a failure that was really rate limiting.
+   EACH RESULT IS REPORTED INDIVIDUALLY. A partial failure that renders as one
+   summary toast is indistinguishable from total success on the rows that worked
+   — so every row is marked on its own, and the summary states both counts. */
+async function _lpEscFileSelected(boxes, cid, sync){
+  if(!boxes.length || !cid) return;
+  var btn=document.getElementById('lpEscFileSel');
+  var total=boxes.length, done=0, failed=0;
+  if(btn){ btn.disabled=true; btn.style.opacity='.45'; btn.textContent='Filing 0/'+total+'…'; }
+  for(var i=0;i<boxes.length;i++){
+    var c=boxes[i];
+    var tid=c.getAttribute('data-tid'), mb=c.getAttribute('data-mb');
+    var row=c.closest('.lpEscRow');
+    var rowBtn=row?row.querySelector('.lpEscFileBtn'):null;
+    if(rowBtn){ rowBtn.disabled=true; rowBtn.textContent='Filing…'; }
+    try{
+      await window.GmailInbox.call(_authClient(), mb, 'tag', { thread_id:tid, contact_id:cid });
+      done++;
+      c.checked=false; c.disabled=true;
+      if(row) row.style.opacity='.62';
+      if(rowBtn){
+        rowBtn.textContent='Filed ✓';
+        rowBtn.style.background='rgba(80,200,120,.16)';
+        rowBtn.style.borderColor='rgba(80,200,120,.5)';
+        rowBtn.style.color='#7CE0A0';
+      }
+    }catch(e){
+      failed++;
+      if(rowBtn){
+        rowBtn.disabled=false; rowBtn.textContent='Retry';
+        rowBtn.style.borderColor='rgba(229,72,77,.55)';
+        rowBtn.style.color='#E5848A';
+        rowBtn.title=(e&&e.message)||'filing failed';
+      }
+    }
+    if(btn) btn.textContent='Filing '+(done+failed)+'/'+total+'…';
+  }
+  if(btn){ btn.textContent='File selected'; }
+  if(typeof sync==='function') sync();
+  if(typeof lpLoadEmailThreads==='function'){ try{ lpLoadEmailThreads(cid); }catch(_){} }
+  if(typeof showToast==='function'){
+    showToast(failed
+      ? ('Filed '+done+' of '+total+' — '+failed+' failed; the rows say which.')
+      : ('Filed '+done+' thread'+(done===1?'':'s')), !!failed);
+  }
 }
 
 async function _lpEscFileThread(btn, cid){
@@ -18602,6 +18781,12 @@ async function _lpEscFileThread(btn, cid){
     btn.style.background='rgba(80,200,120,.16)';
     btn.style.borderColor='rgba(80,200,120,.5)';
     btn.style.color='#7CE0A0';
+    /* Retire the row's checkbox too, so a filed thread cannot be swept into a
+       later "File selected" and tagged twice. */
+    var row=btn.closest('.lpEscRow');
+    var pick=row?row.querySelector('.lpEscPick'):null;
+    if(pick){ pick.checked=false; pick.disabled=true; try{ pick.dispatchEvent(new Event('change')); }catch(_){} }
+    if(row) row.style.opacity='.62';
     /* The Email Threads panel on this lead is the place this now shows up. */
     if(typeof lpLoadEmailThreads==='function') { try{ lpLoadEmailThreads(cid); }catch(_){} }
   }catch(e){

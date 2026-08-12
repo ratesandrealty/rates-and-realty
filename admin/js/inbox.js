@@ -1481,6 +1481,103 @@
   }
 
 
+  /* ── INLINE cid: IMAGES ─────────────────────────────────────────────────────
+   *
+   * Mail embeds its own images by reference: <img src="cid:ii_abc123"> pointing
+   * at a MIME part in the same message. A browser cannot fetch a cid: URL — it
+   * is not a network scheme — so every one of them rendered as a broken image
+   * showing its alt text ("image0.jpeg"), and signatures, which are mostly a
+   * table of cid: logos, appeared to vanish.
+   *
+   * Resolved against `inline_images` from get_thread: the parts
+   * filterRealAttachments deliberately keeps OUT of `attachments` so they do not
+   * become chips. Bytes come through get_attachment, the same authorised path
+   * the chips use — nothing here reaches Gmail directly, and the mailbox is
+   * re-checked server-side per fetch.
+   *
+   * BLOB URLS, NOT data: URIs. A 200KB logo as base64 inflates ~33% and lands in
+   * the srcdoc string, which is parsed as a document — three of them turned a
+   * 40KB body into a megabyte of markup. A blob: URL is a short token; the bytes
+   * stay out of the HTML. The srcdoc iframe carries allow-same-origin, so it
+   * shares this document's origin and can read blob: URLs minted here.
+   *
+   * REWRITTEN BEFORE srcdoc IS SET, never after. Reaching into a rendered
+   * iframe's DOM to patch src attributes needs same-origin access and races the
+   * load; rewriting the string is deterministic.
+   */
+  var INLINE_MAX = 3 * 1024 * 1024;   // per image; a signature logo is ~10-80KB
+  var _cidCache = {};                 // msgId|cid → blob URL
+
+  function _cidKey(msgId, cid) { return msgId + '|' + cid; }
+
+  /* Matches src="cid:x", src='cid:x' and bare src=cid:x. The cid may be
+   * URL-encoded and may carry the angle brackets from the raw Content-ID header
+   * (`src="cid:<ii_abc>"`) — some Exchange and Notes generators emit that form.
+   *
+   * THE THREE QUOTING CASES ARE SEPARATE ALTERNATIVES on purpose. A single
+   * `(["']?)…([^"'\s>]+)\2` cannot express "> is allowed inside a quoted value
+   * but terminates an unquoted one", so the bracketed form silently failed to
+   * match and was left as a broken image — caught by the unit tests, not by
+   * reading it. Quoted values stop only at their own quote; the unquoted branch
+   * stops at whitespace or >. */
+  var CID_SRC_RE = /(<img\b[^>]*?\bsrc\s*=\s*)(?:"cid:([^"]*)"|'cid:([^']*)'|cid:([^\s>]+))/gi;
+
+  function hasCidRefs(html) { CID_SRC_RE.lastIndex = 0; return CID_SRC_RE.test(String(html || '')); }
+
+  /* Fetch every inline part this body actually references, and return a
+   * cid → blob-URL map. A part that fails is simply absent from the map, so the
+   * rewrite leaves its cid: alone and it degrades to the broken-image it was —
+   * one logo failing must not take out the message body. */
+  async function resolveInlineImages(cl, mailbox, msg) {
+    var parts = (msg && msg.inline_images) || [];
+    if (!parts.length || !hasCidRefs(msg.body_html)) return {};
+    var want = {};
+    var m;
+    CID_SRC_RE.lastIndex = 0;
+    while ((m = CID_SRC_RE.exec(String(msg.body_html || '')))) {
+      var raw = m[2] != null ? m[2] : (m[3] != null ? m[3] : m[4]);   // dq | sq | unquoted
+      if (!raw) continue;
+      try { raw = decodeURIComponent(raw); } catch (_) {}
+      want[raw.replace(/^<|>$/g, '').toLowerCase()] = 1;
+    }
+    var map = {};
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+      var cid = String(p.content_id || '').replace(/^<|>$/g, '');
+      if (!cid || !want[cid.toLowerCase()]) continue;
+      var key = _cidKey(msg.id, cid.toLowerCase());
+      if (_cidCache[key]) { map[cid.toLowerCase()] = _cidCache[key]; continue; }
+      /* Size ceiling. The 15MB server cap still applies; this is about not
+       * pulling megabytes to draw a footer nobody asked for. */
+      if (p.size && p.size > INLINE_MAX) continue;
+      try {
+        var r = await invoke(cl, mailbox, 'get_attachment', {
+          message_id: msg.id, attachment_id: p.attachment_id, part_id: p.part_id || ''
+        });
+        var url = URL.createObjectURL(b64urlToBlob(r.data_b64url, r.mime_type || p.mime_type));
+        _cidCache[key] = url;
+        map[cid.toLowerCase()] = url;
+      } catch (_) { /* leave unresolved — see above */ }
+    }
+    return map;
+  }
+
+  /* Swap resolved cids for their blob URLs. An unresolved cid is left exactly as
+   * it was rather than blanked: a broken image is a visible "this did not load",
+   * while src="" silently collapses to nothing and looks like the mail never had
+   * the image at all. */
+  function rewriteCidSrc(html, map) {
+    if (!html || !map) return html;
+    return String(html).replace(CID_SRC_RE, function (whole, pre, dq, sq, uq) {
+      var k = dq != null ? dq : (sq != null ? sq : uq);
+      if (!k) return whole;
+      try { k = decodeURIComponent(k); } catch (_) {}
+      k = k.replace(/^<|>$/g, '').toLowerCase();
+      var url = map[k];
+      return url ? (pre + '"' + url + '"') : whole;
+    });
+  }
+
   /* ── PDF / IMAGE PREVIEW ────────────────────────────────────────────────────
    * pdf.js is REUSED, not added. admin/guideline-ai.html already loads 4.0.379
    * from cdnjs as an ESM module and stashes it on window.__pdfjsLib; this loads
@@ -3049,6 +3146,31 @@
         if (box) box.style.display = '';
         var qf = host.querySelector('.gm-frame[data-qi="' + i + '"]');
         if (qf) { autoFit(qf, 0); qf.setAttribute('data-src', split.quoted); }
+      }
+
+      /* INLINE IMAGES, resolved after the first paint. Deliberately not awaited
+       * before setting srcdoc above: fetching a signature's logos costs a round
+       * trip per image, and blocking the whole thread body on that would trade a
+       * broken footer for a blank message. The text renders immediately and the
+       * images fill in.
+       * The quoted trailer is rewritten too — a forwarded rate sheet keeps its
+       * images in the quote — but only when it is opened, which is where its
+       * srcdoc is set from data-src. */
+      if (m.inline_images && m.inline_images.length) {
+        resolveInlineImages(cl, mailbox, m).then(function (map) {
+          if (!map || !Object.keys(map).length) return;
+          var f2 = host.querySelector('.gm-frame[data-fi="' + i + '"]');
+          if (f2) {
+            f2.srcdoc = wrapBody(rewriteCidSrc(split.main || m.body_html, map), m.body_text);
+            autoFit(f2, 0);
+          }
+          var qf2 = host.querySelector('.gm-frame[data-qi="' + i + '"]');
+          if (qf2 && split.quoted) {
+            qf2.setAttribute('data-src', rewriteCidSrc(split.quoted, map));
+            // Already open? Re-fill it; otherwise the toggle picks up data-src.
+            if (qf2.srcdoc) { qf2.srcdoc = wrapBody(qf2.getAttribute('data-src'), ''); autoFit(qf2, 0); }
+          }
+        }).catch(function () { /* body already rendered; images are the only loss */ });
       }
     });
 
