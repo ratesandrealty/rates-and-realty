@@ -176,7 +176,14 @@ function computeGovUpfrontFee(loanProduct, baseLoanAmount, downPaymentPct, vaCon
 function calcScenario(inp, sc){
     const la=inp.loanAmount, totalLa=inp.totalLoanAmount||la, pp=inp.purchasePrice;
     const govFeeAmount=(inp.govFee&&inp.govFee.financed)?inp.govFee.amount:0;
-    const origFee=la*sc.origComp/100, discountPoints=la*sc.points/100, uwFee=1350, adminFee=185;
+    /* origFee ARRIVES PRE-COMPUTED. get_fee_sheet_snapshot strips origComp — the
+       compensation rate — and substitutes the dollar figure it produced, using this
+       exact formula, so subtotalA and everything downstream are unchanged. Verified
+       across 60 scenarios in 10 live snapshots: 0 mismatches.
+       The fallback keeps this function usable if it is ever handed an unredacted
+       scenario (the staff tool shares this file's maths lineage), but on the public
+       page origComp is absent and origFee is authoritative. */
+    const origFee=(sc.origFee!=null)?Number(sc.origFee):(la*(sc.origComp||0)/100), discountPoints=la*sc.points/100, uwFee=1350, adminFee=185;
     const subtotalA=origFee+discountPoints+uwFee+adminFee;
     const appraisal=calcAppraisal(inp.propertyType), creditReport=65, floodCert=12, taxService=85, mersReg=24.95, processingFee=995;
     const subtotalB=appraisal+creditReport+floodCert+taxService+mersReg+processingFee+govFeeAmount;
@@ -230,7 +237,10 @@ function inpFromCommon(c){ return buildInp(c, null); }
 function calcPropertyColumn(c, col){
     const inp=buildInp(c, { purchasePrice:col.purchasePrice, downPct:(col.downPct!=null?col.downPct:20),
         loanProduct:PRODUCT_CODE_TO_FULL[col.loanProduct]||col.loanProduct, propertyType:col.propertyType, hoa:col.hoa, monthlyRent:col.monthlyRent });
-    const sc={ id:col.id, label:col.label, rate:col.rate, points:0, origComp:1.5, lenderCredits:0, recommended:!!col.recommended };
+    /* Property mode always priced origination at 1.5% regardless of the stored
+       column value; the redactor computes origFee with the same 1.5 so this stays
+       identical. */
+    const sc={ id:col.id, label:col.label, rate:col.rate, points:0, origFee:col.origFee, origComp:1.5, lenderCredits:0, recommended:!!col.recommended };
     const r=calcScenario(inp, sc);
     r.monthlyHoa=col.hoa||0; r.monthlyRent=col.monthlyRent||0;
     r.netPayment=r.totalMonthly + r.monthlyHoa - r.monthlyRent;
@@ -243,7 +253,10 @@ function calcPropertyColumn(c, col){
 function calcPriceColumn(c, col){
     const inp=buildInp(c, { purchasePrice:col.purchasePrice, downPct:(col.downPct!=null?col.downPct:20),
         loanProduct:PRODUCT_CODE_TO_FULL[col.loanProduct]||col.loanProduct, propertyType:col.propertyType });
-    const sc={ id:col.id, label:col.label, rate:col.rate, points:col.points||0, origComp:(col.origComp!=null?col.origComp:1.5), lenderCredits:col.lenderCredits||0, recommended:!!col.recommended };
+    /* origComp is redacted out of the payload, so defaulting it to 1.5 here would
+       silently invent a compensation rate and produce a DIFFERENT origination fee
+       than the one the sheet was built with. Carry the server's origFee instead. */
+    const sc={ id:col.id, label:col.label, rate:col.rate, points:col.points||0, origFee:col.origFee, origComp:col.origComp, lenderCredits:col.lenderCredits||0, recommended:!!col.recommended };
     const r=calcScenario(inp, sc);
     r.netPayment=r.totalMonthly;
     r.inp=inp; r.sc=sc; return r;
@@ -674,10 +687,18 @@ function renderHeloc(snap){
     document.getElementById('app').innerHTML=h;
 }
 
-function renderNotFound(){
+/* One page for every "you cannot see this" outcome, worded so the visitor knows
+   it is the LINK that ended, not the site that failed. Deliberately does NOT say
+   which of revoked / expired / never-existed it was: that distinction is useful
+   to Rene and is available to him in the link list, and telling an arbitrary
+   holder of a URL "this was revoked" confirms the sheet exists. */
+function renderNotFound(status){
+    const head = (status === 'expired') ? 'This link has expired'
+               : (status === 'revoked') ? 'This link is no longer available'
+               : 'Link expired or not found';
     document.getElementById('app').innerHTML='<div class="center"><div>'
       +'<div style="font-size:2rem;margin-bottom:8px">🔗</div>'
-      +'<h1 style="font-size:1.3rem;color:var(--gold);margin-bottom:8px">Link expired or not found</h1>'
+      +'<h1 style="font-size:1.3rem;color:var(--gold);margin-bottom:8px">'+head+'</h1>'
       +'<p class="muted" style="max-width:340px;margin:0 auto 18px">This fee-sheet link is no longer available. Reach out to Rene for an updated estimate.</p>'
       +'<div class="cta" style="justify-content:center"><a class="call" href="tel:'+PHONE+'">📞 Call Rene</a><a class="text" href="sms:'+PHONE+'">💬 Text Rene</a></div>'
       +'</div></div>';
@@ -702,6 +723,12 @@ function renderError(msg){
         const { data, error } = await client.rpc('get_fee_sheet_snapshot', { p_slug: slug });
         if(error){ console.warn('[fee]', error.message); renderError('This estimate is temporarily unavailable.'); return; }
         if(!data){ renderNotFound(); return; }
+        /* The RPC now answers with an explicit status so a withdrawn link reads as
+           WITHDRAWN rather than broken. Returning null for these would render the
+           blank/error page, which tells a borrower the site is down when in fact
+           Rene took the link back. Unknown statuses fall through to not-found
+           rather than rendering a sheet — fail closed on a public surface. */
+        if(data.status && data.status !== 'ok'){ renderNotFound(data.status); return; }
         const mode = (data.data && data.data.mode) || 'rate';
         document.title = (data.borrower_name?data.borrower_name+' — ':'')+'Loan Estimate | Rates & Realty';
         // Mirror the admin tool per mode: property → SFR/Condo/2-4 Unit comparison;

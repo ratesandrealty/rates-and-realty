@@ -254,6 +254,34 @@ function stubSource(role, email, stubRow, rpcMap, fetchMap, rpcFns, staleRole, i
 // ── specs ───────────────────────────────────────────────────────────────────
 const SPECS = [
   {
+    /* THE PUBLIC FEE LINK, AS A STRANGER SEES IT — signed out, UNSTUBBED, on a
+       REAL slug that has been sent and viewed 29 times. The redaction's whole
+       purpose is what an anonymous holder of the URL receives, so a stubbed run
+       would prove nothing about it.
+       Asserts on the DATA THE PAGE RECEIVED rather than on innerHTML: fee.html's
+       own script text contains the identifier "origComp" as a fallback branch, so
+       matching the document source would fail no matter what the server sent. */
+    name: 'public fee link hides compensation',
+    url: '/fee/9bvgsjp',
+    anonymous: true,
+    present: ['.hero'],
+    evals: [
+      ['(async function(){var cfg=window.APP_CONFIG||{};'
+       + 'var cl=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY);'
+       + 'var r=await cl.rpc("get_fee_sheet_snapshot",{p_slug:"9bvgsjp"});'
+       + 'return JSON.stringify({status:r.data&&r.data.status,'
+       + 'comp:/origComp/.test(JSON.stringify(r.data)),'
+       + 'hasOrigFee:/origFee/.test(JSON.stringify(r.data))});})()',
+       '{"status":"ok","comp":false,"hasOrigFee":true}'],
+      /* The Origination Fee row STAYS. It is a required borrower disclosure and it
+         feeds subtotalA -> total loan costs -> cash to close; hiding it would make
+         the sheet stop reconciling, which is a worse problem than the one being
+         fixed. Only the RATE is secret. */
+      ['/Origination Fee/.test(document.body.textContent)', true],
+      ['!!document.querySelector(".payhero .amt")', true],
+    ],
+  },
+  {
     /* BUYDOWN ARITHMETIC IS A REGRESSION TEST, not a rendering one. A buydown
        sheet with a wrong year-two payment is worse than no sheet — it goes to a
        borrower as a number they plan around. The expected values are published
@@ -1639,6 +1667,13 @@ async function runSpec(spec, opts) {
           access_token: opts.token.raw, token_type: 'bearer', expires_at: opts.token.payload.exp,
           refresh_token: 'render-check', user: { id: opts.token.payload.sub, email: opts.token.payload.email },
         }))});}catch(e){}` });
+    } else if (spec.anonymous) {
+      /* ANONYMOUS, UNSTUBBED — the only way to check a PUBLIC page as the world
+       * sees it. The stub exists so admin pages never touch real data, but a
+       * public snapshot page has no session by design: stubbing it would test the
+       * stub, not the page. Used for /fee/<slug>, where the question is literally
+       * "what does a stranger holding this URL receive". No token is seeded, so
+       * this is a genuinely signed-out browser hitting production. */
     } else {
       await b.send('Page.addScriptToEvaluateOnNewDocument', {
         source: stubSource(spec.role || 'admin', 'render-check@local', spec.stubRow, spec.rpc, spec.fetchMap, spec.rpcFns, spec.staleRole, spec.invoke, spec.tables),
