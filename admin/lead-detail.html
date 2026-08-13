@@ -9191,7 +9191,19 @@ async function _renderPdfDocToContainer(containerEl, pdfDoc, options) {
   containerEl.style.cursor = '';
   for (let i = 1; i <= pdfDoc.numPages; i++) {
     const page = await pdfDoc.getPage(i);
-    const viewport = page.getViewport({ scale: baseScale, rotation: rotation });
+    /* RELATIVE, NOT ABSOLUTE. pdf.js's `rotation` option REPLACES the page's
+       own /Rotate — it does not add to it. Measured on 3.11.174 against a page
+       with /Rotate 180: getViewport({rotation: 0}) returns rotation=0, i.e. the
+       document's own orientation is discarded.
+       Passing the raw delta therefore rendered every page as if /Rotate were 0,
+       and — far worse — save-document adds the user's delta to a /Rotate the
+       user was never shown. Demonstrated end to end on a scratch copy of a real
+       29-page contract: two presses of Save Rotation walked the stored /Rotate
+       180 -> 270 -> 0 while the rendered pixels never changed (identical hash),
+       so the file was being permanently rewritten with no way to see it.
+       `rotation` here is the USER's delta; page.rotate is the document's. */
+    const effRot = (((page.rotate || 0) + rotation) % 360 + 360) % 360;
+    const viewport = page.getViewport({ scale: baseScale, rotation: effRot });
     const canvas = document.createElement('canvas');
     canvas.dataset.page = String(i);
     canvas.width  = viewport.width;
@@ -9600,7 +9612,7 @@ async function docViewerSaveRotation() {
 // Draws a drag-selection rectangle on a single page; Apply sends the
 // rectangle (in PDF points, bottom-left origin) to save-document.
 
-function docViewerToggleCropMode() {
+async function docViewerToggleCropMode() {
   if (_docViewerState.type !== 'pdf') {
     if (typeof showToast === 'function') showToast('Crop only works on PDFs');
     return;
@@ -9608,6 +9620,29 @@ function docViewerToggleCropMode() {
   if (!_docViewerCropMode && _docViewerState.rotation !== 0) {
     if (typeof showToast === 'function') showToast('Reset rotation to 0 before cropping');
     return;
+  }
+  /* THE PAGE'S OWN /Rotate COUNTS TOO, not just the user's delta.
+     docViewerApplyCrop converts canvas px straight to PDF points and flips Y,
+     which is only valid when the rendered viewport is unrotated. The guard
+     above has always caught the user's delta; it could not see /Rotate because
+     the renderer used to discard it. Now that the renderer honours /Rotate, a
+     page that is stored rotated genuinely draws rotated at delta 0 — and a crop
+     taken off it would set a MediaBox on the wrong edge of a real document,
+     in place, with no undo. Refuse instead, and say which it is. */
+  if (!_docViewerCropMode && _docViewerState.pdfDoc) {
+    let rotatedPages = 0;
+    try {
+      for (let i = 1; i <= _docViewerState.pdfDoc.numPages; i++) {
+        const p = await _docViewerState.pdfDoc.getPage(i);
+        if (((p.rotate || 0) % 360) !== 0) rotatedPages++;
+      }
+    } catch (_) { /* fall through — a failed probe must not block cropping a flat doc */ }
+    if (rotatedPages > 0) {
+      if (typeof showToast === 'function') {
+        showToast('This document has ' + rotatedPages + ' page(s) stored rotated — cropping is disabled because the crop area would land on the wrong edge.', true);
+      }
+      return;
+    }
   }
   if (_docViewerCropMode) { _docViewerExitCropMode(); return; }
   _docViewerCropMode = true;
