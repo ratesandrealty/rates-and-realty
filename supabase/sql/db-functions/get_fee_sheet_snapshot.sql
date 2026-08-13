@@ -15,8 +15,13 @@ declare v_row public.fee_sheet_snapshots; v_data jsonb; v_sec jsonb; v_mode text
 begin
   select * into v_row from public.fee_sheet_snapshots where slug = p_slug;
   if v_row.id is null then return jsonb_build_object('status','not_found'); end if;
-  if v_row.revoked_at is not null then
-    return jsonb_build_object('status','revoked','revoked_at',v_row.revoked_at);
+  /* Archived is reported as REVOKED, deliberately. Archiving is a tidy-up of
+     Rene's panel; to whoever holds the link it must be the same refusal, with
+     the same word, as a link that was pulled. A distinct status would leak the
+     fact that the link still exists and tell a borrower they were filed away. */
+  if v_row.revoked_at is not null or v_row.archived_at is not null then
+    return jsonb_build_object('status','revoked',
+             'revoked_at', coalesce(v_row.revoked_at, v_row.archived_at));
   end if;
   if v_row.expires_at is not null and v_row.expires_at <= now() then
     return jsonb_build_object('status','expired','expired_at',v_row.expires_at);
@@ -26,7 +31,6 @@ begin
      set view_count = view_count + 1, last_viewed_at = now()
    where id = v_row.id;
 
-  /* The per-link mode override, applied to the DATA the page renders from. */
   v_mode := coalesce(nullif(v_row.share_sections->>'mode',''), v_row.data->>'mode');
 
   select coalesce(jsonb_object_agg(

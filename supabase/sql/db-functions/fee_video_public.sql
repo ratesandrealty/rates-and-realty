@@ -1,6 +1,6 @@
 -- fee_video_public(p_slug text)
 -- language: plpgsql
--- Captured from production 2026-08-12.
+-- Captured from production 2026-08-13.
 
 CREATE OR REPLACE FUNCTION public.fee_video_public(p_slug text)
  RETURNS jsonb
@@ -12,7 +12,11 @@ declare v_snap public.fee_sheet_snapshots; v_row public.fee_sheet_videos;
 begin
   select * into v_snap from public.fee_sheet_snapshots where slug = p_slug;
   if v_snap.id is null then return jsonb_build_object('video', false); end if;
-  if v_snap.revoked_at is not null then return jsonb_build_object('video', false); end if;
+  /* archived counts as revoked here for the same reason it does in the reader:
+     a link the sheet refuses must not still stream its video. */
+  if v_snap.revoked_at is not null or v_snap.archived_at is not null then
+    return jsonb_build_object('video', false);
+  end if;
   if v_snap.expires_at is not null and v_snap.expires_at <= now() then
     return jsonb_build_object('video', false);
   end if;

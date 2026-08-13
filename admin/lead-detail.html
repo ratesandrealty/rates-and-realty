@@ -38148,7 +38148,23 @@ function _shareRowHtml(x, kind, extraHtml){
           + '<button type="button" onclick="'+fn+'(\''+lpEsc(x.slug)+'\',true)" style="flex-shrink:0;background:transparent;border:1px solid rgba(229,72,77,.45);color:#E5848A;border-radius:6px;font-size:10.5px;font-weight:700;padding:4px 10px;cursor:pointer;font-family:inherit;">Revoke</button>'
         : (x.status==='revoked'
             ? '<button type="button" onclick="'+fn+'(\''+lpEsc(x.slug)+'\',false)" style="flex-shrink:0;background:transparent;border:1px solid rgba(255,255,255,.18);color:#9a948a;border-radius:6px;font-size:10.5px;font-weight:700;padding:4px 10px;cursor:pointer;font-family:inherit;">Restore</button>'
-            : '<span style="flex-shrink:0;font-size:10.5px;color:#777;padding:4px 10px;">expired</span>'))
+            : x.status==='archived'
+              ? '<button type="button" onclick="fsArchiveLink(\''+lpEsc(x.slug)+'\',false)" title="Put it back in the list and make the link work again" style="flex-shrink:0;background:transparent;border:1px solid rgba(255,255,255,.18);color:#9a948a;border-radius:6px;font-size:10.5px;font-weight:700;padding:4px 10px;cursor:pointer;font-family:inherit;">Unarchive</button>'
+              : '<span style="flex-shrink:0;font-size:10.5px;color:#777;padding:4px 10px;">expired</span>'))
+    /* ARCHIVE and DELETE, fee links only — CMA links have a separate RPC family
+       and no video to cascade to, so they keep revoke/restore until asked for.
+       Archive is offered on any state; delete is the last thing on the row and
+       is the only control here that cannot be undone. */
+    + (kind === 'fee'
+        ? (x.status !== 'archived'
+            ? '<button type="button" onclick="fsArchiveLink(\''+lpEsc(x.slug)+'\',true)" title="Hide it from this list. The link stops working, exactly as a revoked one does."'
+              + ' style="flex-shrink:0;background:transparent;border:1px solid rgba(255,255,255,.16);color:#9a948a;border-radius:6px;font-size:10.5px;font-weight:700;padding:4px 9px;cursor:pointer;font-family:inherit;">Archive</button>'
+            : '')
+          + (_fsMayDelete()
+              ? '<button type="button" onclick="fsDeleteLink(\''+lpEsc(x.slug)+'\')" title="Delete permanently, with its walkthrough video"'
+                + ' style="flex-shrink:0;background:transparent;border:1px solid rgba(229,72,77,.28);color:#b06a6e;border-radius:6px;font-size:12px;font-weight:700;padding:3px 8px;cursor:pointer;font-family:inherit;">🗑</button>'
+              : '')
+        : '')
     + '</div>';
 }
 
@@ -38200,7 +38216,13 @@ async function fsLoadShareLinks(){
   var rows = [];
   try{
     var cl = (typeof _waitForAuthClient==='function') ? await _waitForAuthClient() : _authClient();
-    var r = await (cl||_authClient()).rpc('list_fee_sheet_snapshots', { p_contact_id: cid });
+    /* Archived rows are fetched and hidden HERE rather than left behind on the
+       server, so the panel can say how many there are. A "show archived" control
+       that cannot tell you whether the answer is zero is a control nobody uses,
+       and a link filed away and forgotten is the thing archiving is supposed to
+       stop happening. */
+    var r = await (cl||_authClient()).rpc('list_fee_sheet_snapshots',
+                                          { p_contact_id: cid, p_include_archived: true });
     if(r.error) throw r.error;
     rows = Array.isArray(r.data) ? r.data : [];
   }catch(e){
@@ -38213,9 +38235,86 @@ async function fsLoadShareLinks(){
   }
   if(!rows.length){ box.innerHTML=''; return; }
 
-  var live = rows.filter(function(x){ return x.status==='live'; }).length;
-  box.innerHTML = _sharePanelHtml('fee', 'Shared links', live, rows.length,
-    rows.map(function(x){ return _shareRowHtml(x, 'fee', _fsSectionToggles(x)); }).join(''));
+  var archived = rows.filter(function(x){ return x.status==='archived'; });
+  var shown    = _fsShowArchived() ? rows : rows.filter(function(x){ return x.status!=='archived'; });
+  var live     = rows.filter(function(x){ return x.status==='live'; }).length;
+  var foot = archived.length
+    ? '<div style="padding:5px 8px 1px;"><button type="button" onclick="_fsToggleArchived()"'
+      + ' style="background:none;border:none;color:#8f8f8f;font-size:10.5px;font-weight:700;cursor:pointer;'
+      + 'font-family:inherit;text-decoration:underline;padding:0;">'
+      + (_fsShowArchived() ? 'Hide' : 'Show') + ' ' + archived.length + ' archived</button></div>'
+    : '';
+  box.innerHTML = _sharePanelHtml('fee', 'Shared links', live, rows.length - archived.length,
+    shown.map(function(x){ return _shareRowHtml(x, 'fee', _fsSectionToggles(x)); }).join('') + foot);
+}
+
+/* Deletion is admin-only in the RPC. This only decides whether to DRAW the
+   button, and it fails OPEN on purpose: when the cached role is missing —
+   cold session, a transient current_app_role() failure — the button is shown
+   and the server refuses if it must. Hiding it on "don't know" would take the
+   control away from Rene because a cache was cold, and the overlay lesson
+   applies in reverse: a UI hint is not the lock, so it must not act like one. */
+function _fsMayDelete(){
+  try { var r = sessionStorage.getItem('rnr_app_role'); return !r || r === 'admin'; }
+  catch(_) { return true; }
+}
+
+/* Per-user, like the collapse state, and defaulting to HIDDEN — archiving that
+   does not actually shorten the list is not archiving. */
+function _fsShowArchived(){
+  try { return localStorage.getItem(_shareCollapseKey('fee-archived')) === 'show'; } catch(_) { return false; }
+}
+function _fsToggleArchived(){
+  try { localStorage.setItem(_shareCollapseKey('fee-archived'), _fsShowArchived() ? 'hide' : 'show'); } catch(_) {}
+  fsLoadShareLinks();
+}
+
+async function fsArchiveLink(slug, archive){
+  if(archive && !confirm('Archive /fee/' + slug + '?\n\n'
+      + 'It comes off this list, and THE LINK STOPS WORKING - anyone who already has it\n'
+      + 'sees the same "no longer available" message a revoked link shows.\n\n'
+      + 'You can unarchive it later.')) return;
+  try{
+    var r = await _authClient().rpc('archive_fee_sheet_snapshot', { p_slug: slug, p_archive: !!archive });
+    if(r.error) throw r.error;
+    showToast(archive ? ('Archived /fee/'+slug) : ('Unarchived /fee/'+slug+' - the link works again'));
+    fsLoadShareLinks();
+  }catch(e){ showToast('Could not archive: '+((e&&e.message)||e), true); }
+}
+
+/* DELETE. The object goes BEFORE the row, and the RPC refuses the row while the
+   object is still in the bucket — so a half-finished delete leaves the link
+   intact and retryable rather than leaving video bytes in storage with nothing
+   left pointing at them. That is why this is three round trips and not one. */
+async function fsDeleteLink(slug){
+  var plan;
+  try{
+    var p = await _authClient().rpc('delete_fee_sheet_snapshot', { p_slug: slug, p_confirm: false });
+    if(p.error) throw p.error;
+    plan = p.data || {};
+  }catch(e){ showToast('Could not delete: '+((e&&e.message)||e), true); return; }
+
+  var paths = Array.isArray(plan.video_paths) ? plan.video_paths : [];
+  if(!confirm('Permanently delete /fee/' + slug + '?\n\n'
+      + 'Borrower: ' + (plan.borrower_name || '-') + '\n'
+      + 'Opened ' + (plan.view_count || 0) + ' time' + ((plan.view_count===1)?'':'s') + '\n'
+      + (paths.length ? paths.length + ' walkthrough video file' + (paths.length===1?'':'s') + ' will also be deleted\n' : '')
+      + '\nTHIS CANNOT BE UNDONE. The link, its view history and its video are gone\n'
+      + 'for good - there is no restore. Archive instead if you only want it off the list.')) return;
+
+  for(var i=0;i<paths.length;i++){
+    var res = await _authClient().storage.from('video-messages').remove([paths[i]]);
+    if(res && res.error){
+      showToast('Stopped: could not delete the video file (' + res.error.message + '). Nothing was removed.', true);
+      return;
+    }
+  }
+  try{
+    var r = await _authClient().rpc('delete_fee_sheet_snapshot', { p_slug: slug, p_confirm: true });
+    if(r.error) throw r.error;
+    showToast('Deleted /fee/' + slug + ((r.data && r.data.videos_deleted) ? ' and its walkthrough' : ''));
+    fsLoadShareLinks();
+  }catch(e){ showToast('Could not delete: '+((e&&e.message)||e), true); }
 }
 /* SECTION TOGGLES — opt-in, per link, defaulting hidden.
    Three small checkboxes beside each live link rather than a settings dialog: the

@@ -62,17 +62,37 @@ async function fetchFunctions(key) {
 
 /* Keep the existing header comment if the file already has one — it carries the
  * provenance note, and rewriting it away on every capture would discard the one
- * piece of context the DDL itself cannot express. Only the date is refreshed. */
+ * piece of context the DDL itself cannot express.
+ *
+ * BUT THE FIRST LINE IS NOT PROSE, IT IS THE IDENTITY. observe-db-functions
+ * keys its baseline on `body.match(/^--\s+(.+?)\s*$/m)` — that signature line,
+ * not the filename and not the DDL. Preserving it verbatim meant that changing
+ * a function's ARGUMENTS left the baseline claiming the old signature forever:
+ * the observer reported the live function as ADDED and the old one as REMOVED,
+ * on every single run, and recapturing could never clear it because recapture
+ * was the thing writing the stale line back. Found when
+ * list_fee_sheet_snapshots gained p_include_archived and a clean recapture
+ * still reported added=1 removed=1.
+ *
+ * So the signature line is rewritten from what is LIVE and everything after it
+ * is kept. Provenance survives; identity cannot go stale. */
 function headerFor(file, fn, today) {
+  const live = `-- ${fn.name}(${fn.args || ''})`;
   const path = join(BASELINE, file);
   if (existsSync(path)) {
     const body = readFileSync(path, 'utf8');
     const i = body.indexOf('CREATE OR REPLACE FUNCTION');
     if (i > 0) {
-      return body.slice(0, i).replace(/Captured from production \d{4}-\d{2}-\d{2}/, `Captured from production ${today}`);
+      const head = body.slice(0, i)
+        .replace(/Captured from production \d{4}-\d{2}-\d{2}/, `Captured from production ${today}`);
+      const nl = head.indexOf('\n');
+      /* Only replace a line that IS a signature comment. A header that starts
+         with something else is prose we have no business overwriting. */
+      if (nl > 0 && /^--\s+\S+\(/.test(head.slice(0, nl))) return live + head.slice(nl);
+      return head;
     }
   }
-  return `-- ${fn.name}(${fn.args || ''})\n-- language: ${fn.lang || 'plpgsql'}\n-- Captured from production ${today}.\n\n`;
+  return `${live}\n-- language: ${fn.lang || 'plpgsql'}\n-- Captured from production ${today}.\n\n`;
 }
 
 const argv = process.argv.slice(2);
