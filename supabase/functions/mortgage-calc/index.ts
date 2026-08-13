@@ -3,6 +3,7 @@
 // Also supports rent_vs_buy comparison.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { monthlyMI, miFactor } from "../_shared/mi-factors.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -57,17 +58,27 @@ function calcPI(loanAmount: number, annualRate: number, termYears: number): numb
   return loanAmount * (monthlyRate * Math.pow(1 + monthlyRate, n)) / (Math.pow(1 + monthlyRate, n) - 1);
 }
 
+/* ONE TABLE - _shared/mi-factors.ts, for the MONTHLY factor. Upfront fees stay
+   here: UFMIP / VA funding fee / USDA guarantee are one-time charges, not MI
+   factors, and nothing else in the codebase computes them.
+
+   NOTE: ltv here is a FRACTION (0.95), everywhere else it is a PERCENTAGE (95).
+   Converted explicitly at the call rather than making the shared table guess.
+
+   The FICO x LTV matrix this replaced was the most precise of the six, but it
+   was also the only one that disagreed with every other surface, and credit
+   score is not an input on the fee sheet or the loan summary — so keeping it
+   would have meant one channel quoting a different premium from the document
+   sent five minutes later. Precision lost, agreement gained, deliberately. */
 function calcMI(program: string, loanAmount: number, ltv: number, fico: number) {
-  if (program === "fha") return { monthly: (loanAmount * 0.0055) / 12, upfront: loanAmount * 0.0175, type: "FHA MIP" };
-  if (program === "va") return { monthly: 0, upfront: loanAmount * 0.0215, type: "VA Funding Fee" };
-  if (program === "usda") return { monthly: (loanAmount * 0.0035) / 12, upfront: loanAmount * 0.01, type: "USDA Guarantee Fee" };
-  if (program === "conventional" && ltv > 0.80) {
-    let pmiRate = 0.005;
-    if (fico >= 760) pmiRate = ltv > 0.95 ? 0.0035 : 0.0028;
-    else if (fico >= 720) pmiRate = ltv > 0.95 ? 0.0048 : 0.0035;
-    else if (fico >= 680) pmiRate = ltv > 0.95 ? 0.0070 : 0.0050;
-    else pmiRate = ltv > 0.95 ? 0.0095 : 0.0075;
-    return { monthly: (loanAmount * pmiRate) / 12, upfront: 0, type: `Conv PMI (~${(pmiRate * 100).toFixed(2)}%)` };
+  const ltvPct = ltv <= 1 ? ltv * 100 : ltv;
+  const monthly = monthlyMI({ product: program, ltv: ltvPct, loanAmount }) || 0;
+  if (program === "fha")  return { monthly, upfront: loanAmount * 0.0175, type: "FHA MIP" };
+  if (program === "va")   return { monthly: 0, upfront: loanAmount * 0.0215, type: "VA Funding Fee" };
+  if (program === "usda") return { monthly, upfront: loanAmount * 0.01, type: "USDA Guarantee Fee" };
+  if (monthly > 0) {
+    const f = miFactor(program, ltvPct);
+    return { monthly, upfront: 0, type: `Conv PMI (~${(f.rate * 100).toFixed(2)}%)` };
   }
   return { monthly: 0, upfront: 0, type: "None" };
 }

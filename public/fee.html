@@ -12,6 +12,7 @@
 <meta property="og:type" content="website">
 <link rel="icon" href="/assets/images/favicon.png">
 <script src="/api/env.js"></script>
+<script src="/public/js/mi-factors.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
@@ -148,13 +149,14 @@ function calcEscrow(purchasePrice){ return Math.max(purchasePrice/1000*2,500); }
 function calcPI(loanAmount, annualRate, termYears){ if(loanAmount<=0||annualRate<=0)return 0; const r=annualRate/100/12, n=termYears*12; return loanAmount*(r*Math.pow(1+r,n))/(Math.pow(1+r,n)-1); }
 function getLoanTermYears(product){ return String(product||'').includes('15yr')?15:30; }
 function calcMI(inp, rate){
-    const product=inp.loanProduct, ltv=inp.ltv, totalLoanAmount=inp.totalLoanAmount||inp.loanAmount;
-    if(product.startsWith('FHA')) return totalLoanAmount*0.0055/12;
-    if(product.startsWith('VA')) return 0;
-    if(product.startsWith('USDA')) return totalLoanAmount*0.0035/12;
-    // Conventional PMI — flat 0.20% on base loan, only when LTV > 80% (matches tools/fee-sheet.html).
-    if(ltv<=80) return 0;
-    return inp.loanAmount*0.002/12;
+    /* ONE TABLE - /public/js/mi-factors.js. Held a flat 0.20% conventional factor,
+       which on this very page quoted a borrower $118.75/mo where the LTV
+       ladder gives $504.69 on a $712,500 loan at 95% LTV. */
+    const mi = RRMiFactors.monthlyMI({
+        product: inp.loanProduct, ltv: inp.ltv,
+        loanAmount: inp.loanAmount,
+        totalLoanAmount: inp.totalLoanAmount || inp.loanAmount });
+    return mi == null ? 0 : mi;
 }
 function computeGovUpfrontFee(loanProduct, baseLoanAmount, downPaymentPct, vaConfig){
     if(!loanProduct||!baseLoanAmount) return null;
