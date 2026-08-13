@@ -919,18 +919,67 @@ function showToast(msg) {
 }
 
 // ── Scenarios ──
-// County loan limits (2026 California)
-const LOAN_LIMITS = {
-  'Los Angeles':{conforming:1149825},'Orange':{conforming:1149825},'San Diego':{conforming:1006250},
-  'San Francisco':{conforming:1149825},'Santa Clara':{conforming:1149825},'Alameda':{conforming:1149825},
-  'Contra Costa':{conforming:1149825},'San Mateo':{conforming:1149825},'Marin':{conforming:1149825},
-  'Ventura':{conforming:805000},'Riverside':{conforming:726200},'San Bernardino':{conforming:726200},
-  'Sacramento':{conforming:763600},'Fresno':{conforming:726200},'Kern':{conforming:726200},
-  'Sonoma':{conforming:877450},'Santa Barbara':{conforming:805000},'Monterey':{conforming:920200},
-  'Santa Cruz':{conforming:1149825},'Napa':{conforming:1017750},'Solano':{conforming:726200},
-  'Stanislaus':{conforming:726200},'San Joaquin':{conforming:726200},'Madera':{conforming:726200},
-  'San Luis Obispo':{conforming:911950},'Lake':{conforming:726200},'Mendocino':{conforming:726200},
+/* ── 2026 CONFORMING LOAN LIMITS, CALIFORNIA ─────────────────────
+ *
+ * AS_OF names the year and the source ON PURPOSE. What was here before was
+ * commented '2026 California' above a table that actually held 2023 baseline
+ * ($726,200) and 2024 high-cost ($1,149,825) numbers — a label nobody could
+ * check, which is how it went three years stale on a borrower-facing sheet.
+ *
+ * Built from the FHFA county file, not scaled from the old table: 41 of the 58
+ * California counties sit at the baseline, 10 at the high-cost ceiling, and 7
+ * fall in between at their own HERA-derived values. No arithmetic reproduces
+ * that spread — Kern, for one, is BASELINE (verified in the file, not assumed
+ * from its old $726,200 entry). */
+const LOAN_LIMITS_AS_OF = {
+  year: 2026,
+  effective: '2026-01-01',
+  announced: '2025-11-25',
+  source: 'FHFA — Fannie Mae and Freddie Mac Conforming Loan Limits for Mortgages Acquired in Calendar Year 2026 (HERA-based, final)',
+  url: 'https://www.fhfa.gov/document/data/fullcountyloanlimitlist2026_hera-based_final_flat.xlsx',
+  baseline: 832750,
+  ceiling: 1249125,
 };
+
+/* The 17 California counties above the baseline: 10 at the ceiling, 7 between. */
+const CA_LIMIT_OVERRIDES = {
+  'Alameda': 1249125,
+  'Contra Costa': 1249125,
+  'Los Angeles': 1249125,
+  'Marin': 1249125,
+  'Orange': 1249125,
+  'San Benito': 1249125,
+  'San Francisco': 1249125,
+  'San Mateo': 1249125,
+  'Santa Clara': 1249125,
+  'Santa Cruz': 1249125,
+  'San Diego': 1104000,
+  'Ventura': 1035000,
+  'Napa': 1017750,
+  'San Luis Obispo': 1000500,
+  'Monterey': 994750,
+  'Santa Barbara': 941850,
+  'Sonoma': 897000,
+};
+/* Every remaining California county is at the baseline. Listed EXPLICITLY so an
+   unrecognised county returns no badge rather than silently inheriting one. */
+const CA_BASELINE_COUNTIES = [
+  'Alpine', 'Amador', 'Butte', 'Calaveras', 'Colusa',
+  'Del Norte', 'El Dorado', 'Fresno', 'Glenn', 'Humboldt',
+  'Imperial', 'Inyo', 'Kern', 'Kings', 'Lake',
+  'Lassen', 'Madera', 'Mariposa', 'Mendocino', 'Merced',
+  'Modoc', 'Mono', 'Nevada', 'Placer', 'Plumas',
+  'Riverside', 'Sacramento', 'San Bernardino', 'San Joaquin', 'Shasta',
+  'Sierra', 'Siskiyou', 'Solano', 'Stanislaus', 'Sutter',
+  'Tehama', 'Trinity', 'Tulare', 'Tuolumne', 'Yolo',
+  'Yuba',
+];
+const LOAN_LIMITS = (function(){
+  var m = {};
+  CA_BASELINE_COUNTIES.forEach(function(c){ m[c] = { conforming: LOAN_LIMITS_AS_OF.baseline }; });
+  Object.keys(CA_LIMIT_OVERRIDES).forEach(function(c){ m[c] = { conforming: CA_LIMIT_OVERRIDES[c] }; });
+  return m;
+})();
 const ZIP_TO_COUNTY = {
   '926':'Orange','927':'Orange','928':'Orange',
   '900':'Los Angeles','901':'Los Angeles','902':'Los Angeles','903':'Los Angeles','904':'Los Angeles','905':'Los Angeles','906':'Los Angeles','907':'Los Angeles','908':'Los Angeles','910':'Los Angeles','911':'Los Angeles','912':'Los Angeles','913':'Los Angeles','914':'Los Angeles','915':'Los Angeles','916':'Los Angeles',
@@ -944,14 +993,48 @@ const ZIP_TO_COUNTY = {
   '958':'Sacramento','957':'Sacramento','956':'Sacramento',
   '937':'Fresno','936':'Fresno',
   '933':'Kern','932':'Kern',
+  /* 935 = Lancaster / Palmdale — the Antelope Valley, which is LOS ANGELES
+     county despite sitting next to Kern's 932/933 band. Its absence is why
+     Shelley Hurle's Lancaster sheet printed 'Kern County' to a borrower.
+     THIS IS A PATCH, NOT A FIX: a 3-digit prefix cannot express county
+     correctly because ZIP3 areas straddle county lines. See the note on
+     autoFillCountyFromAddress. */
+  '935':'Los Angeles',
   '949':'Sonoma','954':'Santa Cruz','939':'Monterey',
   '947':'Marin','934':'Santa Barbara','943':'Napa','944':'Solano',
   '953':'San Luis Obispo','952':'Stanislaus','942':'San Joaquin',
 };
 
+/* COUNTY FROM A 3-DIGIT ZIP PREFIX — the mechanism, and its ceiling.
+ *
+ * ZIP3 areas straddle county lines, so no 3-digit table can be correct. 935 was
+ * simply missing and Lancaster fell through to whatever was already in the box;
+ * but even complete, this shape mis-assigns every split prefix. It also only
+ * fills when the field is EMPTY, so a wrong value already in place is never
+ * corrected — which is how 'Kern' survived on two live links.
+ *
+ * Two real fixes, neither done here:
+ *   - a 5-digit ZIP -> county table. ~1,760 CA ZIPs; the authoritative source is
+ *     the HUD USPS ZIP-COUNTY crosswalk, which is per-quarter and maps a ZIP to
+ *     MULTIPLE counties with residential-ratio weights, so it needs a tie-break
+ *     rule and a refresh story. Not large to embed (~40KB), but it is a data
+ *     feed with an owner, not a constant.
+ *   - a geocode lookup (Google/Census) returning the county component. Exact and
+ *     self-maintaining; costs a network call per address, a key, and a failure
+ *     path — and RRPlaces already runs on this page, so the address is often
+ *     already geocoded and the county component may be free.
+ * Until one of those lands, treat this as a hint that a human must confirm. */
 function autoFillCountyFromAddress() {
     var addr = $('propertyAddress').value;
-    var zipMatch = addr.match(/\b(\d{5})\b/);
+    /* THE FIRST 5-DIGIT RUN IS OFTEN THE STREET NUMBER, NOT THE ZIP. This was
+       /\b(\d{5})\b/, which on Shelley Hurle's own address —
+       "43636 Devyn Ln, Lancaster, CA 93534" — matched 43636 and looked up
+       prefix "436", which belongs to no county. So even with 935 added the
+       autofill could never have fired for her address. Prefer a ZIP following
+       the state, then a trailing ZIP, and only then any 5-digit run. */
+    var zipMatch = addr.match(/\b[A-Za-z]{2}[\s,]+(\d{5})(?:-\d{4})?\b/)
+                || addr.match(/\b(\d{5})(?:-\d{4})?\s*(?:,\s*USA\s*)?$/i)
+                || addr.match(/\b(\d{5})\b/);
     if (zipMatch) {
         var prefix = zipMatch[1].substring(0, 3);
         var county = ZIP_TO_COUNTY[prefix];
@@ -2103,7 +2186,13 @@ function render(inp, results) {
 
         ${(() => {
             if (isCol) return '';
-            const county = inp.county || 'Los Angeles';
+            /* NO DEFAULT. This read `inp.county || 'Los Angeles'`, which invented a
+               jurisdiction on a borrower-facing document whenever the field was
+               blank — and the other render site (above) already returned empty for
+               the same case, so the two disagreed. An absent county now shows the
+               'enter county' prompt, which is true, instead of a confident badge
+               for a county nobody chose. */
+            const county = inp.county || '';
             const info = getLoanLimitInfo(county, inp.loanAmount);
             if (!info) {
                 return '<div style="display:flex;align-items:center;justify-content:center;padding:8px 16px;margin-top:12px;margin-bottom:8px;background:#f9f9f7;border:1px solid #e8e8e8;border-radius:6px;font-size:12px;color:#888;">Enter county in sidebar to see conforming loan limits</div>';
