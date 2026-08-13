@@ -326,6 +326,48 @@ Deno.serve(async (req: Request) => {
         const r = await driveFetch(`/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,webViewLink,webContentLink,size,createdTime,modifiedTime,iconLink,thumbnailLink)&pageSize=500&orderBy=name`);
         return json(await r.json(), r.status);
       }
+      /* revisions: READ-ONLY history for a Drive file. This is the escape hatch
+       * for a document that has been rewritten in place.
+       *
+       * save-document PATCHes new bytes over the SAME file id with
+       * uploadType=media, so there is no copy to fall back to — the only prior
+       * copy is Drive's own revision history. A rotation bug shipped in this
+       * repo silently rewrote a real executed contract's /Rotate on every press
+       * of Save Rotation, and at the time nothing here could even tell whether
+       * an earlier version still existed. Assuming Google keeps one is not the
+       * same as being able to name it, so this lists them.
+       *
+       * USER token, not the service account: files uploaded through the app's
+       * upload path are owned by rene@, and the SA cannot enumerate revisions
+       * on a file it does not own — it 404s, which would read as "no history".
+       *
+       * Read-only ON PURPOSE. Restoring means re-uploading old bytes over the
+       * live file, which is another destructive in-place write; it is not
+       * something to expose next to a listing. Restore by hand from what this
+       * returns, or in the Drive UI under Manage versions. */
+      if (action === "revisions") {
+        const fileId = url.searchParams.get("fileId") || url.searchParams.get("id");
+        if (!fileId) return err("fileId required", 400);
+        const utok = await getUserAccessToken();
+        if (!utok) return err("User OAuth token fetch failed", 500);
+        const r = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/revisions` +
+          `?fields=revisions(id,modifiedTime,size,keepForever,originalFilename,lastModifyingUser(emailAddress))&pageSize=1000`,
+          { headers: { Authorization: `Bearer ${utok}` } },
+        );
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) return json(body, r.status);
+        const revs = Array.isArray(body.revisions) ? body.revisions : [];
+        return json({
+          fileId,
+          count: revs.length,
+          /* Stated rather than left to the reader: Drive keeps binary revisions
+             for 30 days or 100 versions, whichever comes first, unless pinned
+             with keepForever. A count > 1 is not a promise the oldest survives. */
+          retention: "binary revisions: 30 days or 100 versions, whichever comes first, unless keepForever",
+          revisions: revs,
+        }, 200);
+      }
       if (action === "download") {
         const fileId = url.searchParams.get("fileId") || url.searchParams.get("id");
         if (!fileId) return err("fileId required", 400);
