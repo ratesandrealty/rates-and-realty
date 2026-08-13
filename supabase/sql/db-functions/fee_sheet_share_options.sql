@@ -1,6 +1,6 @@
 -- fee_sheet_share_options(p_slug text)
 -- language: plpgsql
--- Captured from production 2026-08-12.
+-- Captured from production 2026-08-13.
 
 CREATE OR REPLACE FUNCTION public.fee_sheet_share_options(p_slug text)
  RETURNS jsonb
@@ -20,7 +20,7 @@ begin
 
   select jsonb_agg(jsonb_build_object(
            'key', x->>'key', 'label', x->>'label',
-           'available', public._fs_has_section(v_row.data, x->>'key'),
+           'available', public._fs_has_section(v_row.data, x->>'key', coalesce(nullif(v_row.share_sections->>'mode',''), v_row.data->>'mode')),
            'on', coalesce((v_row.share_sections->>(x->>'key'))::boolean, false))
          order by ord)
     into v_sec

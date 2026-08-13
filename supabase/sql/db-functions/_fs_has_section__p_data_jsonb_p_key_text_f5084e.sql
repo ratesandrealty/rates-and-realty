@@ -1,6 +1,6 @@
 -- _fs_has_section(p_data jsonb, p_key text)
 -- language: plpgsql
--- Captured from production 2026-08-12.
+-- Captured from production 2026-08-13.
 
 CREATE OR REPLACE FUNCTION public._fs_has_section(p_data jsonb, p_key text)
  RETURNS boolean

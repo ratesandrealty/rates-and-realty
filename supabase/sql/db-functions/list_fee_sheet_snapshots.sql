@@ -1,6 +1,6 @@
 -- list_fee_sheet_snapshots(p_contact_id uuid)
 -- language: plpgsql
--- Captured from production 2026-08-12.
+-- Captured from production 2026-08-13.
 
 CREATE OR REPLACE FUNCTION public.list_fee_sheet_snapshots(p_contact_id uuid DEFAULT NULL::uuid)
  RETURNS jsonb
@@ -28,7 +28,7 @@ begin
            s.share_sections->>'mode' as mode_override,
            (select jsonb_agg(jsonb_build_object(
                      'key', k->>'key', 'label', k->>'label',
-                     'available', public._fs_has_section(s.data, k->>'key'),
+                     'available', public._fs_has_section(s.data, k->>'key', coalesce(nullif(s.share_sections->>'mode',''), s.data->>'mode')),
                      'on', coalesce((s.share_sections->>(k->>'key'))::boolean, false))
                    order by ord)
               from jsonb_array_elements(public._fs_share_section_keys()) with ordinality t(k, ord)

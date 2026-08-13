@@ -4821,6 +4821,12 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
                  RPC (create_fee_sheet_snapshot) rather than adding a second
                  generator — one path to mint, one shape of link, one expiry rule. -->
             <button id="fsShareBtn" onclick="fsCreateShareLink()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;background:rgba(201,168,76,.1);color:#C9A84C;border-color:rgba(201,168,76,.3);">🔗 Share Link</button>
+            <!-- RECORD LIVES HERE, NOT ONLY ON A LINK ROW. It was reachable only
+                 inside the Shared-links panel body, which is collapsed by default
+                 AND absent entirely when the contact has no links — so the
+                 feature existed and could not be found. Same shape as the LOE
+                 "Send several" button hidden behind a threshold nobody met. -->
+            <button id="fsVideoBtn" onclick="fsRecordWalkthrough()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;background:rgba(201,168,76,.1);color:#C9A84C;border-color:rgba(201,168,76,.3);">🎥 Record Walkthrough</button>
             <button onclick="openFeeSheetFullscreen()" class="ld-btn-sm" style="padding:5px 14px;font-size:.78rem;"><i class="fas fa-expand" style="margin-right:4px"></i>Fullscreen</button>
           </div>
         </div>
@@ -38301,6 +38307,47 @@ async function fsSetSection(slug, key, on){
  * from that — the warning lands BEFORE the recorder opens, and revocation
  * deletes the bytes rather than flagging a row.
  */
+/* ── REACHING THE RECORDER FROM THE TAB ─────────────────────────────────────
+ *
+ * A walkthrough attaches to a SPECIFIC link, so this has to resolve which one
+ * before it can record. It says what is missing rather than doing nothing:
+ *   no links      -> tells him to create one first, which is the actual next step
+ *   exactly one   -> records for it, no dialog
+ *   several       -> asks which, listing slug + views so they are tellable apart
+ * Revoked and expired links are excluded: fee_video_public refuses to serve a
+ * video on either, so offering them would produce a recording no borrower can
+ * reach. */
+async function fsRecordWalkthrough(){
+  var cid=(typeof lpCid==='function'?lpCid():null) || new URLSearchParams(location.search).get('contact_id');
+  if(!cid){ showToast('No contact', true); return; }
+  var rows=[];
+  try{
+    var cl=(typeof _waitForAuthClient==='function') ? await _waitForAuthClient() : _authClient();
+    var r=await (cl||_authClient()).rpc('list_fee_sheet_snapshots',{ p_contact_id: cid });
+    if(r.error) throw r.error;
+    rows=(Array.isArray(r.data)?r.data:[]).filter(function(x){ return x.status==='live'; });
+  }catch(e){ showToast('Could not load the links: '+((e&&e.message)||e), true); return; }
+
+  if(!rows.length){
+    showToast('Create a share link first - a walkthrough attaches to one.', true);
+    return;
+  }
+  if(rows.length===1) return _fvConfirmThenRecord(rows[0].slug);
+
+  var listed=rows.map(function(x,i){
+    return (i+1)+') /fee/'+x.slug+'  -  '+(x.view_count||0)+' view'+((x.view_count===1)?'':'s')
+         + (x.has_video ? '  -  already has a video' : '');
+  }).join('\n');
+  var pick=prompt('Which link should the walkthrough go on?\n\n'+listed+'\n\nEnter a number:');
+  if(!pick) return;
+  var idx=parseInt(pick,10)-1;
+  if(isNaN(idx) || idx<0 || idx>=rows.length){ showToast('No link chosen', true); return; }
+  var chosen=rows[idx];
+  if(chosen.has_video && !confirm('/fee/'+chosen.slug+' already has a walkthrough.\n\n'
+      + 'Recording a new one REPLACES it, and the old video file is deleted.')) return;
+  _fvConfirmThenRecord(chosen.slug);
+}
+
 function _fvWarnKey(){
   return 'rr_fee_video_warned:' + ((window._adminUser && (window._adminUser.id || window._adminUser.email)) || 'anon');
 }
