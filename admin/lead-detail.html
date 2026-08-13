@@ -4302,6 +4302,10 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
             <button id="doc-viewer-crop-btn" onclick="docViewerToggleCropMode()" title="Crop page" style="padding:6px 14px; background:#1a1a1a; border:1px solid rgba(201,168,76,0.35); border-radius:6px; color:#C9A84C; cursor:pointer; font-size:14px; font-family:inherit;">✂ Crop</button>
             <button id="doc-viewer-crop-apply-btn" onclick="docViewerApplyCrop()" style="display:none; padding:6px 14px; background:linear-gradient(135deg,#7A5020,#C9A84C); border:none; border-radius:6px; color:#1A0E00; font-weight:700; font-size:12px; cursor:pointer; font-family:inherit;">Apply Crop</button>
             <button id="doc-viewer-crop-cancel-btn" onclick="docViewerCancelCrop()" style="display:none; padding:6px 14px; background:#1a1a1a; border:1px solid rgba(255,255,255,0.2); border-radius:6px; color:#fff; cursor:pointer; font-size:12px; font-family:inherit;">Cancel</button>
+            <!-- Why Crop is unavailable, IN the toolbar. The refusal used to be a
+                 toast only, and this viewer is a modal — a toast behind it is a
+                 Crop button that does nothing for no visible reason. -->
+            <span id="doc-viewer-crop-note" style="display:none; font-size:11px; line-height:1.35; color:#e8b070; background:rgba(240,160,80,0.10); border:1px solid rgba(240,160,80,0.45); border-radius:6px; padding:4px 8px; max-width:420px;"></span>
           </div>
           <!-- Thumbnail filmstrip (jump to any doc in the folder) — populated when nav list has >1 file -->
           <div id="doc-viewer-filmstrip" style="display:none; gap:8px; padding:8px 16px; background:#0d0d0d; border-bottom:1px solid #222; overflow-x:auto; flex-shrink:0;"></div>
@@ -9053,9 +9057,14 @@ async function openDocViewerForFile(file, navList) {
   const _navList = (navList && navList.length) ? navList : _ldViewerNavList();
   let _navIdx = _navList.findIndex(function(x){ return x && x.id === file.id; });
   if (_navIdx < 0) { _navList.length ? _navIdx = 0 : _navIdx = -1; }
-  _docViewerState = { file: file, pdfDoc: null, objectUrl: null, scale: 1.0, rotation: 0, type: null, navList: _navList, navIdx: _navIdx };
+  _docViewerState = { file: file, pdfDoc: null, objectUrl: null, scale: 1.0, rotation: 0, type: null, navList: _navList, navIdx: _navIdx, cropBlock: null };
   _docViewerScale = 1.0;
   _docViewerRotation = 0;
+  /* Clear the previous document's crop notice immediately. Stepping from a
+     rotated file to a flat one must not leave the old refusal on screen —
+     a stale reason is read as the current one. */
+  { const _cn = document.getElementById('doc-viewer-crop-note');
+    if (_cn) { _cn.style.display = 'none'; _cn.textContent = ''; } }
   _docViewerCropMode = false;
   _docViewerCropDragging = false;
   _docViewerCropSelection = null;
@@ -9136,6 +9145,10 @@ async function openDocViewerForFile(file, navList) {
       const pdfjsLib = await _ensurePdfJs();
       _docViewerState.pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
       await _renderPdfAllPages();
+      /* Decide crop eligibility at OPEN, so the button carries its state before
+         anyone clicks it. Awaited: a Crop press that beat the probe would read
+         the stale gate from the previously-open document. */
+      await _docViewerRefreshCropGate();
     } else if (isImage) {
       _docViewerState.type = 'image';
       const blob = new Blob([buf], { type: file.mimeType || 'image/jpeg' });
@@ -9612,6 +9625,69 @@ async function docViewerSaveRotation() {
 // Draws a drag-selection rectangle on a single page; Apply sends the
 // rectangle (in PDF points, bottom-left origin) to save-document.
 
+/* ── CROP ELIGIBILITY ────────────────────────────────────────────────────────
+ *
+ * docViewerApplyCrop maps canvas px straight to PDF points and flips Y, which
+ * is only valid on an UNROTATED viewport. So a page stored with /Rotate, or a
+ * user rotation, makes the crop land on the wrong edge — of a real document,
+ * written in place, with no undo.
+ *
+ * FAILS CLOSED. The first version of this probe swallowed its error and left
+ * the page count at 0, so an unreadable document CROPPED — the guard was
+ * absent in exactly the case where least was known about the file, which is the
+ * `if (POLL_SECRET)` shape. A probe that cannot read the document now refuses,
+ * with its OWN wording, so "we know it is rotated" and "we could not tell" are
+ * distinguishable in the field rather than collapsing into one message.
+ *
+ * The reason is rendered INTO THE TOOLBAR, not just toasted. This viewer is a
+ * modal; a toast behind it leaves a Crop button that does nothing for no
+ * visible reason. */
+async function _docViewerRefreshCropGate() {
+  const st = _docViewerState;
+  const note = document.getElementById('doc-viewer-crop-note');
+  const btn  = document.getElementById('doc-viewer-crop-btn');
+  const clear = () => {
+    st.cropBlock = null;
+    if (note) { note.style.display = 'none'; note.textContent = ''; }
+    if (btn) { btn.style.opacity = '1'; btn.style.cursor = 'pointer'; btn.title = 'Crop page'; }
+  };
+  if (!st || st.type !== 'pdf' || !st.pdfDoc) { clear(); return; }
+
+  let block = null;
+  try {
+    let rotated = 0;
+    for (let i = 1; i <= st.pdfDoc.numPages; i++) {
+      const p = await st.pdfDoc.getPage(i);
+      if (((p.rotate || 0) % 360) !== 0) rotated++;
+    }
+    if (rotated > 0) {
+      block = { kind: 'rotated', text: 'Crop unavailable — ' + rotated + ' of ' + st.pdfDoc.numPages
+        + ' page(s) are stored rotated, so the crop area would land on the wrong edge of the page.' };
+    }
+  } catch (e) {
+    block = { kind: 'unknown', text: 'Crop unavailable — could not read this document’s page rotation ('
+      + ((e && e.message) || 'unknown error') + '). Refusing rather than guessing, because a wrong crop rewrites the file in place.' };
+  }
+
+  st.cropBlock = block;
+  if (!block) { clear(); return; }
+  if (btn) { btn.style.opacity = '0.45'; btn.style.cursor = 'not-allowed'; btn.title = block.text; }
+  if (note) { note.textContent = block.text; note.style.display = 'inline-block'; }
+}
+
+function _docViewerShowCropNote(block) {
+  const note = document.getElementById('doc-viewer-crop-note');
+  if (note) {
+    note.textContent = block.text;
+    note.style.display = 'inline-block';
+    /* A brief flash so a second click on an already-marked button still reads
+       as a response rather than a dead control. */
+    note.style.background = 'rgba(240,160,80,0.28)';
+    setTimeout(function () { note.style.background = 'rgba(240,160,80,0.10)'; }, 450);
+  }
+  if (typeof showToast === 'function') showToast(block.text, true);
+}
+
 async function docViewerToggleCropMode() {
   if (_docViewerState.type !== 'pdf') {
     if (typeof showToast === 'function') showToast('Crop only works on PDFs');
@@ -9621,28 +9697,12 @@ async function docViewerToggleCropMode() {
     if (typeof showToast === 'function') showToast('Reset rotation to 0 before cropping');
     return;
   }
-  /* THE PAGE'S OWN /Rotate COUNTS TOO, not just the user's delta.
-     docViewerApplyCrop converts canvas px straight to PDF points and flips Y,
-     which is only valid when the rendered viewport is unrotated. The guard
-     above has always caught the user's delta; it could not see /Rotate because
-     the renderer used to discard it. Now that the renderer honours /Rotate, a
-     page that is stored rotated genuinely draws rotated at delta 0 — and a crop
-     taken off it would set a MediaBox on the wrong edge of a real document,
-     in place, with no undo. Refuse instead, and say which it is. */
-  if (!_docViewerCropMode && _docViewerState.pdfDoc) {
-    let rotatedPages = 0;
-    try {
-      for (let i = 1; i <= _docViewerState.pdfDoc.numPages; i++) {
-        const p = await _docViewerState.pdfDoc.getPage(i);
-        if (((p.rotate || 0) % 360) !== 0) rotatedPages++;
-      }
-    } catch (_) { /* fall through — a failed probe must not block cropping a flat doc */ }
-    if (rotatedPages > 0) {
-      if (typeof showToast === 'function') {
-        showToast('This document has ' + rotatedPages + ' page(s) stored rotated — cropping is disabled because the crop area would land on the wrong edge.', true);
-      }
-      return;
-    }
+  /* The eligibility decision is made once at open by _docViewerRefreshCropGate
+     and cached, so the button can SHOW its state instead of only reacting.
+     Re-checked here too: the button is not the control, this is. */
+  if (!_docViewerCropMode) {
+    const blocked = _docViewerState.cropBlock;
+    if (blocked) { _docViewerShowCropNote(blocked); return; }
   }
   if (_docViewerCropMode) { _docViewerExitCropMode(); return; }
   _docViewerCropMode = true;

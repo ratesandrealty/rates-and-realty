@@ -368,6 +368,36 @@ Deno.serve(async (req: Request) => {
           revisions: revs,
         }, 200);
       }
+      /* revision-download: fetch the BYTES of one historical revision.
+       *
+       * READ-ONLY, and the distinction matters: this reads an old version, it
+       * does not put one back. Restoring is another in-place write over the
+       * live file and stays a deliberate manual act.
+       *
+       * It exists because listing revisions was not enough. The real executed
+       * contract turned out to carry TWO revisions with DIFFERENT byte counts,
+       * 26 seconds apart — so something had already rewritten it, and the only
+       * way to learn what the document originally said was to read the earlier
+       * revision. A history you can count but not open answers nothing. */
+      if (action === "revision-download") {
+        const fileId = url.searchParams.get("fileId") || url.searchParams.get("id");
+        const revId  = url.searchParams.get("revisionId");
+        if (!fileId || !revId) return err("fileId and revisionId required", 400);
+        const utok = await getUserAccessToken();
+        if (!utok) return err("User OAuth token fetch failed", 500);
+        const media = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/revisions/${encodeURIComponent(revId)}?alt=media`,
+          { headers: { Authorization: `Bearer ${utok}` } },
+        );
+        if (!media.ok) {
+          const t = await media.text();
+          return err(`revision download failed: ${media.status} ${t.slice(0, 200)}`, media.status);
+        }
+        return new Response(media.body, {
+          status: 200,
+          headers: { ...CORS, "Content-Type": media.headers.get("Content-Type") || "application/octet-stream" },
+        });
+      }
       if (action === "download") {
         const fileId = url.searchParams.get("fileId") || url.searchParams.get("id");
         if (!fileId) return err("fileId required", 400);
