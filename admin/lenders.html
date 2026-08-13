@@ -2695,7 +2695,16 @@ async function submitNewLender() {
     name: name,
     lender_type: document.getElementById('newLenderType').value,
     channel: document.getElementById('newLenderChannel').value,
-    nmls: document.getElementById('newLenderNMLS').value.trim() || null,
+    /* nmlsr_id, NOT nmls. This key was the only unmatched one in the payload and
+       it 400'd every Add: "Could not find the 'nmls' column of 'lenders' in the
+       schema cache" — which reads like a stale cache and is not one. Reads of
+       the same table were returning 200 throughout, because every OTHER writer
+       and reader already uses nmlsr_id: lender-portal's allow-list (index.ts:33),
+       emc-lender-import (:62, :233), clickup-lender-sync's custom-field map
+       (:22, :126). This one line was the outlier.
+       Deliberately renamed rather than adding an `nmls` column — two NMLS fields
+       would take turns being the stale one with nothing to say which. */
+    nmlsr_id: document.getElementById('newLenderNMLS').value.trim() || null,
     // Dual-write rep_* + contact_* (see saveLenderDetails) so a new lender populates both.
     contact_name: document.getElementById('newLenderAEName').value.trim() || null,
     rep_name: document.getElementById('newLenderAEName').value.trim() || null,

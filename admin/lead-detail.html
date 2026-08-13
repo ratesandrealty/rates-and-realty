@@ -3156,7 +3156,7 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
               <div><label class="ls-sub">Rate %</label><input id="ls_interest_rate" type="number" step="0.001" class="ls-input" placeholder="5.990"></div>
               <div><label class="ls-sub">Term (months)</label><input id="ls_loan_term_months" type="number" class="ls-input" placeholder="360" value="360"></div>
               <div><label class="ls-sub">Credit Score</label><input id="ls_credit_score" type="number" class="ls-input" placeholder="720"></div>
-              <div><label class="ls-sub">Loan Type</label><select id="ls_loan_type" class="ls-input" onchange="lsRecalc()"><option>Conventional</option><option>FHA</option><option>FHA VOE</option><option>ITIN</option><option>HELOAN</option><option>VA</option><option>USDA</option><option>Jumbo</option><option>Non-QM</option></select></div>
+              <div><label class="ls-sub">Loan Type</label><select id="ls_loan_type" class="ls-input" onchange="lsRecalc()"><option value="">— Select program —</option><option>Conventional</option><option>FHA</option><option>FHA VOE</option><option>ITIN</option><option>HELOAN</option><option>VA</option><option>USDA</option><option>Jumbo</option><option>Non-QM</option></select></div>
               <div><label class="ls-sub">Loan Program</label><select id="ls_loan_program" class="ls-input"><option>30-Year Fixed</option><option>15-Year Fixed</option><option>20-Year Fixed</option><option>10-Year Fixed</option><option>5/1 ARM</option><option>7/1 ARM</option><option>10/1 ARM</option></select></div>
             </div>
             <div class="ls-card-label" style="margin-top:10px">Housing Expense (PITIA)</div>
@@ -3174,6 +3174,7 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
                 <input id="ls_mi_monthly" type="number" class="ls-input" readonly style="color:#C9A84C">
                 <div id="lsMIPctWrap" style="display:none"><input id="ls_mi_rate_pct" type="number" step="0.001" class="ls-input" placeholder="0.85" oninput="lsCalcMIFromPct()" style="margin-top:3px"><div style="font-size:.58rem;color:#666;margin-top:2px">Annual % of loan amount</div></div>
                 <div id="lsMIFixedWrap" style="display:none"><input id="ls_mi_fixed" type="number" step="0.01" class="ls-input" placeholder="250.00" oninput="lsRecalc()" style="margin-top:3px"></div>
+                <div id="lsMINote" style="display:none;font-size:.58rem;line-height:1.35;margin-top:4px;padding:4px 6px;border-radius:6px;border:1px solid rgba(240,160,80,.45);background:rgba(240,160,80,.08);color:#e8b070"></div>
               </div>
               <div>
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">
@@ -27352,13 +27353,53 @@ function lsRecalc() {
   // Loan type — VA loans never carry monthly mortgage insurance (only a one-time funding fee).
   var _lsLoanType = (document.getElementById('ls_loan_type') || {}).value || '';
   var _lsIsVA = /\bva\b/i.test(_lsLoanType);
-  // MI — mode-driven (auto / % of loan / fixed $)
-  var mi = 0;
+  var _lsIsFHA = /\bfha\b/i.test(_lsLoanType);
+  /* MI — mode-driven (auto / % of loan / fixed $).
+     Only AUTO is program-aware. The two manual modes are Rene overriding the
+     estimate by hand and must not be second-guessed by loan type. */
+  var mi = 0, _miNote = '';
   if (_lsMIMode === 'auto') {
     // Auto MI is suppressed entirely for VA regardless of LTV.
-    if (!_lsIsVA && ltv > 80) {
+    if (_lsIsFHA) {
+      /* FHA ANNUAL MIP, and it is NOT the conventional ladder. FHA MIP is a
+         program premium keyed to LTV bands set by HUD — the conventional ladder
+         below is an LTV-priced private-MI estimate and the two are unrelated.
+         Reading 1.02% off it for an FHA file overstated MIP by ~85%.
+         30-year: LTV > 95% -> 0.55%, LTV <= 95% -> 0.50%.
+         There is no LTV floor here on purpose: FHA MIP is charged for the life
+         of the loan at >90% LTV and for 11 years below it, so an FHA loan at
+         80% LTV still pays it. The `ltv > 80` gate is a CONVENTIONAL rule. */
+      var _fhaRate = ltv > 95 ? 0.0055 : 0.0050;
+      mi = loanAmt * _fhaRate / 12;
+      /* HIGH BALANCE IS DELIBERATELY NOT PRICED HERE. FHA charges a higher MIP
+         above a loan-size threshold, and which threshold is live is unresolved:
+         $726,200 or the 2026 conforming limit. Daniel Garcia's $815,425 sits
+         BETWEEN the candidates, so picking one would silently decide the
+         question on a real borrower's letter. Warn and let Rene resolve it —
+         a number nobody chose is worse than a number flagged as unverified. */
+      if (loanAmt > 726200) {
+        _miNote = 'FHA loan over $726,200 — MIP tier NOT verified. '
+                + 'This shows the standard ' + (_fhaRate*100).toFixed(2) + '% factor; '
+                + 'high-balance FHA may price higher. Confirm before sending.';
+        console.warn('[loan summary] FHA loan amount ' + loanAmt + ' exceeds $726,200 — '
+          + 'high-balance MIP tier is unverified; MI shown at the standard '
+          + (_fhaRate*100).toFixed(2) + '% factor.');
+      }
+    } else if (!_lsIsVA && ltv > 80) {
       var miRate = ltv <= 85 ? 0.0052 : ltv <= 90 ? 0.0068 : ltv <= 95 ? 0.0085 : 0.0102;
       mi = loanAmt * miRate / 12;
+      /* NO PROGRAM SELECTED. The ladder above is a CONVENTIONAL estimate and it
+         is what an unset type falls through to — so say that on screen rather
+         than let a program-specific premium appear as if a program were chosen.
+         The number is deliberately NOT changed: 24 stored scenarios predate the
+         field being persisted at all, and zeroing their MI on load would have
+         the autosave write that zero over what is there. Say it, don't move it;
+         generatePreApproval refuses the LETTER, which is the artefact that
+         leaves the building. */
+      if (!_lsLoanType) {
+        _miNote = 'No loan program selected — this MI is a CONVENTIONAL estimate. '
+                + 'Pick a program above; a pre-approval letter cannot be generated until you do.';
+      }
     }
   } else if (_lsMIMode === 'pct') {
     var pctRate = _lsNum('ls_mi_rate_pct');
@@ -27367,6 +27408,11 @@ function lsRecalc() {
     mi = _lsNum('ls_mi_fixed');
   }
   _lsSetNum('ls_mi_monthly', mi);
+  /* The warning is rendered every recalc, so it clears itself the moment the
+     loan amount or type stops qualifying. A stale caution is as misleading as
+     a missing one. */
+  var _miNoteEl = document.getElementById('lsMINote');
+  if (_miNoteEl) { _miNoteEl.textContent = _miNote; _miNoteEl.style.display = _miNote ? 'block' : 'none'; }
   // PITIA — if tax mode is %, recompute taxes from value × rate/100/12
   if (_lsTaxMode === 'pct') {
     var taxRate = _lsNum('ls_tax_rate_pct');
@@ -27764,7 +27810,21 @@ async function lsGeneratePreApproval() {
     var ins        = _lsNum('ls_insurance_monthly');
     var hoa        = _lsNum('ls_hoa_monthly');
     var other      = _lsNum('ls_other_monthly');
-    var loanType   = (document.getElementById('ls_loan_type') || {}).value || 'Conventional';
+    /* REFUSE ON AN UNSELECTED PROGRAM, before anything is fetched or drawn.
+       This used to read `|| 'Conventional'` — and that default is how a contact
+       whose programme was NEVER RECORDED produced a letter asserting "meets
+       Conventional guidelines" with conventional MI. Nobody made that claim;
+       the select simply showed its first option, because it had no blank one
+       and the stored value was null for 24 of the 39 scenarios on file.
+       Refusing is only possible because "unset" is now expressible — a bare
+       refusal branch against a select that always returns a value would be
+       dead code. Same discipline as the empty-borrower-name abort below. */
+    var loanType   = (document.getElementById('ls_loan_type') || {}).value || '';
+    if (!loanType) {
+      if (btn) { btn.disabled = false; btn.textContent = origTxt || 'Generate Pre-Approval'; }
+      showToast('Select a loan program (Loan Type) first — the letter states the program and its guidelines. Nothing was generated.', true);
+      return;
+    }
     // VA loans never carry monthly MI — force 0 (ls_mi_monthly is already 0 for VA; belt-and-suspenders).
     var mi         = /\bva\b/i.test(loanType) ? 0 : _lsNum('ls_mi_monthly');
     var down = _lsNum('ls_down_payment'), closing = _lsNum('ls_closing_costs'),

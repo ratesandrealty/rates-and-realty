@@ -196,14 +196,43 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   const validDays  = parseInt(String(d.valid_days||90));
   const expiryDate = v(d.expiry_date)||new Date(Date.now()+validDays*86400000).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
   const refNum     = 'RR-'+Date.now().toString(36).toUpperCase().slice(-7);
-  const convOK     = bDTI > 0 && bDTI <= 50;
-  const fhaOK      = fDTI > 0 && fDTI <= 46.9 && bDTI <= 57;
-  const vaOK       = bDTI > 0 && bDTI <= 55;
-  const guideNote  = convOK?'meets Conventional guidelines':fhaOK?'meets FHA guidelines':vaOK?'meets VA guidelines':'subject to lender approval';
-  // Program-specific DTI limits for color-coding (null = no separate limit for that program).
   const isFHALoan  = /\bfha\b/i.test(loanType);
+  const isConvLoan = /\bconv(entional)?\b/i.test(loanType);
+
+  /* THE VERDICT IS THE LOAN'S PROGRAM, TESTED AGAINST THAT PROGRAM'S LIMITS.
+     It used to be DTI-first — convOK ? 'Conventional' : fhaOK ? 'FHA' : … —
+     with the loan type not an input at all, so an FHA file whose back DTI came
+     in under 50 was told in writing that it "meets Conventional guidelines".
+     RR-SQEIB6A (FHA, 96.5% LTV) said exactly that. A pre-approval naming the
+     wrong program is a document a listing agent relies on.
+
+     UNRECOGNISED DOES NOT MEAN CONVENTIONAL. ITIN, HELOAN, Jumbo, Non-QM and
+     USDA are all selectable and none of them is a conventional agency loan;
+     they previously collected a Conventional verdict by falling through. They
+     now get 'subject to lender approval', which is true, rather than a
+     confident sentence about a programme they are not. Missing type likewise —
+     v() defaults the DISPLAY word to 'Conventional', and inheriting that
+     default here is how a blank field becomes an assertion. */
+  const progOK =
+      isVALoan  ? (bDTI > 0 && bDTI <= 55)
+    : isFHALoan ? (fDTI > 0 && fDTI <= 46.9 && bDTI <= 57)
+    : isConvLoan? (bDTI > 0 && bDTI <= 50)
+    : false;
+  const progName   = isVALoan ? 'VA' : isFHALoan ? 'FHA' : isConvLoan ? 'Conventional' : null;
+  const guideNote  = (progName && progOK) ? `meets ${progName} guidelines` : 'subject to lender approval';
+
+  /* One row, the loan's own programme — not three programmes green-checked at
+     once. Cross-programme eligibility is a feature someone would have to ask
+     for; showing it by accident implied we had underwritten all three. */
+  const dtiChecks: {ok:boolean; lbl:string}[] =
+      isVALoan  ? [{ok: progOK, lbl:'VA (Back 55% max)'}]
+    : isFHALoan ? [{ok: progOK, lbl:'FHA (Front 46.9% / Back 57%)'}]
+    : isConvLoan? [{ok: progOK, lbl:'Conv. (Back 50% max)'}]
+    : [];
+
+  // Program-specific DTI limits for color-coding (null = no separate limit for that program).
   const frontLimit = isFHALoan ? 46.9 : null;
-  const backLimit  = isVALoan ? 55 : (isFHALoan ? 57 : 50);
+  const backLimit  = isVALoan ? 55 : (isFHALoan ? 57 : (isConvLoan ? 50 : null));
   const frontOK    = frontLimit==null ? true : (fDTI<=frontLimit);
   const backOK     = backLimit==null  ? true : (bDTI<=backLimit);
   const frontColor = frontOK ? DGREEN : DRED;
@@ -338,7 +367,7 @@ async function buildPDF(d: any): Promise<Uint8Array> {
       T(val,cx+(cardW-B.widthOfTextAtSize(val,14))/2,y-26,B,14,(i===0?frontColor:backColor));
     }
     y-=44;
-    for(const c of [{ok:convOK,lbl:'Conv. (Back 50% max)'},{ok:fhaOK,lbl:'FHA (Front 46.9% / Back 57%)'},{ok:vaOK,lbl:'VA (Back 55% max)'}]){
+    for(const c of dtiChecks){
       if(c.ok){page.drawLine({start:{x:rightX,y:y+1},end:{x:rightX+3,y:y-3},thickness:1.4,color:GREEN,opacity:0.9});page.drawLine({start:{x:rightX+3,y:y-3},end:{x:rightX+8,y:y+5},thickness:1.4,color:GREEN,opacity:0.9});}
       else{page.drawLine({start:{x:rightX,y:y+5},end:{x:rightX+8,y:y-1},thickness:1.4,color:RED,opacity:0.9});page.drawLine({start:{x:rightX,y:y-1},end:{x:rightX+8,y:y+5},thickness:1.4,color:RED,opacity:0.9});}
       T(c.lbl,rightX+12,y,R,7.5,DARK); y-=11;
