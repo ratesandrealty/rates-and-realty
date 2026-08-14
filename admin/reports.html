@@ -467,7 +467,13 @@ function renderVa(d){
     var nowMs=Date.now();
     html+='<table><thead><tr><th>Title</th><th>Priority</th><th>Contact</th><th class="num">Age</th><th>Due</th></tr></thead><tbody>';
     html+=oa.map(function(r){
-      var overdue = r.due_date && (new Date(r.due_date).getTime() < nowMs);
+      /* tasks.due_date is zone-less and written as UTC, so a bare new Date()
+         reads it as local and lands 7 hours late. RRTime is injected by
+         auth-guard (already used by fmtDateTime below); guarded because a page
+         can format before it arrives. This list is already scoped to
+         outstanding tasks server-side, so there is no status test here. */
+      var _rd = (window.RRTime && window.RRTime.parse) ? window.RRTime.parse(r.due_date) : new Date(r.due_date);
+      var overdue = r.due_date && (_rd.getTime() < nowMs);
       return '<tr'+(overdue?' class="warn"':'')+'><td>'+esc(r.title||'(untitled)')+'</td>'
         +'<td><span class="prio">'+esc(cap(r.priority))+'</span></td>'
         +'<td>'+esc(r.contact_name||'—')+'</td>'

@@ -9,6 +9,18 @@
    which column it read. Guarded because RRTime is injected by auth-guard and a
    page may format before it lands. */
 function _rrD(v) { return (window.RRTime && window.RRTime.parse) ? window.RRTime.parse(v) : new Date(v); }
+
+/* CAN THIS TASK STILL BE LATE? Overdue used to be `status !== "completed"`,
+   which counts CANCELLED work as overdue — three cancelled tasks were rendering
+   red, and they are the whole difference between the 19 red rows on screen and
+   the 16 that are actually outstanding.
+   Written as "not in a terminal state" rather than `=== 'open'` on purpose:
+   task_note_add introduces status='question' (a VA blocked and waiting on Rene),
+   and an `=== 'open'` test would drop those out of every overdue view the day
+   the first one is raised. Terminal states are the closed set; anything else is
+   still live. Same 16 today either way. */
+const CRM_TERMINAL_STATUS = ['completed', 'cancelled'];
+function crmIsLive(status) { return CRM_TERMINAL_STATUS.indexOf(status) === -1; }
 // admin-dashboard.js v20260411g
 // Config fallback — ensures Supabase works even if env.js loads late
 (function() {
@@ -682,7 +694,7 @@ function crmFilterTasks(tasks) {
   if (crmActiveFilter === "open") return tasks.filter((t) => t.status === "open" || t.status === null);
   if (crmActiveFilter === "in_progress") return tasks.filter((t) => t.status === "in_progress");
   if (crmActiveFilter === "completed") return tasks.filter((t) => t.status === "completed");
-  if (crmActiveFilter === "overdue") return tasks.filter((t) => t.due_date && new Date(t.due_date) < now && t.status !== "completed");
+  if (crmActiveFilter === "overdue") return tasks.filter((t) => t.due_date && _rrD(t.due_date) < now && crmIsLive(t.status));
   return tasks;
 }
 
@@ -724,7 +736,7 @@ function crmRenderList(tasks) {
   const now = new Date();
   tbody.innerHTML = tasks.map((task) => {
     const leadName = crmContactName(task) || "—";
-    const isOverdue = task.due_date && new Date(task.due_date) < now && task.status !== "completed";
+    const isOverdue = task.due_date && _rrD(task.due_date) < now && crmIsLive(task.status);
     const priorityClass = { high: "status-pill-orange", urgent: "status-pill-red", normal: "" }[task.priority || "normal"] || "";
     return `
       <tr data-task-id="${crmEsc(task.id)}">
@@ -754,8 +766,8 @@ function crmRenderList(tasks) {
 }
 
 function crmBoardCardHtml(t) {
-  const due = t.due_date ? new Date(t.due_date) : null;
-  const overdue = due && t.status !== "completed" && due.getTime() < Date.now();
+  const due = t.due_date ? _rrD(t.due_date) : null;
+  const overdue = due && crmIsLive(t.status) && due.getTime() < Date.now();
   const dueStr = due ? due.toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
   const contact = crmContactName(t);
   const contactId = t.contact_id || (t.contacts && t.contacts.id) || "";
@@ -856,7 +868,7 @@ function crmRenderCalendar(tasks) {
   const tasksByDate = {};
   tasks.forEach((t) => {
     if (!t.due_date) return;
-    const k = new Date(t.due_date).toISOString().substring(0, 10);
+    const k = _rrD(t.due_date).toISOString().substring(0, 10);
     (tasksByDate[k] = tasksByDate[k] || []).push(t);
   });
 
@@ -1129,13 +1141,13 @@ function renderClickupSidebar(root) {
   if (!clickupTasksEnabled || !clickupTasks.length) return;
 
   const now = Date.now();
-  const overdue = clickupTasks.filter((t) => t.due_date && new Date(t.due_date).getTime() < now);
+  const overdue = clickupTasks.filter((t) => t.due_date && _rrD(t.due_date).getTime() < now);
   const noDue = clickupTasks.filter((t) => !t.due_date);
   if (!overdue.length && !noDue.length) return;
 
   const row = (t) => {
     const safeUrl = String(t.url || '').replace(/"/g, '&quot;');
-    const due = t.due_date ? new Date(t.due_date).toLocaleDateString('en-US') : '—';
+    const due = t.due_date ? _rrD(t.due_date).toLocaleDateString('en-US') : '—';
     const priColor = t.priority_label === 'high' ? '#ff5555' : '#ffb347';
     return `<a href="${safeUrl}" target="_blank" rel="noopener" class="list-item" style="display:flex;align-items:center;gap:10px;text-decoration:none;color:inherit;padding:8px 10px;border-left:2px solid ${priColor};">
       <span style="font-size:0.64rem;font-weight:700;text-transform:uppercase;color:${priColor};letter-spacing:0.5px;">TASK</span>

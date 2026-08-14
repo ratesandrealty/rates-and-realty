@@ -7045,7 +7045,11 @@ function renderTasks() {
   }
   el.innerHTML = tasksData.map(t => {
     const done = t.status === 'completed';
-    const overdue = t.due_date && !done && new Date(t.due_date) < new Date();
+    /* _rrD, not new Date(): tasks.due_date is `timestamp WITHOUT time zone` and
+       every producer writes UTC, so a bare parse reads it as local and shows it
+       7 hours late for the 198 rows written at 17:00Z.
+       `cancelled` is excluded too — it is finished work and cannot be late. */
+    const overdue = t.due_date && !done && t.status !== 'cancelled' && _rrD(t.due_date) < new Date();
     return `
       <div class="task-row">
         <button class="task-check ${done ? 'done' : ''}" onclick="toggleTask('${t.id}', ${done})" title="${done ? 'Mark open' : 'Mark done'}"></button>

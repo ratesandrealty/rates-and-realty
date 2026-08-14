@@ -1,6 +1,6 @@
 -- order_reminders_run(p_interval_days integer)
 -- language: plpgsql   SECURITY DEFINER
--- Captured 2026-08-06 (third-party order reminders).
+-- Captured 2026-08-14 (due date moved off midnight-today).
 
 CREATE OR REPLACE FUNCTION public.order_reminders_run(p_interval_days integer DEFAULT 2)
  RETURNS TABLE(order_id uuid, order_type text, task_id uuid, reason text)
@@ -10,8 +10,34 @@ CREATE OR REPLACE FUNCTION public.order_reminders_run(p_interval_days integer DE
 AS $function$
 declare
   r record; v_task uuid; v_title text; v_last timestamptz;
-  v_has_evidence boolean; v_note text;
+  v_has_evidence boolean; v_note text; v_due timestamp; v_day date;
 begin
+  /* ── THE DUE DATE, AND WHY IT IS NOT TODAY ───────────────────────────────
+   * This was `(now() at time zone 'America/Los_Angeles')::date` — midnight
+   * TODAY — so every reminder raised here was past due the moment it existed.
+   * 22 of the 28 born-overdue rows in `tasks` came from this line, 9 still
+   * open. A nudge built on that data alerts on tasks that were never late.
+   *
+   * NEXT BUSINESS DAY at 17:00 UTC (10:00 Pacific):
+   *   - next business day, not same-day-EOB: this only fires once an order has
+   *     already sat >= p_interval_days, so a same-evening due date is red
+   *     within hours, which is how it became noise.
+   *   - weekends skipped. loan-date-nudges (pg_cron 38) runs daily including
+   *     Saturday, so "tomorrow" on a Friday lands on a day nobody works.
+   *   - 17:00 UTC, not Pacific-local. tasks.due_date is `timestamp WITHOUT
+   *     time zone` and every other producer writes UTC into it — 198 of the
+   *     228 dated rows sit at 17:00Z from clickup-auto-create via the bridge.
+   *     This function was the one writer using a different convention, which
+   *     is why the column looked mixed.
+   *   - uniform across order types on purpose. Urgency is already carried by
+   *     `priority` below (voe/payoff = high); encoding it twice is how two
+   *     places drift, and per-kind SLAs would mean inventing numbers nobody
+   *     has stated.
+   * isodow: Mon=1 .. Sat=6, Sun=7. */
+  v_day := (now() at time zone 'UTC')::date + 1;
+  v_day := v_day + case extract(isodow from v_day) when 6 then 2 when 7 then 1 else 0 end;
+  v_due := v_day + time '17:00';
+
   for r in
     select o.id, o.order_type, o.status, o.contact_id, o.employer_name, o.label,
            o.hr_contact_email, o.acknowledged_at, o.notes, o.revision_note,
@@ -72,7 +98,7 @@ begin
                       related_table, related_id, created_at, updated_at)
     values (r.contact_id, r.contact_id, v_title,
             'Status is "' || coalesce(r.status,'unknown') || '". Chase the vendor, or mark the order received or not required to stop these reminders.',
-            (now() at time zone 'America/Los_Angeles')::date, 'open',
+            v_due, 'open',
             case when r.order_type in ('voe','payoff') then 'high' else 'normal' end,
             'loan_orders', r.id, now(), now())
     returning id into v_task;
