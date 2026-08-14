@@ -1,6 +1,6 @@
 -- va_daily_tasks()
 -- language: plpgsql   SECURITY DEFINER
--- Captured 2026-08-05.
+-- Captured 2026-08-14 (three-way assignee, UTC bucket, logged provenance).
 
 CREATE OR REPLACE FUNCTION public.va_daily_tasks()
  RETURNS TABLE(id uuid, title text, description text, status text, priority text, due_date timestamp without time zone, contact_id uuid, lead_id uuid, contact_name text, contact_phone text, assigned_by uuid, clickup_url text, related_table text, related_id uuid, bucket text, assignee_state text, provenance text, question_pending boolean)
@@ -49,25 +49,50 @@ begin
          nullif(trim(coalesce(c.first_name,'')||' '||coalesce(c.last_name,'')),'') as contact_name,
          case when current_app_role()='va' and not is_admin() then mask_phone(c.phone) else c.phone end as contact_phone,
          t.assigned_by, t.clickup_url, t.related_table, t.related_id,
+         /* BUCKETED IN UTC, because that is what the column holds. tasks.due_date
+            is `timestamp WITHOUT time zone` and every producer writes UTC into
+            it; this compared against the PACIFIC calendar date, which is a
+            different day for seven hours out of every twenty-four.
+            Those seven hours are 17:00-00:00 Pacific -- almost exactly the VA's
+            5pm-2am shift. A task due 17:00Z (10:00 PT) that she opens at 18:00
+            PT is eight hours late, and the Pacific comparison called it 'today'
+            for her entire working evening. Nothing re-buckets at midday, when
+            the two dates agree; everything re-buckets during her shift. */
          case when t.due_date is null then 'no_date'
-              when t.due_date::date < (now() at time zone 'America/Los_Angeles')::date then 'overdue'
-              when t.due_date::date = (now() at time zone 'America/Los_Angeles')::date then 'today'
+              when t.due_date::date < (now() at time zone 'UTC')::date then 'overdue'
+              when t.due_date::date = (now() at time zone 'UTC')::date then 'today'
               else 'upcoming' end as bucket,
-         case when t.assigned_to = auth.uid() then 'mine' else 'unassigned' end as assignee_state,
-         /* PROVENANCE: positive evidence of a PERSON, not absence of machinery.
-            The old rule was `clickup_url is null and related_table is null` ->
-            human, which no open task satisfied, so the "from Rene" pill was
-            unreachable for every one of them. Rene's manual tasks arrive THROUGH
-            ClickUp (15 of them: "Follow up with Anita", "Submit X loan to
-            lender"), so the clickup_url test labelled exactly the tasks it
-            existed to highlight as machine-made.
-            A person left a trace when there is a clickup_url (he wrote it in
-            ClickUp) or an assigned_by (he wrote it in the CRM). Machine sources
-            leave neither -- auto_followup_lead and loan_orders rows have no
-            clickup_url and no assigned_by. Defaulting the unknown case to 'auto'
-            keeps a future machine source from being announced as Rene. */
-         case when t.clickup_url is not null or t.assigned_by is not null
-              then 'human' else 'auto' end as provenance,
+         /* THREE-WAY, not two. This was
+              case when assigned_to = auth.uid() then 'mine' else 'unassigned' end
+            which calls a task assigned to SOMEBODY ELSE "unassigned". Harmless
+            while the only caller was the VA's own board; under an admin view it
+            labels every one of Aubrey's tasks Unassigned, and Unassigned is
+            meant to be a real state -- work nobody has taken -- not a synonym
+            for "not yours". */
+         case when t.assigned_to is null then 'unassigned'
+              when t.assigned_to = auth.uid() then 'mine'
+              else 'other' end as assignee_state,
+         /* PROVENANCE FROM THE LOG, not from a proxy.
+            The previous rule was `clickup_url is not null or assigned_by is not
+            null` -> human. Every automation-created task carries a clickup_url,
+            so it labelled 201 of 297 machine-made tasks as coming from Rene.
+            The comment here used to cite "Follow up with Anita" as one of his
+            manual tasks; clickup_automation_log records it as the `new_lead`
+            rule firing on 2026-08-05 07:08. Four of the five open tasks that
+            looked hand-written are that same rule.
+            clickup_automation_log.clickup_task_id is the positive record of a
+            machine having created the row, and related_table marks the two SQL
+            creators (order_reminders_run, surface_stale_leads).
+            KNOWN RESIDUAL, measured rather than assumed: two rate_lock_5d rows
+            from 2026-06-18 have no log entry carrying their task id, so they
+            still read 'human'. Both are completed and no OPEN task is affected;
+            739 of 740 log rows since then do record the id. Wrong on 2 rows
+            instead of 201, and the 2 are named rather than left to be found. */
+         case when t.related_table is not null
+                or (t.clickup_task_id is not null
+                    and exists (select 1 from clickup_automation_log l
+                                 where l.clickup_task_id = t.clickup_task_id))
+              then 'auto' else 'human' end as provenance,
          (coalesce(t.status,'open') = 'question') as question_pending
   from tasks t
   left join contacts c on c.id = t.contact_id
