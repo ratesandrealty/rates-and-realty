@@ -669,9 +669,18 @@ function crmEsc(s) {
 
 function crmIsDone(s) { return s === "completed"; }
 
+/* THE MIDDLE COLUMN HOLDS `pending`, NOT `in_progress`.
+   in_progress is not in tasks_status_allowed and never was — no migration ever
+   permitted it, and an insert is refused by the CHECK. So the column could
+   never hold a card, and dropping onto it wrote a value the database rejects:
+   the board reported "Move failed" rather than moving anything.
+   `pending` is the legal equivalent and already means this — va-tasks.html has
+   carried a "⏳ Pending / ↩ Un-park" toggle writing it for months. Mapping to it
+   makes the column work AND makes the two surfaces agree about what parked
+   means, instead of the dashboard having a private vocabulary. */
 function crmColKey(t) {
   if (t.status === "completed") return "done";
-  if (t.status === "in_progress") return "inprogress";
+  if (t.status === "pending") return "inprogress";
   return "todo";
 }
 
@@ -691,8 +700,13 @@ function crmContactName(t) {
 
 function crmFilterTasks(tasks) {
   const now = new Date();
-  if (crmActiveFilter === "open") return tasks.filter((t) => t.status === "open" || t.status === null);
-  if (crmActiveFilter === "in_progress") return tasks.filter((t) => t.status === "in_progress");
+  /* "Open" means OUTSTANDING, not literally status='open'. Tested as
+     `open || null` it dropped `pending` and `question` — so a VA parked task and
+     a task blocked on Rene appeared under no chip but "All". Questions
+     disappearing from every list is the specific failure this pass exists to
+     stop. */
+  if (crmActiveFilter === "open") return tasks.filter((t) => crmIsLive(t.status));
+  if (crmActiveFilter === "pending") return tasks.filter((t) => t.status === "pending");
   if (crmActiveFilter === "completed") return tasks.filter((t) => t.status === "completed");
   if (crmActiveFilter === "overdue") return tasks.filter((t) => t.due_date && _rrD(t.due_date) < now && crmIsLive(t.status));
   return tasks;
@@ -747,7 +761,7 @@ function crmRenderList(tasks) {
         <td style="font-size:0.82rem;${isOverdue ? "color:var(--red);" : "color:var(--muted);"}">${task.due_date ? formatDate(task.due_date) : "—"}${isOverdue ? " ⚠" : ""}</td>
         <td><span class="status-pill ${task.status === "completed" ? "status-pill-green" : isOverdue ? "status-pill-red" : ""}">${crmEsc(task.status || "open")}</span></td>
         <td>
-          ${task.status !== "completed" ? `<button class="btn btn-success btn-xs" data-complete-task="${crmEsc(task.id)}">Done</button>` : ""}
+          ${crmIsLive(task.status) ? `<button class="btn btn-success btn-xs" data-complete-task="${crmEsc(task.id)}">Done</button>` : ""}
         </td>
       </tr>
     `;
@@ -787,7 +801,7 @@ function crmRenderBoard(tasks) {
   if (!board) return;
   const groups = { todo: [], inprogress: [], done: [] };
   tasks.forEach((t) => groups[crmColKey(t)].push(t));
-  const titles = { todo: "To Do", inprogress: "In Progress", done: "Complete" };
+  const titles = { todo: "To Do", inprogress: "Pending", done: "Complete" };
   board.innerHTML = ["todo", "inprogress", "done"].map((col) => `
     <div class="board-col" data-col="${col}">
       <div class="board-col-header">
@@ -827,7 +841,7 @@ function crmAttachDragHandlers() {
       if (!draggingId || targetCol === draggingFromCol) return;
       const card = document.querySelector(`[data-target="cm-board"] .board-card[data-task-id="${CSS.escape(draggingId)}"]`);
       if (card) col.appendChild(card);
-      const newStatus = targetCol === "done" ? "completed" : targetCol === "inprogress" ? "in_progress" : "open";
+      const newStatus = targetCol === "done" ? "completed" : targetCol === "inprogress" ? "pending" : "open";
       try {
         await updateTaskStatus(draggingId, newStatus);
         allTasks = await getAllTasks();
