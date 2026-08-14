@@ -61,6 +61,16 @@
   .opts{display:flex;flex-direction:column;gap:10px}
   .opt{background:var(--panel-2);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
   .opt.rec{border-color:rgba(74,222,128,0.4);box-shadow:0 0 0 1px rgba(74,222,128,0.15) inset}
+  /* Selectable option cards. `.sel` is the CLICKED option and is visually
+     distinct from `.rec` (the recommended one) — they are different claims and
+     start out on the same card, so one style for both would hide which is
+     which the moment the reader picks a different option. */
+  .opt.pick{cursor:pointer;transition:border-color .12s,box-shadow .12s}
+  .opt.pick:hover{border-color:rgba(201,168,76,0.45)}
+  .opt.pick:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+  .opt.sel{border-color:var(--gold);box-shadow:0 0 0 1px rgba(201,168,76,0.35) inset}
+  .opt-pick-hint{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:8px}
+  .opt.sel .opt-pick-hint{color:var(--gold)}
   .opt-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
   .opt-name{font-size:.95rem;font-weight:800}
   .opt-rate{font-size:1.35rem;font-weight:900;color:var(--gold);font-variant-numeric:tabular-nums}
@@ -407,6 +417,60 @@ function feeDetails(inner){
     return '<details class="fee-details"><summary>View fee details</summary>'+inner+'</details>';
 }
 
+/* ── ESTIMATED CLOSING COSTS, FOR ONE SCENARIO ────────────────────────────
+ * Pulled out of renderRate so the first paint and every subsequent click go
+ * through the SAME code. The alternative — build it inline once, then patch
+ * innerHTML somewhere else on click — is how two renderings of one fact drift,
+ * which this file has already been bitten by twice (two loan-limit lines that
+ * disagreed about a blank county; three copies of the Places parse).
+ *
+ * Note what is and is not gated: the SUMMARY rows always render, and only the
+ * itemisation goes through feeDetails(). So on a link with fee_schedule off,
+ * switching options still moves Total Loan Costs / Cash to Close — the numbers
+ * a borrower is comparing — while the fee-by-fee list stays hidden. A control
+ * that appears to do nothing because the only thing it changed was suppressed
+ * is the same defect class as a checkbox writing a value no renderer reads. */
+function closingCostsBody(inp, sc, r){
+    return '<div class="rows">'
+      + row('Total Loan Costs', fmt(r.totalLoanCosts))
+      + row('Total Other Costs', fmt(r.totalOther))
+      + row('Total Closing Costs', fmt(r.totalClosing), 'sub')
+      + ((sc.lenderCredits && (window.__SEC||{}).lender_credits)?row('Lender Credits', fmt(-r.lenderCreditLine)):'')
+      + row('Down Payment', fmt(inp.downPayment))
+      + row('Estimated Cash to Close', fmt(r.cashToClose), 'total')
+      +'</div>'
+      + feeDetails(feeBreakdown(r, sc, inp));
+}
+
+/* Click handler for the option cards. Recomputes rather than caching:
+   calcScenario is pure, every scenario's fee data is already in the payload,
+   and a cache would be a third place for the same number to live. */
+function selectRateOption(i){
+    var ctx = window.__rateCtx;
+    if(!ctx || !ctx.scenarios[i]) return;
+    ctx.selected = i;
+    var sc = ctx.scenarios[i], r = calcScenario(ctx.inp, sc);
+
+    var body = document.getElementById('ccBody');
+    if(body) body.innerHTML = closingCostsBody(ctx.inp, sc, r);
+
+    /* Say WHICH option the costs belong to. Without this the section silently
+       changes its numbers and the reader has no way to know why. */
+    var lbl = document.getElementById('ccFor');
+    if(lbl) lbl.textContent = ctx.scenarios.length>1
+      ? ((sc.label||('Option '+(sc.id||(i+1)))) + ' · ' + _helocRate(sc.rate) + '%')
+      : '';
+
+    var cards = document.querySelectorAll('.opt[data-opt]');
+    for(var k=0;k<cards.length;k++){
+        var on = String(k)===String(i);
+        cards[k].classList.toggle('sel', on);
+        cards[k].setAttribute('aria-pressed', on?'true':'false');
+        var hint = cards[k].querySelector('.opt-pick-hint');
+        if(hint) hint.textContent = on ? '✓ Showing this option’s closing costs' : 'Tap to see this option’s closing costs';
+    }
+}
+
 // ── RATE / SINGLE render ──
 function renderRate(snap){
     const data=snap.data||{}, c=data.common||{}, mode=data.mode||'rate';
@@ -460,7 +524,10 @@ function renderRate(snap){
         scenarios.forEach((s,i)=>{
             const r=calcScenario(inp,s);
             const pts = s.points>0 ? (s.points+' pts') : (s.points<0 ? 'credit' : 'no points');
-            h+='<div class="opt'+(i===recIdx?' rec':'')+'">'
+            h+='<div class="opt pick'+(i===recIdx?' rec':'')+(i===recIdx?' sel':'')+'"'
+              +' data-opt="'+i+'" role="button" tabindex="0" aria-pressed="'+(i===recIdx?'true':'false')+'"'
+              +' onclick="selectRateOption('+i+')"'
+              +' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();selectRateOption('+i+');}">'
               +'<div class="opt-head"><span class="opt-name">'+esc(s.label||('Option '+(s.id||''))) +(i===recIdx?' <span class="badge rec">Recommended</span>':'')+'</span><span class="opt-rate">'+esc(_helocRate(s.rate))+'%</span></div>'
               +'<div class="opt-meta">'
                 +'<div class="m"><div class="k">Monthly</div><div class="v">'+fmt(r.totalMonthly,0)+'</div></div>'
@@ -468,22 +535,24 @@ function renderRate(snap){
                 +'<div class="m"><div class="k">Cash to Close</div><div class="v">'+fmt(r.cashToClose,0)+'</div></div>'
               +'</div>'
               + feeDetails(feeBreakdown(r, s, inp))
+              +'<div class="opt-pick-hint">'+(i===recIdx?'✓ Showing this option’s closing costs':'Tap to see this option’s closing costs')+'</div>'
               +'</div>';
         });
         h+='</div></div>';
     }
 
-    // Closing costs (recommended) — summary + itemized detail
-    h+='<div class="sec"><div class="sec-title">Estimated Closing Costs</div><div class="card"><div class="rows">'
-      + row('Total Loan Costs', fmt(recR.totalLoanCosts))
-      + row('Total Other Costs', fmt(recR.totalOther))
-      + row('Total Closing Costs', fmt(recR.totalClosing), 'sub')
-      + ((rec.lenderCredits && (window.__SEC||{}).lender_credits)?row('Lender Credits', fmt(-recR.lenderCreditLine)):'')
-      + row('Down Payment', fmt(inp.downPayment))
-      + row('Estimated Cash to Close', fmt(recR.cashToClose), 'total')
-      +'</div>'
-      + feeDetails(feeBreakdown(recR, rec, inp))
-      +'</div></div>';
+    /* Closing costs — FOLLOWS THE SELECTED OPTION, not recIdx. Opens on the
+       recommended one, which is what it always showed. The context the click
+       handler needs is stashed rather than recomputed from the DOM: reading
+       numbers back out of rendered HTML is how a formatter change becomes a
+       pricing change. */
+    window.__rateCtx = { inp: inp, scenarios: scenarios, selected: recIdx };
+    h+='<div class="sec"><div class="sec-title">Estimated Closing Costs'
+      + (scenarios.length>1 ? ' <span id="ccFor" class="opt-pick-hint" style="margin:0 0 0 6px;display:inline;text-transform:none;letter-spacing:0;">'
+          + esc((rec.label||('Option '+(rec.id||''))) + ' · ' + _helocRate(rec.rate) + '%') + '</span>' : '')
+      +'</div><div class="card"><div id="ccBody">'
+      + closingCostsBody(inp, rec, recR)
+      +'</div></div></div>';
 
     /* THE BRIDGE ADDENDUM, last and additive. Rebuilds one result per scenario
        purely to read totalMonthly for the "carrying both" column — calcScenario
