@@ -681,7 +681,43 @@ function crmIsDone(s) { return s === "completed"; }
 function crmColKey(t) {
   if (t.status === "completed") return "done";
   if (t.status === "pending") return "inprogress";
+  /* QUESTION GETS ITS OWN COLUMN. It used to fall through to To Do, where a task
+     Aubrey is BLOCKED on — waiting for an answer from Rene — was indistinguishable
+     from work she could pick up right now. That is the highest-signal state on
+     this board and it was the one state with no representation at all. */
+  if (t.status === "question") return "blocked";
   return "todo";
+}
+
+/* WHY A DROP IS REFUSED, or null when it is allowed. ONE predicate, so the
+   cursor shown on dragover and the refusal on drop can never disagree — a
+   column that looks droppable and then throws is the dead-button defect.
+
+   Three rules, each from something the database will actually refuse or
+   something that silently destroys meaning:
+     cancelled — terminal. Dragging it to Complete turned called-off work into
+                 completed work with no trace. Not draggable anywhere.
+     blocked   — `question` is set by ASKING a question (task_note_add), not by
+                 dragging. A card dropped here would sit in Blocked with no
+                 question attached, which reads as a broken VA panel.
+     reopen    — fn_tasks_block_reopen refuses completed -> anything for the
+                 va/agent roles. dashboard/admin.html is Aubrey's daily
+                 workspace, so for her that drag ALWAYS threw. */
+function crmDropRefusal(fromStatus, targetCol) {
+  if (fromStatus === "cancelled") {
+    return "Cancelled tasks cannot be moved. Reopen it from the task list if it is live again.";
+  }
+  if (targetCol === "blocked") {
+    return "A task becomes a question by asking one on the task, not by moving it here.";
+  }
+  if (fromStatus === "completed" && targetCol !== "done") {
+    var role = "";
+    try { role = sessionStorage.getItem("rnr_app_role") || ""; } catch (_) { role = ""; }
+    if (role === "va" || role === "agent") {
+      return "Reopening a completed task is restricted to admins.";
+    }
+  }
+  return null;
 }
 
 function crmPriClass(p) {
@@ -785,10 +821,20 @@ function crmBoardCardHtml(t) {
   const dueStr = due ? due.toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
   const contact = crmContactName(t);
   const contactId = t.contact_id || (t.contacts && t.contacts.id) || "";
-  return `<div class="board-card" draggable="true" data-task-id="${crmEsc(t.id)}" data-current-col="${crmColKey(t)}">
+  /* The card carries its real STATUS, not just its column. crmDropRefusal has
+     to reason about cancelled, which shares a column with nothing and must not
+     be inferred back from where the card happens to sit. */
+  return `<div class="board-card" draggable="${t.status === "cancelled" ? "false" : "true"}" data-task-id="${crmEsc(t.id)}" data-current-col="${crmColKey(t)}" data-status="${crmEsc(t.status || "open")}">
     <input type="checkbox" class="ct-select-box board-card-select" data-action="cm-select-row" data-task-id="${crmEsc(t.id)}" aria-label="Select task" />
     <div class="board-card-title">${crmEsc(t.title || "")}</div>
     <div class="board-card-meta">
+      ${/* SAY THE STATUS when it is not plain open. `cancelled` only reaches the
+            board under the "All" chip, and it landed in To Do looking exactly
+            like live work — which is how dragging it to Complete could turn
+            called-off work into completed work. The badge, the 55% opacity and
+            draggable="false" are three independent reasons it can no longer be
+            mistaken for something to pick up. */""}
+      ${t.status && t.status !== "open" ? `<span class="board-card-status is-${crmEsc(t.status)}">${crmEsc(t.status)}</span>` : ""}
       ${t.priority ? `<span class="board-card-pri ${crmPriClass(t.priority)}">${crmEsc(t.priority)}</span>` : ""}
       ${dueStr ? `<span class="board-card-due${overdue ? " is-overdue" : ""}">${overdue ? "⚠ " : ""}${crmEsc(dueStr)}</span>` : ""}
     </div>
@@ -799,10 +845,10 @@ function crmBoardCardHtml(t) {
 function crmRenderBoard(tasks) {
   const board = document.querySelector('[data-target="cm-board"]');
   if (!board) return;
-  const groups = { todo: [], inprogress: [], done: [] };
+  const groups = { todo: [], inprogress: [], blocked: [], done: [] };
   tasks.forEach((t) => groups[crmColKey(t)].push(t));
-  const titles = { todo: "To Do", inprogress: "Pending", done: "Complete" };
-  board.innerHTML = ["todo", "inprogress", "done"].map((col) => `
+  const titles = { todo: "To Do", inprogress: "Pending", blocked: "Blocked", done: "Complete" };
+  board.innerHTML = ["todo", "inprogress", "blocked", "done"].map((col) => `
     <div class="board-col" data-col="${col}">
       <div class="board-col-header">
         <span class="board-col-icon"></span>
@@ -821,10 +867,15 @@ function crmRenderBoard(tasks) {
 function crmAttachDragHandlers() {
   let draggingId = null;
   let draggingFromCol = null;
-  document.querySelectorAll('[data-target="cm-board"] .board-card[draggable]').forEach((card) => {
+  let draggingFromStatus = null;
+  /* [draggable="true"] specifically — a cancelled card renders draggable="false"
+     and must not pick up a dragstart handler at all. The old selector was
+     [draggable], which matches the attribute whatever its value. */
+  document.querySelectorAll('[data-target="cm-board"] .board-card[draggable="true"]').forEach((card) => {
     card.addEventListener("dragstart", (e) => {
       draggingId = card.dataset.taskId;
       draggingFromCol = card.dataset.currentCol;
+      draggingFromStatus = card.dataset.status || "open";
       card.classList.add("is-dragging");
       e.dataTransfer.effectAllowed = "move";
       try { e.dataTransfer.setData("text/plain", draggingId); } catch (err) {}
@@ -832,13 +883,26 @@ function crmAttachDragHandlers() {
     card.addEventListener("dragend", () => card.classList.remove("is-dragging"));
   });
   document.querySelectorAll('[data-target="cm-board"] [data-drop-col]').forEach((col) => {
-    col.addEventListener("dragover", (e) => { e.preventDefault(); col.classList.add("is-drop-target"); });
-    col.addEventListener("dragleave", () => col.classList.remove("is-drop-target"));
+    /* THE CURSOR AND THE DROP READ THE SAME PREDICATE. dragover used to
+       preventDefault() unconditionally, so every column advertised itself as a
+       valid target and the refusal only arrived as an alert afterwards. A
+       refused column now shows not-allowed and never accepts the drop. */
+    col.addEventListener("dragover", (e) => {
+      const refusal = crmDropRefusal(draggingFromStatus, col.dataset.dropCol);
+      if (refusal) { col.classList.add("is-drop-blocked"); e.dataTransfer.dropEffect = "none"; return; }
+      e.preventDefault();
+      col.classList.add("is-drop-target");
+    });
+    col.addEventListener("dragleave", () => col.classList.remove("is-drop-target", "is-drop-blocked"));
     col.addEventListener("drop", async (e) => {
       e.preventDefault();
-      col.classList.remove("is-drop-target");
+      col.classList.remove("is-drop-target", "is-drop-blocked");
       const targetCol = col.dataset.dropCol;
       if (!draggingId || targetCol === draggingFromCol) return;
+      /* Belt and braces: dragover already refused, but a browser that delivers
+         the drop anyway must not write. Says WHY rather than failing silently. */
+      const refusal = crmDropRefusal(draggingFromStatus, targetCol);
+      if (refusal) { alert(refusal); renderAllTasksTable(allTasks); return; }
       const card = document.querySelector(`[data-target="cm-board"] .board-card[data-task-id="${CSS.escape(draggingId)}"]`);
       if (card) col.appendChild(card);
       const newStatus = targetCol === "done" ? "completed" : targetCol === "inprogress" ? "pending" : "open";
