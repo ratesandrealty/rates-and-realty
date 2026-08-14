@@ -979,6 +979,31 @@ anything that looks wrong.
 **Write cron schedules in prose inside SQL comments** ("a five-minute cron"), or
 put them in a `--` line comment where `*/` is inert.
 
+### A DevTools "Issues" capture without a forced layout under-reports by 30×
+
+Counting `Audits.issueAdded` over CDP looks like a complete measurement and is
+not. Same URL, same browser, same wait, twice:
+
+```
+Audits.enable + Page.enable only ............................   7 issues
+    + Emulation.setDeviceMetricsOverride(1440x900) ..........  207 issues
+```
+
+The 200 missing ones are `FormLabelHasNeitherForNorNestedInputError` — accessibility
+issues that only exist once the layout and accessibility tree have been built.
+Without a viewport override the headless default never lays the page out far
+enough to produce them, and the capture reports a clean-looking 7.
+
+**Force a viewport before trusting an Issues count.** And note the shape of the
+mistake: a harness that reports FEWER problems than exist reads as good news,
+which is why it survives. This is the same family as the `#loanAmount` readonly
+break-test that passed every time.
+
+Related: an Audits issue's TIMESTAMP is not a reliable document attribution
+across a redirect. The CSP violation in the lead-detail audit was attributed to
+lead-detail by arrival time and actually belonged to the login page it redirected
+to; `Log.entryAdded` carries the document URL and got it right.
+
 ### Rationale written ABOVE a `CREATE` does not survive
 
 `tools/recapture-db-functions.mjs` pulls `pg_get_functiondef` out of Postgres,
