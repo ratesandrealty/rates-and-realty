@@ -940,6 +940,59 @@ it has real data. `admin/va-people.html` is built on it.
 So: **"assigned" is a word on a form. "shared" is the permission.** When a request
 says "assigned to the VA", it almost certainly means shared.
 
+## Three things that keep biting in the Postgres function layer
+
+Each of these has now caught a second author after the first one wrote a warning
+about it. They are cheap to avoid and expensive to diagnose, because two of the
+three fail at RUNTIME with a message that points somewhere else.
+
+### `auth.users.email` is `varchar(255)`, not `text`
+
+A `RETURNS TABLE(... email text ...)` that selects `u.email` fails with
+
+```
+structure of query does not match function result type
+DETAIL: Returned type character varying(255) does not match expected type text in column 12
+```
+
+and the error names the COLUMN NUMBER, not the column, so on a 21-column return
+you are counting commas to find it. `va_daily_tasks` already carries a comment
+about this exact class of failure — for `due_date` being `timestamp` rather than
+`timestamptz` — and `task_list` still hit it on `email` the next time somebody
+wrote a returns-table over `tasks`.
+
+**Cast it: `u.email::text`.** The same applies to any `auth` schema column; that
+schema is GoTrue's and its types are not ours to assume.
+
+### `*/5` inside a `/* */` comment closes the comment
+
+Writing a cron expression in a block comment —
+
+```sql
+/* Step 4 replaces this with an outbox a */5 cron drains. */
+```
+
+— terminates the comment at `*/`, and the rest of the sentence becomes SQL. The
+migration fails at a syntax error whose caret points at `5`, several lines from
+anything that looks wrong.
+
+**Write cron schedules in prose inside SQL comments** ("a five-minute cron"), or
+put them in a `--` line comment where `*/` is inert.
+
+### Rationale written ABOVE a `CREATE` does not survive
+
+`tools/recapture-db-functions.mjs` pulls `pg_get_functiondef` out of Postgres,
+which returns the `CREATE` statement and nothing else. Any comment block written
+before it — the usual place to explain a change in a migration — is silently
+dropped the next time the function is recaptured.
+
+This is worst for functions whose whole point is non-obvious. `_task_clickup_sync`
+was captured back as a bare no-op with no explanation of why a function that does
+nothing exists, which is exactly the shape somebody deletes while tidying up.
+
+**Put the reasoning INSIDE the function body**, after `AS $function$`. If it
+matters enough to write down, it matters enough to survive a recapture.
+
 ## Probes and tests never touch a borrower's things
 
 **A probe, health check, or test fixture must never create, modify, or delete
