@@ -106,8 +106,20 @@
     setTimeout(function () { el.style.borderColor = bc; el.style.background = bg; }, 1200);
   }
 
+  /* COUNTY IS `administrative_area_level_2`, and capturing it here is the whole
+     point of this function existing in one place.
+     Two other copies of this parse used to live in admin/lead-detail.html and
+     BOTH captured county; this one, the shared module, was the only one that
+     dropped it — and it is the one the Subject Property field uses. So the fee
+     sheet fell back to guessing a county from a 3-digit ZIP prefix while Google
+     had already told us the answer on the same keystroke.
+
+     A ZIP3 prefix cannot express county (ZIP3 areas straddle county lines) and
+     every entry added to that table is another chance to capture a split
+     prefix — 935 was added for Lancaster and now resolves California City, which
+     is KERN, to Los Angeles. Captured beats inferred, always. */
   function parts(place) {
-    var num = '', route = '', city = '', state = '', zip = '';
+    var num = '', route = '', city = '', state = '', zip = '', county = '';
     (place.address_components || []).forEach(function (c) {
       var t = c.types;
       if (t.indexOf('street_number') > -1) num = c.long_name;
@@ -116,8 +128,73 @@
       if (t.indexOf('sublocality_level_1') > -1 && !city) city = c.long_name;
       if (t.indexOf('administrative_area_level_1') > -1) state = c.short_name;
       if (t.indexOf('postal_code') > -1) zip = c.long_name;
+      /* long_name is "Los Angeles County"; short_name is often the same string,
+         so the suffix is stripped rather than avoided. Case-insensitive and
+         anchored so a place genuinely called "…County" keeps its name. */
+      if (t.indexOf('administrative_area_level_2') > -1) county = (c.long_name || '').replace(/\s+County$/i, '');
     });
-    return { street: num + (route ? ' ' + route : ''), city: city, state: state, zip: zip };
+    return {
+      street: num + (route ? ' ' + route : ''),
+      city: city, state: state, zip: zip, county: county,
+      /* A property address needs a house number and a ZIP. A city-level pick
+         ("Santa Clarita, CA, USA") resolves fine and has neither — it is a real
+         place, just not a property, and the fee sheet cannot price it. */
+      isProperty: !!(num && zip),
+    };
+  }
+
+  /* ── THE EARLY RETURN THAT ATE THE ZIP ────────────────────────────────────
+   * This used to be `if (!place.address_components) return;` — in BOTH copies.
+   * That reads as harmless and is not, because by the time place_changed fires
+   * Google has ALREADY written the prediction's description into the input:
+   *
+   *     "43636 Devyn Ln, Lancaster, CA, USA"     <- description. No ZIP.
+   *     "43636 Devyn Ln, Lancaster, CA 93534"    <- formatted_address. Has one.
+   *
+   * Returning leaves the description sitting in the box, and the autosave then
+   * persists it as though it were a resolved address. Measured across the 48
+   * stored property addresses: all 18 that came from autocomplete-without-
+   * details are ZIP-less, and all 12 that did resolve carry a ZIP. There is no
+   * row in between. The ZIP was never dropped — it was never fetched.
+   *
+   * So: ask for the details explicitly instead of giving up. If that also fails
+   * the value is reported UNRESOLVED to the caller rather than silently kept. */
+  function resolve(ac, input, cb) {
+    var place = ac.getPlace();
+    if (place && place.address_components) return cb(place, null);
+
+    var id = place && (place.place_id || place.placeId);
+    if (!id) return cb(null, 'no suggestion was selected');
+
+    try {
+      var svc = new w.google.maps.places.PlacesService(document.createElement('div'));
+      svc.getDetails({ placeId: id, fields: ['address_components', 'formatted_address'] }, function (res, status) {
+        if (status === w.google.maps.places.PlacesServiceStatus.OK && res && res.address_components) return cb(res, null);
+        cb(null, 'Google returned no details for that suggestion (' + status + ')');
+      });
+    } catch (e) {
+      cb(null, 'details lookup failed: ' + (e && e.message));
+    }
+  }
+
+  /* An unresolved value must be VISIBLE, not just absent from a callback. The
+     input is stamped so persistence paths can refuse it, and the reason is shown
+     next to the field — a silent failure here is what put a city name in a
+     borrower's property field and a guessed county on their loan estimate. */
+  function markResolution(el, ok, why) {
+    if (!el) return;
+    el.dataset.rrAddrResolved = ok ? '1' : '0';
+    var noteId = (el.id || 'rr') + '__addrNote';
+    var note = document.getElementById(noteId);
+    if (ok) { if (note) note.remove(); el.style.borderColor = ''; return; }
+    if (!note) {
+      note = document.createElement('div');
+      note.id = noteId;
+      note.style.cssText = 'font-size:11px;line-height:1.35;color:#e0a03a;margin-top:4px;';
+      if (el.parentNode) el.parentNode.insertBefore(note, el.nextSibling);
+    }
+    note.textContent = '⚠ Address not confirmed — ' + why + '. Pick a suggestion from the list, or type the full address including ZIP.';
+    el.style.borderColor = '#e0a03a';
   }
 
   /* Fire the events a framework or an autosave handler would expect from typing.
@@ -139,7 +216,9 @@
     });
   }
 
-  /* SPLIT: street/city/state/zip across four inputs.
+  /* SPLIT: street/city/state/zip across four inputs, plus opts.countyId for a
+     fifth. County is opt-in by id rather than a positional argument so the two
+     existing 4-argument callers keep working unchanged.
      opts.onFill runs after a selection (the portal uses it for updateAppProgress). */
   function attachSplit(streetId, cityId, stateId, zipId, opts) {
     opts = opts || {};
@@ -148,18 +227,25 @@
     _bound[streetId] = true;
     return load().then(function () {
       styleOnce();
-      var ac = autocompleteOn(input, ['address_components', 'formatted_address']);
+      var ac = autocompleteOn(input, ['address_components', 'formatted_address', 'place_id']);
       ac.addListener('place_changed', function () {
-        var place = ac.getPlace();
-        if (!place || !place.address_components) return;   // free text, left alone
-        var p = parts(place);
-        input.value = p.street; flash(input); notify(input);
-        var set = function (id, val) {
-          var el = id && document.getElementById(id);
-          if (el && val) { el.value = val; flash(el); notify(el); }
-        };
-        set(cityId, p.city); set(stateId, p.state); set(zipId, p.zip);
-        if (typeof opts.onFill === 'function') { try { opts.onFill(p); } catch (_) {} }
+        resolve(ac, input, function (place, why) {
+          if (!place) {
+            markResolution(input, false, why);
+            if (typeof opts.onUnresolved === 'function') { try { opts.onUnresolved(why, input); } catch (_) {} }
+            return;
+          }
+          var p = parts(place);
+          markResolution(input, p.isProperty, 'that suggestion is a place, not a property address');
+          input.value = p.street; flash(input); notify(input);
+          var set = function (id, val) {
+            var el = id && document.getElementById(id);
+            if (el && val) { el.value = val; flash(el); notify(el); }
+          };
+          set(cityId, p.city); set(stateId, p.state); set(zipId, p.zip);
+          set(opts.countyId, p.county);
+          if (typeof opts.onFill === 'function') { try { opts.onFill(p); } catch (_) {} }
+        });
       });
       return ac;
     }).catch(function (e) {
@@ -181,20 +267,28 @@
     _bound[inputId] = true;
     return load().then(function () {
       styleOnce();
-      var ac = autocompleteOn(input, ['address_components', 'formatted_address']);
+      var ac = autocompleteOn(input, ['address_components', 'formatted_address', 'place_id']);
       ac.addListener('place_changed', function () {
-        var place = ac.getPlace();
-        if (!place) return;
-        var val = place.formatted_address || '';
-        if (!val && place.address_components) {
+        resolve(ac, input, function (place, why) {
+          if (!place) {
+            /* The description Google auto-filled is still in the box. It is left
+               there — deleting what somebody just picked is worse — but it is
+               STAMPED unresolved and the reason is on screen, so the autosave can
+               refuse it instead of storing a city name as a property address. */
+            markResolution(input, false, why);
+            if (typeof opts.onUnresolved === 'function') { try { opts.onUnresolved(why, input); } catch (_) {} }
+            return;
+          }
           var p = parts(place);
-          val = [p.street, p.city, [p.state, p.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
-        }
-        if (!val) return;
-        // Google appends ", USA" to US formatted_address; the loan file does not want it.
-        input.value = val.replace(/,\s*USA$/, '');
-        flash(input); notify(input);
-        if (typeof opts.onFill === 'function') { try { opts.onFill(input.value, place); } catch (_) {} }
+          var val = place.formatted_address
+            || [p.street, p.city, [p.state, p.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+          if (!val) { markResolution(input, false, 'Google returned an empty address'); return; }
+          // Google appends ", USA" to US formatted_address; the loan file does not want it.
+          input.value = val.replace(/,\s*USA$/, '');
+          flash(input); notify(input);
+          markResolution(input, p.isProperty, 'that suggestion is a place, not a property address');
+          if (typeof opts.onFill === 'function') { try { opts.onFill(input.value, place, p); } catch (_) {} }
+        });
       });
       return ac;
     }).catch(function (e) {
@@ -204,5 +298,14 @@
     });
   }
 
-  w.RRPlaces = { load: load, attachSplit: attachSplit, attachCombined: attachCombined, hasKey: function () { return !!key(); } };
+  /* `parts` and `isResolved` are exported so the callers that used to carry
+     their own copy of this parse can delegate instead of drifting. That is the
+     entire premise of this file; two of the three copies already disagreed about
+     whether county was worth capturing. */
+  w.RRPlaces = {
+    load: load, attachSplit: attachSplit, attachCombined: attachCombined,
+    parts: parts,
+    isResolved: function (el) { return !!(el && el.dataset && el.dataset.rrAddrResolved === '1'); },
+    hasKey: function () { return !!key(); },
+  };
 })(window);

@@ -1,0 +1,97 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>places-consolidation fixture</title>
+<!-- FIXTURE, NOT A PAGE. It stands in for admin/lead-detail.html so the Places
+     wiring can be exercised without a Google key (which is referrer-restricted
+     to the live domain) and without an admin session.
+
+     What it CAN prove: how many Autocomplete widgets get bound to one input,
+     how many Place Details fetches one selection costs, and what happens when a
+     selection arrives with no address_components — which is the bug that stored
+     "43636 Devyn Ln, Lancaster, CA, USA" with no ZIP.
+
+     What it CANNOT prove: that Google actually returns administrative_area_level_2
+     for a given address. That needs the live key. -->
+<body>
+  <input id="f-property" type="text">
+  <input id="home-street"><input id="home-city"><input id="home-state"><input id="home-zip"><input id="home-county">
+  <div id="log"></div>
+<script>
+window.APP_CONFIG = { GOOGLE_MAPS_API_KEY: 'fixture-key' };
+
+/* ── instrumented google.maps.places ──────────────────────────────────── */
+window.__metrics = { autocompleteConstructed: 0, detailsFetched: 0, byInput: {} };
+const _listeners = [];
+window.google = { maps: { places: {
+  PlacesServiceStatus: { OK: 'OK', ZERO_RESULTS: 'ZERO_RESULTS' },
+  Autocomplete: function (input, opts) {
+    window.__metrics.autocompleteConstructed++;
+    const k = input.id || '(anonymous)';
+    window.__metrics.byInput[k] = (window.__metrics.byInput[k] || 0) + 1;
+    this._input = input; this._opts = opts; this._place = null;
+    this.addListener = (evt, fn) => { if (evt === 'place_changed') _listeners.push({ ac: this, fn }); };
+    this.getPlace = () => this._place;
+  },
+  PlacesService: function () {
+    this.getDetails = (req, cb) => {
+      window.__metrics.detailsFetched++;
+      const res = window.__nextDetails;
+      setTimeout(() => cb(res || null, res ? 'OK' : 'ZERO_RESULTS'), 0);
+    };
+  },
+}}};
+
+/* Google's widget writes the prediction DESCRIPTION into the input the moment a
+   suggestion is chosen, before place_changed fires. That is the behaviour the
+   whole bug rests on, so the fixture reproduces it. */
+window.__select = function (inputId, description, place, details) {
+  const el = document.getElementById(inputId);
+  el.value = description;                     // <- the widget's own auto-fill
+  window.__nextDetails = details || null;
+  _listeners.filter(l => l.ac._input.id === inputId).forEach(l => { l.ac._place = place; l.fn(); });
+};
+
+const COMPONENTS_LANCASTER = [
+  { types: ['street_number'], long_name: '43636', short_name: '43636' },
+  { types: ['route'], long_name: 'Devyn Lane', short_name: 'Devyn Ln' },
+  { types: ['locality'], long_name: 'Lancaster', short_name: 'Lancaster' },
+  { types: ['administrative_area_level_2'], long_name: 'Los Angeles County', short_name: 'Los Angeles County' },
+  { types: ['administrative_area_level_1'], long_name: 'California', short_name: 'CA' },
+  { types: ['postal_code'], long_name: '93534', short_name: '93534' },
+];
+const COMPONENTS_CALCITY = [
+  { types: ['street_number'], long_name: '8560', short_name: '8560' },
+  { types: ['route'], long_name: 'Eucalyptus Avenue', short_name: 'Eucalyptus Ave' },
+  { types: ['locality'], long_name: 'California City', short_name: 'California City' },
+  { types: ['administrative_area_level_2'], long_name: 'Kern County', short_name: 'Kern County' },
+  { types: ['administrative_area_level_1'], long_name: 'California', short_name: 'CA' },
+  { types: ['postal_code'], long_name: '93505', short_name: '93505' },
+];
+/* A city-level pick. Real place, real county, NO street number and NO postal
+   code — "Santa Clarita, CA, USA" is the shape that got stored as a property. */
+const COMPONENTS_SANTA_CLARITA = [
+  { types: ['locality'], long_name: 'Santa Clarita', short_name: 'Santa Clarita' },
+  { types: ['administrative_area_level_2'], long_name: 'Los Angeles County', short_name: 'Los Angeles County' },
+  { types: ['administrative_area_level_1'], long_name: 'California', short_name: 'CA' },
+];
+window.__F = {
+  lancaster: { components: COMPONENTS_LANCASTER, formatted: '43636 Devyn Ln, Lancaster, CA 93534, USA' },
+  calcity:   { components: COMPONENTS_CALCITY,   formatted: '8560 Eucalyptus Ave, California City, CA 93505, USA' },
+  santaClarita: { components: COMPONENTS_SANTA_CLARITA, formatted: 'Santa Clarita, CA, USA' },
+};
+window.__captured = [];
+</script>
+<!-- RELATIVE, not /admin/js/…. render-check loads fixtures as file:// URLs, where
+     a root-absolute src resolves to file:///C:/admin/js/… and simply 404s — the
+     module never loads, RRPlaces is undefined, and the spec fails on a path bug
+     rather than on anything about Places. Same form as loom-pill.html. -->
+<script src="../../admin/js/places-autocomplete.js"></script>
+<script>
+/* The single binding lead-detail now uses. */
+window.RRPlaces.attachCombined('f-property', {
+  onFill: function (value, place, p) { window.__captured.push({ event: 'fill', value: value, parts: p }); },
+  onUnresolved: function (why) { window.__captured.push({ event: 'unresolved', why: why }); },
+});
+window.RRPlaces.attachSplit('home-street', 'home-city', 'home-state', 'home-zip', { countyId: 'home-county' });
+</script>
+</body>

@@ -692,7 +692,7 @@
                 <option>VA</option><option>WA</option><option>WV</option><option>WI</option><option>WY</option><option>DC</option>
             </select>
         </div>
-        <div class="field" style="position:relative;"><label>County</label><input type="text" id="county" placeholder="Los Angeles" oninput="filterCounties()" onfocus="filterCounties()" autocomplete="off"><div id="countyDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:180px;overflow-y:auto;background:#111;border:1px solid #333;border-radius:0 0 6px 6px;z-index:100;"></div></div>
+        <div class="field" style="position:relative;"><label>County</label><input type="text" id="county" placeholder="Los Angeles" oninput="setCountySource('manual');filterCounties()" onfocus="filterCounties()" autocomplete="off"><div id="countyDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:180px;overflow-y:auto;background:#111;border:1px solid #333;border-radius:0 0 6px 6px;z-index:100;"></div></div>
     </div>
     <div class="row2">
         <div class="field">
@@ -1005,25 +1005,32 @@ const ZIP_TO_COUNTY = {
   '953':'San Luis Obispo','952':'Stanislaus','942':'San Joaquin',
 };
 
-/* COUNTY FROM A 3-DIGIT ZIP PREFIX — the mechanism, and its ceiling.
+/* COUNTY FROM A 3-DIGIT ZIP PREFIX — A FALLBACK FOR LEGACY ROWS ONLY.
  *
- * ZIP3 areas straddle county lines, so no 3-digit table can be correct. 935 was
- * simply missing and Lancaster fell through to whatever was already in the box;
- * but even complete, this shape mis-assigns every split prefix. It also only
- * fills when the field is EMPTY, so a wrong value already in place is never
- * corrected — which is how 'Kern' survived on two live links.
+ * THE TABLE IS CLOSED. Do not add prefixes to it. ZIP3 areas straddle county
+ * lines, so every entry added is another chance to capture a split prefix, and
+ * that is not hypothetical: 935 was added for Lancaster/Palmdale and now
+ * resolves California City (93505) — which is KERN — to Los Angeles. That
+ * states a $1,249,125 limit where the truth is $832,750, enough to print
+ * CONFORMING over a jumbo. Measured over the 48 stored property addresses,
+ * three resolve to the wrong county today and all three are split prefixes.
  *
- * Two real fixes, neither done here:
- *   - a 5-digit ZIP -> county table. ~1,760 CA ZIPs; the authoritative source is
- *     the HUD USPS ZIP-COUNTY crosswalk, which is per-quarter and maps a ZIP to
- *     MULTIPLE counties with residential-ratio weights, so it needs a tie-break
- *     rule and a refresh story. Not large to embed (~40KB), but it is a data
- *     feed with an owner, not a constant.
- *   - a geocode lookup (Google/Census) returning the county component. Exact and
- *     self-maintaining; costs a network call per address, a key, and a failure
- *     path — and RRPlaces already runs on this page, so the address is often
- *     already geocoded and the county component may be free.
- * Until one of those lands, treat this as a hint that a human must confirm. */
+ * THE REAL MECHANISM IS CAPTURE, and it now exists: Google returns
+ * `administrative_area_level_2` on the same selection that produces the
+ * address, admin/js/places-autocomplete.js parts() captures it, and lead-detail
+ * persists it to contacts.county. A captured county arrives here as
+ * countySource='captured'.
+ *
+ * So what this function produces is INFERRED, is marked as such, and is
+ * deliberately weaker than a captured value: see renderLoanLimitLine(), where
+ * an inferred county gets no CONFORMING/JUMBO verdict. It only ever fills an
+ * EMPTY box, so it can never overwrite something captured or typed.
+ *
+ * CORRECTION, because this comment said the opposite and sent an investigation
+ * the wrong way: RRPlaces does NOT run on this page. tools/fee-sheet.html loads
+ * exactly one script, /public/js/mi-factors.js. The address arrives here as a
+ * STRING from admin/lead-detail.html's #f-property, which is where the Places
+ * selection happens and where the county is captured. */
 function autoFillCountyFromAddress() {
     var addr = $('propertyAddress').value;
     /* THE FIRST 5-DIGIT RUN IS OFTEN THE STREET NUMBER, NOT THE ZIP. This was
@@ -1040,8 +1047,72 @@ function autoFillCountyFromAddress() {
         var county = ZIP_TO_COUNTY[prefix];
         if (county && !$('county').value) {
             $('county').value = county;
+            setCountySource('inferred');
         }
     }
+}
+
+/* ── CAPTURED vs INFERRED ─────────────────────────────────────────────────
+ * Three provenances, and the difference is not cosmetic:
+ *   captured  Google's administrative_area_level_2, from the address selection
+ *             itself. Exact.
+ *   manual    a human typed or picked it in the sidebar. Trusted — somebody
+ *             took responsibility for it.
+ *   inferred  guessed from a 3-digit ZIP prefix by the function above. Right
+ *             most of the time and wrong on split prefixes, with no way to tell
+ *             which from the value alone.
+ * Stored on the draft as common.countySource, so it survives into the snapshot
+ * and a shared link knows what it is looking at. Absent means legacy: treated
+ * as inferred, because every county in the existing rows came from the prefix
+ * table or from a box somebody filled with the prefix table's answer. */
+var _countySource = '';
+function setCountySource(src) { _countySource = src || ''; }
+function getCountySource() {
+    var v = ($('county').value || '').trim();
+    if (!v) return '';
+    return _countySource || 'inferred';
+}
+
+/* ── THE LOAN-LIMIT LINE, IN ONE PLACE ────────────────────────────────────
+ * There were two of these, rendering the same fact with different wording, and
+ * they had already drifted once (one defaulted a blank county to 'Los Angeles',
+ * the other returned empty). One function, a `compact` flag for the header
+ * variant.
+ *
+ * AN INFERRED COUNTY GETS NO VERDICT. The CONFORMING / HIGH BALANCE / JUMBO
+ * pill is the strongest claim on the sheet — it is the sentence a borrower
+ * reads as "you qualify for the normal loan" — and a county guessed from a
+ * 3-digit prefix is not evidence enough to make it. Inferred renders the county
+ * and the limit, says where they came from, and asks for confirmation. Captured
+ * and manual render the pill.
+ *
+ * The failure this prevents already happened, in the other direction: a wrong
+ * county printed a confident badge on a borrower-facing PDF and nothing about
+ * the document suggested it was a guess. */
+function renderLoanLimitLine(county, source, loanAmount, compact) {
+    county = county || '';
+    var info = getLoanLimitInfo(county, loanAmount);
+    if (!info) {
+        if (compact) return '';
+        return '<div style="display:flex;align-items:center;justify-content:center;padding:8px 16px;margin-top:12px;margin-bottom:8px;background:#f9f9f7;border:1px solid #e8e8e8;border-radius:6px;font-size:12px;color:#888;">Enter county in sidebar to see conforming loan limits</div>';
+    }
+    var inferred = (source === 'inferred');
+    var box = compact
+        ? 'padding:6px 14px;margin-bottom:12px;font-size:11px;'
+        : 'padding:8px 16px;margin-top:12px;margin-bottom:8px;font-size:12px;';
+    var border = inferred ? '1px dashed #d9b45f' : '1px solid ' + (compact ? '#eee' : '#e8e8e8');
+    var left = compact
+        ? '<span>' + county + ' County Conforming Limit: <strong>$' + info.limit.toLocaleString('en-US') + '</strong></span>'
+        : '<span><strong>' + county + ' County</strong> Conforming Loan Limit: <strong style="color:#1A1A1A;">$' + info.limit.toLocaleString('en-US') + '</strong></span>';
+    var right = inferred
+        ? '<span style="display:inline-block;padding:' + (compact ? '2px 10px' : '4px 14px') + ';border-radius:20px;font-size:' + (compact ? '10px' : '11px') + ';font-weight:700;color:#8a6d1f;background:#f5e6bf;letter-spacing:.3px;">COUNTY UNCONFIRMED</span>'
+        : '<span style="display:inline-block;padding:' + (compact ? '2px 10px' : '4px 14px') + ';border-radius:20px;font-size:' + (compact ? '10px' : '11px') + ';font-weight:700;color:white;background:' + info.color + ';letter-spacing:0.5px;">' + info.type + '</span>';
+    var foot = inferred
+        ? '<div style="font-size:10px;color:#8a6d1f;margin-top:4px;line-height:1.35;">County was inferred from the ZIP prefix, not confirmed for this address. Confirm the county before relying on the limit — no conforming/jumbo determination is shown until it is.</div>'
+        : '';
+    return '<div style="' + box + 'background:#f9f9f7;border:' + border + ';border-radius:' + (compact ? '4px' : '6px') + ';color:' + (compact ? '#666' : '#555') + ';">'
+         + '<div style="display:flex;align-items:center;justify-content:space-between;">' + left + right + '</div>'
+         + foot + '</div>';
 }
 
 function getLoanLimitInfo(county, loanAmount) {
@@ -1086,6 +1157,7 @@ function filterCounties() {
 
 function selectCounty(name) {
     $('county').value = name;
+    setCountySource('manual');   // a human picked it: that is a decision, not a guess
     document.getElementById('countyDropdown').style.display = 'none';
     recalc();
 }
@@ -1654,6 +1726,7 @@ function readSidebarInputs(overrides) {
         creditScore: $('creditScore').value,
         state: $('state').value,
         county: $('county').value || '',
+        countySource: getCountySource(),
         annualTax,
         annualInsurance,
         // Per-column-only fields (property mode). Default to 0 in rate mode.
@@ -1963,12 +2036,7 @@ function render(inp, results) {
 
         ${(() => {
             if (isCol) return '';
-            const info = getLoanLimitInfo(inp.county, inp.loanAmount);
-            if (!info) return '';
-            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 14px;margin-bottom:12px;background:#f9f9f7;border:1px solid #eee;border-radius:4px;font-size:11px;color:#666;">' +
-                '<span>' + inp.county + ' County Conforming Limit: <strong>$' + info.limit.toLocaleString('en-US') + '</strong></span>' +
-                '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:10px;font-weight:700;color:white;background:' + info.color + ';">' + info.type + '</span>' +
-            '</div>';
+            return renderLoanLimitLine(inp.county, inp.countySource, inp.loanAmount, true);
         })()}
 
         <div style="display:flex;gap:0;">
@@ -2192,15 +2260,7 @@ function render(inp, results) {
                the same case, so the two disagreed. An absent county now shows the
                'enter county' prompt, which is true, instead of a confident badge
                for a county nobody chose. */
-            const county = inp.county || '';
-            const info = getLoanLimitInfo(county, inp.loanAmount);
-            if (!info) {
-                return '<div style="display:flex;align-items:center;justify-content:center;padding:8px 16px;margin-top:12px;margin-bottom:8px;background:#f9f9f7;border:1px solid #e8e8e8;border-radius:6px;font-size:12px;color:#888;">Enter county in sidebar to see conforming loan limits</div>';
-            }
-            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 16px;margin-top:12px;margin-bottom:8px;background:#f9f9f7;border:1px solid #e8e8e8;border-radius:6px;font-size:12px;color:#555;">' +
-                '<span><strong>' + county + ' County</strong> Conforming Loan Limit: <strong style="color:#1A1A1A;">$' + info.limit.toLocaleString('en-US') + '</strong></span>' +
-                '<span style="display:inline-block;padding:4px 14px;border-radius:20px;font-size:11px;font-weight:700;color:white;background:' + info.color + ';letter-spacing:0.5px;">' + info.type + '</span>' +
-            '</div>';
+            return renderLoanLimitLine(inp.county || '', inp.countySource, inp.loanAmount, false);
         })()}
 
         ${bridgeAddendumHtml(inp, results)}
@@ -2549,6 +2609,7 @@ function collectFeeSheetDraft() {
             creditScore: v('creditScore'),
             state: v('state'),
             county: v('county'),
+            countySource: getCountySource(),
             taxMode: _taxMode,
             annualTax: v('annualTax'),
             taxPct: v('taxPctInput'),
@@ -2618,6 +2679,10 @@ function applyFeeSheetDraft(obj) {
         setV('creditScore', c.creditScore);
         setV('state', c.state);
         setV('county', c.county);
+        /* Provenance rides with the value. A blob with no countySource is legacy
+           and is treated as INFERRED — every county in the pre-existing rows came
+           from the prefix table, directly or by somebody accepting its answer. */
+        if (c.county) setCountySource(c.countySource || 'inferred');
         setV('annualTax', c.annualTax);
         setV('taxPctInput', c.taxPct);
         setV('annualInsurance', c.annualInsurance);
@@ -2695,6 +2760,7 @@ function notifyParentOfChange() {
             creditScore: $('creditScore').value,
             state: $('state').value,
             county: $('county').value,
+            countySource: getCountySource(),
             annualTax: parseCurrency($('annualTax').value),
             annualInsurance: parseCurrency($('annualInsurance').value),
             borrowerName: $('borrowerName').value,
@@ -2757,6 +2823,7 @@ function notifyParentOfChange() {
             creditScore: common.creditScore,
             state: common.state,
             county: common.county,
+            countySource: common.countySource,
             annualTax: common.annualTax,
             annualInsurance: common.annualInsurance,
             borrowerName: common.borrowerName,
@@ -3845,7 +3912,7 @@ recalc();
             if (c.propertyType) $('propertyType').value = c.propertyType;
             if (c.creditScore) $('creditScore').value = c.creditScore;
             if (c.state) $('state').value = c.state;
-            if (c.county) $('county').value = c.county;
+            if (c.county) { $('county').value = c.county; setCountySource(c.countySource || 'inferred'); }
             if (c.annualTax) $('annualTax').value = '$' + Number(c.annualTax).toLocaleString('en-US');
             if (c.annualInsurance) $('annualInsurance').value = '$' + Number(c.annualInsurance).toLocaleString('en-US');
             /* Restore mode (v2+). Default to 'rate' for v1 blobs.

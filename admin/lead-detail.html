@@ -6636,9 +6636,38 @@ async function populateUI() {
     window.RRPlaces.attachSplit('f-home-address', 'f-home-city', 'f-home-state', 'f-home-zip', {
       onFill: function () { if (typeof lpHomeEstSyncBtn === 'function') lpHomeEstSyncBtn(); },
     });
-    // Subject Property — ONE combined field, so formatted_address.
+    /* Subject Property — ONE combined field, so formatted_address, and ONE
+       binding. This is the only place #f-property gets a Places widget; a
+       second binding used to exist further down the file and is gone.
+       It also carries the persistence, because a county Google handed us and
+       nobody stored is the same as a county we never had. */
     window.RRPlaces.attachCombined('f-property', {
-      onFill: function () { if (typeof lpPropEstSyncBtn === 'function') lpPropEstSyncBtn(); },
+      onFill: function (value, place, p) {
+        if (typeof lpPropEstSyncBtn === 'function') lpPropEstSyncBtn();
+        var cid = (typeof lpCid === 'function') ? lpCid() : null;
+        if (!cid || !p) return;
+        /* contacts.county is the CAPTURED county and only ever that. Nothing
+           inferred from a ZIP prefix is allowed in this column — see the fee
+           sheet, where an inferred value is carried separately and marked. */
+        var patch = { property_city: p.city || null, property_state: p.state || null,
+                      property_zip: p.zip || null, updated_at: new Date().toISOString() };
+        if (p.county) patch.county = p.county;
+        try {
+          _authClient().from('contacts').update(patch).eq('id', cid).then(function(){}, function(){});
+          if (p.county || p.zip) {
+            _authClient().from('mortgage_applications').update({
+              property_address_county: p.county || null, property_address_zip: p.zip || null,
+              property_address_city: p.city || null, property_address_state: p.state || null,
+              updated_at: new Date().toISOString(),
+            }).eq('contact_id', cid).then(function(){}, function(){});
+          }
+        } catch (_) {}
+      },
+      onUnresolved: function (why) {
+        /* Loud, not silent. The old behaviour was a bare `return` that left
+           Google's prediction description in the box for the autosave to store. */
+        console.warn('[f-property] address not confirmed:', why);
+      },
     });
   }
   if (typeof lpPropEstInit === 'function') { try { lpPropEstInit(); } catch (_) {} }
@@ -11112,7 +11141,10 @@ async function lpRenderSnapshot(cid){
   const _propVal = _propHas
     ? lpEsc(_propLine)
     : '<span style="color:rgba(255,255,255,.4);font-weight:400;">— No property address yet</span>';
-  const _county = app.property_address_county || c.property_county || '';
+  /* `c.property_county` DOES NOT EXIST on contacts — the column is `county`, so
+     this fallback silently evaluated to undefined and the snapshot only ever
+     showed a county when mortgage_applications happened to hold one. */
+  const _county = app.property_address_county || c.county || '';
   const _countySub = _county
     ? '<div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+lpEsc(_county)+' County</div>'
     : '';
@@ -19183,9 +19215,20 @@ function lpSnapEdit(key, ev){
     commit=async ()=>{
       const el=document.getElementById('lpSpAddr'); const addr=el?(el.value||'').trim():'';
       const p=_spParsed;
+      /* A SELECTION THAT NEVER RESOLVED IS NOT AN ADDRESS. `rrAddrResolved==='0'`
+         is stamped only when a Places suggestion was picked and could not be
+         resolved to components — which is exactly the case that left Google's
+         prediction description ("Santa Clarita, CA, USA") in the box. Typed free
+         text is never stamped at all and still saves normally: autocomplete
+         assists, it does not gate. */
+      if(el && el.dataset && el.dataset.rrAddrResolved==='0'){
+        alert('That address was not confirmed by Google, so it has not been saved.\n\nPick a suggestion from the list, or type the full address including the ZIP code.');
+        return;
+      }
       // contacts is the display + merge source: save the combined line; add parsed city/state/zip on a pick.
       const patch={ property_address: addr||null, updated_at:new Date().toISOString() };
-      if(p){ patch.property_city=p.city||null; patch.property_state=p.state||null; patch.property_zip=p.zip||null; }
+      if(p){ patch.property_city=p.city||null; patch.property_state=p.state||null; patch.property_zip=p.zip||null;
+             if(p.county) patch.county=p.county; }
       try{
         await _authClient().from('contacts').update(patch).eq('id',cid);
         if(c){ c.property_address=addr||null; if(p){ c.property_city=p.city||null; c.property_state=p.state||null; c.property_zip=p.zip||null; } }
@@ -19339,7 +19382,7 @@ async function prefillFeeSheet() {
       try {
         var fsd = null, appRow = null;
         var { data: _restoreRow, error: _restoreErr } = await _authClient().from('mortgage_applications_secure')
-          .select('fee_sheet_data,purchase_price,loan_amount,property_value,first_name,last_name,property_address_street,property_address_city,property_address_state,property_address_zip')
+          .select('fee_sheet_data,purchase_price,loan_amount,property_value,first_name,last_name,property_address_street,property_address_city,property_address_state,property_address_zip,property_address_county')
           .eq('contact_id', cid).order('created_at', { ascending: false }).limit(1).maybeSingle();
         if (_restoreErr) console.error('[fee sheet restore]', _restoreErr);
         if (_restoreRow) { appRow = _restoreRow; fsd = _restoreRow.fee_sheet_data; }
@@ -19353,6 +19396,15 @@ async function prefillFeeSheet() {
           if (!restore.borrowerName && appRow.first_name) restore.borrowerName = [appRow.first_name, appRow.last_name].filter(Boolean).join(' ');
           if (!restore.propertyAddress && appRow.property_address_street) restore.propertyAddress = [appRow.property_address_street, appRow.property_address_city, appRow.property_address_state, appRow.property_address_zip].filter(Boolean).join(', ');
         }
+        /* A CAPTURED COUNTY OVERRIDES A SAVED ONE, and this is the only override
+           in this payload — everything else above defers to what was saved.
+           It is deliberate: the saved value was very likely produced by the fee
+           sheet's ZIP-prefix fallback, and Google's administrative_area_level_2
+           for this exact address beats a guess from three digits. `Kern` on two
+           of Shelley's live links is what a saved inferred county looks like. */
+        var _capturedCounty = (appRow && appRow.property_address_county)
+          || (window.contactData && contactData.county) || '';
+        if (_capturedCounty) { restore.county = _capturedCounty; restore.countySource = 'captured'; }
         if (restore.purchasePrice || restore.scenarioA || (Array.isArray(restore.scenarios) && restore.scenarios.length)) {
           _feeSheetSavedData = restore;
           setTimeout(function() {
@@ -25127,70 +25179,51 @@ function attachAutoSave() {
 /* ── Shared Google Places helper for a SINGLE address input (reused by the Loan Snapshot editor
    and the Lead Details property field). Fills the FULL formatted address, or calls opts.onFill
    with the parsed components. Waits for the shared window.loadGoogleMaps loader. ── */
+/* NOW A THIN WRAPPER OVER RRPlaces. It used to be a second, independent
+   implementation: its own google.maps.places.Autocomplete, its own component
+   parse, its own `_placesAttached` guard — a guard RRPlaces cannot see, and
+   vice versa. So #f-property carried TWO widgets, each fetching Place Details
+   on every selection, each writing the same box, with the last one to answer
+   deciding what got saved. That is where "43636 Devyn Ln, Lancaster, CA, USA"
+   came from: the description Google auto-fills, left standing.
+
+   Keeping the NAME (several call sites use it) while deleting the duplicate
+   BEHAVIOUR. One widget, one parse, one details fetch. */
+var _rrAddrSeq = 0;
 window.attachPlacesAddress = function(inputEl, opts){
   opts=opts||{};
-  var go=function(){
-    if(!inputEl || inputEl._placesAttached) return;
-    if(!(window.google && window.google.maps && window.google.maps.places)) return;
-    inputEl._placesAttached=true;
-    try{
-      var ac=new google.maps.places.Autocomplete(inputEl, { componentRestrictions:{country:'us'}, fields:['address_components','formatted_address'], types:['address'] });
-      inputEl.addEventListener('keydown', function(e){ if(e.key==='Enter') e.preventDefault(); });
-      ac.addListener('place_changed', function(){
-        var p=ac.getPlace(); if(!p || !p.address_components) return;
-        var num='',route='',city='',state='',zip='',county='';
-        p.address_components.forEach(function(comp){ var t=comp.types;
-          if(t.indexOf('street_number')>=0) num=comp.long_name;
-          if(t.indexOf('route')>=0) route=comp.long_name;
-          if(t.indexOf('locality')>=0) city=comp.long_name;
-          if(t.indexOf('administrative_area_level_1')>=0) state=comp.short_name;
-          if(t.indexOf('postal_code')>=0) zip=comp.long_name;
-          if(t.indexOf('administrative_area_level_2')>=0) county=(comp.long_name||'').replace(/ County$/i,'');
-        });
-        var street=(num+' '+route).trim();
-        var parsed={ street:street, city:city, state:state, zip:zip, county:county, formatted:(p.formatted_address||'') };
-        if(typeof opts.onFill==='function'){ opts.onFill(parsed, inputEl); }
-        else { inputEl.value=parsed.formatted || [street,city,[state,zip].filter(Boolean).join(' ')].filter(Boolean).join(', '); inputEl.dispatchEvent(new Event('input',{bubbles:true})); inputEl.dispatchEvent(new Event('change',{bubbles:true})); }
-      });
-    }catch(e){ inputEl._placesAttached=false; console.warn('[attachPlacesAddress]', e&&e.message); }
-  };
-  if(window.google && window.google.maps && window.google.maps.places){ go(); }
-  else if(typeof window.loadGoogleMaps==='function'){ window.loadGoogleMaps().then(go).catch(function(){}); }
-  else { setTimeout(go, 600); }
+  if(!inputEl) return null;
+  if(!window.RRPlaces){ console.warn('[attachPlacesAddress] RRPlaces not loaded; input stays plain text'); return null; }
+  if(!inputEl.id) inputEl.id = 'rrAddr_' + (++_rrAddrSeq);
+  inputEl.addEventListener('keydown', function(e){ if(e.key==='Enter') e.preventDefault(); });
+  return window.RRPlaces.attachCombined(inputEl.id, {
+    onFill: function(value, place, p){
+      /* `formatted` is the value RRPlaces already wrote — USA-stripped. Callers
+         that do `ie.value = p.formatted` therefore re-set the same string
+         instead of putting ", USA" back on, which is how four stored addresses
+         ended up carrying it. */
+      var parsed={ street:p.street, city:p.city, state:p.state, zip:p.zip,
+                   county:p.county, formatted:value, isProperty:p.isProperty };
+      if(typeof opts.onFill==='function') opts.onFill(parsed, inputEl);
+    },
+    onUnresolved: function(why, el){
+      if(typeof opts.onUnresolved==='function') opts.onUnresolved(why, el);
+    },
+  });
 };
 /* ── ADDRESS AUTOCOMPLETE ── */
+/* THIRD COPY, DELETED. This was the same component parse a third time, for the
+   data-autocomplete="address" inputs (the 1003's f_prop_street and its
+   data-fills-county sibling). It now delegates to RRPlaces.attachSplit, which
+   grew an opts.countyId for exactly this. */
 function initAddressAutocomplete() {
-  if (!window.google || !window.google.maps || !window.google.maps.places) return;
+  if (!window.RRPlaces) return;
   document.querySelectorAll('[data-autocomplete="address"]').forEach(function(input) {
     if (input._acWired) return;
     input._acWired = true;
-    var ac = new google.maps.places.Autocomplete(input, {
-      types: ['address'],
-      componentRestrictions: { country: 'us' },
-      fields: ['address_components', 'formatted_address']
-    });
-    ac.addListener('place_changed', function() {
-      var place = ac.getPlace();
-      if (!place || !place.address_components) return;
-      var streetNum = '', route = '', city = '', state = '', zip = '', county = '';
-      place.address_components.forEach(function(comp) {
-        var t = comp.types;
-        if (t.indexOf('street_number') >= 0) streetNum = comp.long_name;
-        if (t.indexOf('route') >= 0) route = comp.short_name;
-        if (t.indexOf('locality') >= 0) city = comp.long_name;
-        if (t.indexOf('administrative_area_level_1') >= 0) state = comp.short_name;
-        if (t.indexOf('postal_code') >= 0) zip = comp.long_name;
-        if (t.indexOf('administrative_area_level_2') >= 0) county = comp.long_name.replace(' County', '');
-      });
-      input.value = [streetNum, route].filter(Boolean).join(' ') || place.formatted_address;
-      var fill = function(attr, val) {
-        var id = input.dataset[attr];
-        if (id && val) { var el = document.getElementById(id); if (el) { el.value = val; el.dispatchEvent(new Event('input')); } }
-      };
-      fill('fillsCity', city);
-      fill('fillsState', state);
-      fill('fillsZip', zip);
-      fill('fillsCounty', county);
+    if (!input.id) input.id = 'rrAddr_' + (++_rrAddrSeq);
+    window.RRPlaces.attachSplit(input.id, input.dataset.fillsCity, input.dataset.fillsState, input.dataset.fillsZip, {
+      countyId: input.dataset.fillsCounty,
     });
     input.addEventListener('keydown', function(e) { if (e.key === 'Enter') e.preventDefault(); });
   });
@@ -25199,17 +25232,13 @@ function initAddressAutocomplete() {
 if (typeof window.loadGoogleMaps === 'function') {
   window.loadGoogleMaps().then(function(){
     initAddressAutocomplete();
-    // Lead Details property field → Google Places (fills the full address + saves city/state/zip).
-    // Was previously Nominatim/OSM via addressAutocomplete(), which showed no Google suggestions.
-    var _fp=document.getElementById('f-property');
-    if(_fp && typeof window.attachPlacesAddress==='function'){
-      window.attachPlacesAddress(_fp, { onFill:function(p, el){
-        el.value = p.formatted || [p.street, p.city, [p.state,p.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
-        el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true}));
-        var cid=(typeof lpCid==='function')?lpCid():null;
-        if(cid){ try{ _authClient().from('contacts').update({ property_city:p.city||null, property_state:p.state||null, property_zip:p.zip||null, updated_at:new Date().toISOString() }).eq('id',cid).then(function(){},function(){}); }catch(_){} }
-      }});
-    }
+    /* #f-property IS DELIBERATELY NOT BOUND HERE. It is bound once, in the
+       render path at the RRPlaces.attachCombined call above, and binding it a
+       second time is the defect this block used to be: two Autocomplete
+       instances on one input, two Place Details fetches per selection (both
+       billable), and a race over which one's write survived. The persistence
+       that lived here — property_city/state/zip — moved into that single
+       binding, along with the county it never captured. */
   }).catch(function(e) {
     console.warn('[AddressAC] Maps load failed:', e.message);
   });

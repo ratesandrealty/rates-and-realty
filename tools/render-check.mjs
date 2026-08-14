@@ -1475,6 +1475,131 @@ const SPECS = [
     ],
   },
   {
+    /* THE PLACES CONSOLIDATION, ON A FIXTURE — because the live page cannot
+     * prove any of it. The Google key is referrer-restricted to the real domain
+     * and the widget only fires on a human picking from a dropdown, so on
+     * lead-detail there is nothing to assert against: the fields render (proven
+     * by the spec below) and the parse never runs.
+     *
+     * The fixture installs an instrumented google.maps.places, so the three
+     * things that actually went wrong become countable:
+     *   1. HOW MANY widgets bind to one input. Three copies of this code used to
+     *      exist; the premise of the module is that there is now one.
+     *   2. WHETHER a selection with no address_components fetches the details.
+     *      The old `if (!place.address_components) return;` left Google's
+     *      ZIP-LESS description sitting in the box and the autosave stored it —
+     *      all 18 such stored addresses have no ZIP, all 12 resolved ones do.
+     *   3. WHICH COUNTY comes back. This is the LA-not-Kern bug in 53bffa8:
+     *      93505 has ZIP3 prefix 935, which ZIP_TO_COUNTY maps to Los Angeles,
+     *      and California City is in KERN. Captured beats inferred, and the only
+     *      way that claim stays true is if something checks it.
+     *
+     * What it does NOT prove: that Google really returns
+     * administrative_area_level_2 for a given address. That needs the live key.
+     * The fixture supplies the components; it cannot vouch for them.
+     *
+     * The evals run IN ORDER and chain deliberately — each selection leaves
+     * state the next one builds on — so they end with #f-property unresolved and
+     * #home-street resolved. present/absent below assert both halves of that,
+     * which is why neither check is vacuous. */
+    name: 'places consolidation: one widget, one details fetch, county captured',
+    url: fixture('places-consolidation.html'),
+    role: 'admin',
+    evals: [
+      /* 1 — ONE widget per input, not three. */
+      ['window.__metrics.autocompleteConstructed', 2],
+      ['window.__metrics.byInput["f-property"]', 1],
+      ['window.__metrics.byInput["home-street"]', 1],
+      /* Re-attaching is a no-op rather than a second widget. lead-detail
+         re-runs its wiring on re-render, so this is the normal path. */
+      ['(async function(){var r=window.RRPlaces.attachCombined("f-property",{});'
+        + 'await new Promise(function(s){setTimeout(s,30);});'
+        + 'return [r, window.__metrics.autocompleteConstructed];})()', [null, 2]],
+
+      /* 2 — THE EARLY RETURN THAT ATE THE ZIP. Google auto-fills the ZIP-less
+         description, place_changed arrives with no components, and the module
+         must go and FETCH them. Asserting on the input's value is the point:
+         what ends up in the box is what gets persisted. */
+      ['(async function(){'
+        + 'window.__select("f-property", "43636 Devyn Ln, Lancaster, CA, USA", {place_id:"PID_LANCASTER"},'
+        + ' {address_components: window.__F.lancaster.components, formatted_address: window.__F.lancaster.formatted});'
+        + 'await new Promise(function(s){setTimeout(s,60);});'
+        + 'var el=document.getElementById("f-property"), last=window.__captured[window.__captured.length-1];'
+        + 'return {fetched: window.__metrics.detailsFetched, value: el.value,'
+        + ' resolved: window.RRPlaces.isResolved(el), zip: last.parts.zip,'
+        + ' county: last.parts.county, isProperty: last.parts.isProperty};})()',
+       { fetched: 1, value: '43636 Devyn Ln, Lancaster, CA 93534', resolved: true,
+         zip: '93534', county: 'Los Angeles', isProperty: true }],
+
+      /* 3 — COUNTY, AND THE SPLIT FIELDS. 93505 is the case the ZIP3 table gets
+         wrong; captured says Kern. If this ever reads "Los Angeles" the fee
+         sheet has gone back to guessing. */
+      ['(async function(){'
+        + 'window.__select("home-street", "8560 Eucalyptus Ave, California City, CA, USA", {place_id:"PID_CALCITY"},'
+        + ' {address_components: window.__F.calcity.components, formatted_address: window.__F.calcity.formatted});'
+        + 'await new Promise(function(s){setTimeout(s,60);});'
+        + 'var g=function(id){return document.getElementById(id).value;};'
+        + 'return {street:g("home-street"), city:g("home-city"), state:g("home-state"),'
+        + ' zip:g("home-zip"), county:g("home-county"),'
+        + ' resolved: window.RRPlaces.isResolved(document.getElementById("home-street"))};})()',
+       { street: '8560 Eucalyptus Ave', city: 'California City', state: 'CA',
+         zip: '93505', county: 'Kern', resolved: true }],
+
+      /* The exported parse is the SAME parse — this is what lead-detail's two
+         former copies now delegate to, and "County" is stripped exactly once. */
+      ['JSON.stringify(window.RRPlaces.parts({address_components: window.__F.calcity.components}))',
+       '{"street":"8560 Eucalyptus Ave","city":"California City","state":"CA","zip":"93505","county":"Kern","isProperty":true}'],
+
+      /* 4 — A CITY IS A PLACE, NOT A PROPERTY. "Santa Clarita, CA, USA" resolves
+         perfectly and has no house number and no ZIP. It must come back stamped
+         unresolved, or a city name gets stored as a subject property again. */
+      ['(async function(){'
+        + 'window.__select("f-property", "Santa Clarita, CA, USA", {place_id:"PID_SC"},'
+        + ' {address_components: window.__F.santaClarita.components, formatted_address: window.__F.santaClarita.formatted});'
+        + 'await new Promise(function(s){setTimeout(s,60);});'
+        + 'var el=document.getElementById("f-property"), last=window.__captured[window.__captured.length-1];'
+        + 'return {value: el.value, resolved: window.RRPlaces.isResolved(el),'
+        + ' isProperty: last.parts.isProperty, zip: last.parts.zip, county: last.parts.county};})()',
+       { value: 'Santa Clarita, CA', resolved: false, isProperty: false, zip: '', county: 'Los Angeles' }],
+
+      /* 5 — NOTHING SELECTED costs no Details call. A lookup with no place_id to
+         look up is answered locally; billing a request for it would be the
+         per-keystroke cost this module's header says does not exist here. */
+      ['(async function(){var before=window.__metrics.detailsFetched;'
+        + 'window.__select("f-property", "just typing", {}, null);'
+        + 'await new Promise(function(s){setTimeout(s,60);});'
+        + 'var last=window.__captured[window.__captured.length-1];'
+        + 'return {spent: window.__metrics.detailsFetched - before, event: last.event, why: last.why};})()',
+       { spent: 0, event: 'unresolved', why: 'no suggestion was selected' }],
+
+      /* 6 — WHEN THE DETAILS LOOKUP ITSELF FAILS, the description Google wrote
+         is LEFT in the box (deleting what somebody just picked is worse) but
+         stamped unresolved with the reason on screen. Note the value: still
+         ZIP-less. That is the failure the stamp exists to make refusable. */
+      ['(async function(){'
+        + 'window.__select("f-property", "43636 Devyn Ln, Lancaster, CA, USA", {place_id:"PID_DEAD"}, null);'
+        + 'await new Promise(function(s){setTimeout(s,60);});'
+        + 'var el=document.getElementById("f-property"), last=window.__captured[window.__captured.length-1];'
+        + 'return {value: el.value, resolved: window.RRPlaces.isResolved(el),'
+        + ' event: last.event, why: last.why};})()',
+       { value: '43636 Devyn Ln, Lancaster, CA, USA', resolved: false, event: 'unresolved',
+         why: 'Google returned no details for that suggestion (ZERO_RESULTS)' }],
+
+      /* Totals across the whole run: six selections, four of which had something
+         to look up, and never a second widget on either input. */
+      ['[window.__metrics.detailsFetched, window.__metrics.autocompleteConstructed]', [4, 2]],
+      /* The dropdown stylesheet is injected once no matter how many attaches. */
+      ['document.querySelectorAll("#rrPlacesStyle").length', 1],
+    ],
+    /* The unresolved warning must be ON SCREEN, not merely a dataset flag — and
+       the resolved field must NOT be carrying one. Same selector shape, opposite
+       verdicts, so neither passes by the element simply never existing. */
+    present: ['#f-property__addrNote'],
+    absent: ['#home-street__addrNote'],
+    expectText: ['⚠ Address not confirmed'],
+    minVisibleText: 60,
+  },
+  {
     /* Shelley Hurle's real stored values, fed through the stub. This proves the
      * BINDING (contacts.address → #f-home-address) renders them; that the row
      * exists is proven separately by SQL. The stub cannot prove both at once —
