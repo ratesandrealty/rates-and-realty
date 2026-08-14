@@ -281,17 +281,32 @@ export async function deleteTask(taskId) {
   return true;
 }
 
+/* EVERY COLUMN NAMED, none of them `*`.
+   PostgREST passes `*` straight through and Postgres refuses the WHOLE query
+   when a single column is ungranted — so one future column grant on `tasks`
+   blanks this entire table rather than hiding one field. That is the exact
+   failure CLAUDE.md records against calls_log, where select('*') took out the
+   whole timeline because transcript/ai_summary are not granted to
+   `authenticated`. All 22 columns, listed so adding one is a deliberate act. */
+const TASK_COLUMNS = [
+  "id", "lead_id", "contact_id", "title", "description", "status", "priority", "due_date",
+  "related_table", "related_id", "assigned_to", "assigned_by",
+  "completed_at", "completed_by", "completed_source", "stale_reminded_at",
+  "clickup_task_id", "clickup_url", "clickup_list_id", "clickup_synced_at",
+  "created_at", "updated_at",
+].join(", ");
+
 export async function getAllTasks() {
   // tasks has no leads relationship — it joins contacts directly via contact_id.
   const { data, error } = await supabase
     .from("tasks")
-    .select("*, contacts!contact_id(id, first_name, last_name, pipeline_status)")
+    .select(`${TASK_COLUMNS}, contacts!contact_id(id, first_name, last_name, pipeline_status)`)
     .order("due_date", { ascending: true, nullsLast: true });
   if (error) {
     console.error("[admin-api] getAllTasks embed failed, falling back to flat select:", error);
     const fallback = await supabase
       .from("tasks")
-      .select("*")
+      .select(TASK_COLUMNS)
       .order("due_date", { ascending: true, nullsLast: true });
     if (fallback.error) throw fallback.error;
     return fallback.data || [];

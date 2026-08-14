@@ -255,7 +255,18 @@ async function fetchCrmTasks(start: string, end: string) {
     const { data, error } = await sb.from("tasks")
       .select("id, title, due_date, contact_id, status, priority, description")
       .gte("due_date", start).lte("due_date", end)
-      .neq("status", "completed").order("due_date", { ascending: true }).limit(DB_ROW_LIMIT);
+      /* BOTH terminal states, not just completed. `neq('completed')` put
+         CANCELLED tasks on the calendar — work that was explicitly called off,
+         shown as though it were still scheduled. The legal set is
+         open/pending/question/completed/cancelled (tasks_status_allowed);
+         everything outside the two terminal values is live and belongs here,
+         which is what keeps `pending` and `question` on the calendar.
+         The is.null arm matters and the old filter was missing it too: NULL is
+         a legal status meaning open, and `status not in (...)` evaluates to
+         NULL for a NULL column, which drops the row. Every SQL reader spells
+         this coalesce(status,'open'); PostgREST needs it spelled as an or(). */
+      .or("status.is.null,status.not.in.(completed,cancelled)")
+      .order("due_date", { ascending: true }).limit(DB_ROW_LIMIT);
     if (error || !data) return [];
     const contactIds = [...new Set(data.map(t => t.contact_id).filter(Boolean))];
     const contactMap = new Map();

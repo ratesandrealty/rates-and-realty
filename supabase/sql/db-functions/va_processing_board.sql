@@ -1,6 +1,6 @@
 -- va_processing_board()
 -- language: sql
--- Captured from production 2026-08-11. This layer had NO git history:
+-- Captured from production 2026-08-14. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -19,7 +19,7 @@ AS $function$
     (select count(*)::int from loan_conditions lc where lc.contact_id=c.id and lc.cleared_at is null),
     (select count(*)::int from processing_items pi where pi.contact_id=c.id and pi.kind='doc'    and not coalesce(pi.completed,false) and not coalesce(pi.dismissed,false)),
     (select count(*)::int from processing_items pi where pi.contact_id=c.id and pi.kind='intake' and not coalesce(pi.completed,false) and not coalesce(pi.dismissed,false)),
-    (select count(*)::int from tasks t where t.contact_id=c.id and coalesce(t.status,'open') not in ('completed','cancelled','dismissed')),
+    (select count(*)::int from tasks t where t.contact_id=c.id and coalesce(t.status,'open') not in ('completed','cancelled')),
     (select min(kd.date_value) from loan_key_dates kd where kd.contact_id=c.id and kd.date_value >= current_date),
     (select kd.label from loan_key_dates kd where kd.contact_id=c.id and kd.date_value >= current_date order by kd.date_value asc limit 1)
   from public.contacts_live c

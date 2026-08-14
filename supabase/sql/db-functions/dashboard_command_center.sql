@@ -1,6 +1,6 @@
 -- dashboard_command_center()
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-11. This layer had NO git history:
+-- Captured from production 2026-08-14. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -30,8 +30,8 @@ begin
       'closed',          (select count(*) from public.contacts_live where pipeline_status = 'Closed' or deal_outcome = 'won'),
       'hot_leads',       (select count(*) from public.contacts_live where lead_tier(lead_score) = 'hot'),
       'warm_leads',      (select count(*) from public.contacts_live where lead_tier(lead_score) = 'warm'),
-      'tasks_open',      (select count(*) from tasks where coalesce(status,'open') not in ('completed','cancelled','dismissed')),
-      'tasks_due_today', (select count(*) from tasks where coalesce(status,'open') not in ('completed','cancelled','dismissed') and due_date is not null and due_date::date <= current_date),
+      'tasks_open',      (select count(*) from tasks where coalesce(status,'open') not in ('completed','cancelled')),
+      'tasks_due_today', (select count(*) from tasks where coalesce(status,'open') not in ('completed','cancelled') and due_date is not null and due_date::date <= current_date),
       'activity_today',  (select count(*) from activity_events where created_at::date = current_date)
     ),
     'pipeline_by_stage', (
@@ -47,7 +47,7 @@ begin
                case lower(coalesce(tk.priority,'normal')) when 'urgent' then 0 when 'high' then 1 when 'normal' then 2 else 3 end as ord,
                tk.due_date
         from tasks tk left join contacts c on c.id = tk.contact_id
-        where coalesce(tk.status,'open') not in ('completed','cancelled','dismissed')
+        where coalesce(tk.status,'open') not in ('completed','cancelled')
           and (tk.due_date is null or tk.due_date::date <= current_date)
         order by ord, tk.due_date asc nulls last limit 15
       ) s

@@ -1,6 +1,6 @@
 -- va_productivity_report(p_from date, p_to date)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-11. This layer had NO git history:
+-- Captured from production 2026-08-14. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -40,8 +40,8 @@ begin
       (select count(*) from tasks where status='completed' and coalesce(completed_at,updated_at) >= now()-interval '7 days'  and coalesce(completed_source,'user')<>'system') as completed_7d,
       (select count(*) from tasks where status='completed' and coalesce(completed_at,updated_at) >= now()-interval '30 days' and coalesce(completed_source,'user')<>'system') as completed_30d,
       (select count(*) from tasks where status='completed' and coalesce(completed_at,updated_at) >= now()-interval '7 days'  and coalesce(completed_source,'user')='system') as system_7d,
-      (select count(*) from tasks where status='open') as open_now,
-      (select count(*) from tasks where status='open' and due_date is not null and due_date < now()) as overdue_now,
+      (select count(*) from tasks where coalesce(status,'open') not in ('completed','cancelled')) as open_now,
+      (select count(*) from tasks where coalesce(status,'open') not in ('completed','cancelled') and due_date is not null and due_date < now()) as overdue_now,
       (select round(avg(extract(epoch from (ct - created_at))/3600)::numeric, 1) from manual) as avg_turnaround_hrs,
       (select round((percentile_cont(0.5) within group (order by extract(epoch from (ct - created_at))/3600))::numeric, 1) from manual) as median_turnaround_hrs,
       (select round(100.0 * count(*) filter (where due_date is not null and ct <= due_date)
@@ -73,7 +73,7 @@ begin
       count(*) filter (where due_date is not null and due_date >= now() and due_date < now() + interval '1 day') as due_today,
       count(*) filter (where due_date is not null and due_date >= now() + interval '1 day') as due_later,
       count(*) filter (where due_date is null) as no_due_date
-    from tasks where status='open'
+    from tasks where coalesce(status,'open') not in ('completed','cancelled')
   ),
   open_aging as (
     select coalesce(jsonb_agg(row_to_json(o)) filter (where o.id is not null), '[]'::jsonb) as items
@@ -83,7 +83,7 @@ begin
              (t.contact_id is not null) as has_lead,
              coalesce(c.first_name||' '||c.last_name, null) as contact_name
       from tasks t left join contacts c on c.id = t.contact_id
-      where t.status='open' order by t.created_at asc limit 10
+      where coalesce(t.status,'open') not in ('completed','cancelled') order by t.created_at asc limit 10
     ) o
   ),
   recent as (  -- the VA's actual hand-worked completions

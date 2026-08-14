@@ -1,6 +1,6 @@
 -- va_task_list(p_include_completed boolean)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-11. This layer had NO git history:
+-- Captured from production 2026-08-14. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -21,7 +21,7 @@ begin
          t.created_at, t.updated_at
   from tasks t
   left join contacts c on c.id = t.contact_id
-  where (p_include_completed or coalesce(t.status,'open') not in ('completed','cancelled','dismissed'))
+  where (p_include_completed or coalesce(t.status,'open') not in ('completed','cancelled'))
     and (
       is_admin()                                                            -- admins see all
       or t.assigned_to = auth.uid()                                         -- tasks assigned to me
