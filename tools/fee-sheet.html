@@ -33,6 +33,20 @@
             min-height: 100vh;
         }
 
+        /* ── EMBEDDED: DROP THE 100vh FLOORS, OR THE FRAME CAN ONLY EVER GROW ──
+           In the CRM Fee Sheet tab the PARENT sizes the iframe to this document's
+           height. Inside an iframe `100vh` IS the frame's height, so a 100vh
+           floor makes the measurement circular: the content can never report
+           shorter than the frame it is being measured for, the parent sets the
+           frame to that, and a short sheet after a long one keeps the long one's
+           dead space forever. Removing the floor is precisely what lets it
+           shrink back.
+           The divider is unaffected: body is display:flex with the default
+           align-items:stretch, so the sidebar still reaches the bottom of the
+           taller column — the floor was never what did that. */
+        html.in-iframe body,
+        html.in-iframe .sidebar { min-height: 0; }
+
         /* ── SIDEBAR ── */
         .sidebar {
             width: var(--sidebar-w);
@@ -4136,6 +4150,64 @@ recalc();
             try { window.parent.postMessage({ type: 'fsDraftReady' }, '*'); } catch (_) {}
         }
     });
+})();
+
+/* ── REPORT OUR CONTENT HEIGHT TO THE PARENT ────────────────────────────────
+ *
+ * The Fee Sheet tab used to give this iframe a fixed `calc(100vh - 200px)`, so
+ * a sheet taller than that got its OWN scrollbar inside the CRM page — two
+ * nested scrollbars, and the outer page unable to reach the bottom of the
+ * sheet. The parent now sizes the frame to whatever we report.
+ *
+ * OBSERVED, NOT CALLED. A ResizeObserver on documentElement fires for every
+ * render path there is — recalc, setMode, buydownRecalc, helocRecalc, draft
+ * restore, the bridge and buydown addenda appearing — without any of them
+ * having to remember to notify. A renderer that forgets is exactly how a panel
+ * ends up the right height in five modes and wrong in the sixth.
+ *
+ * Paired with the `html.in-iframe { min-height: 0 }` rule above; without that
+ * this measurement is circular and the frame ratchets upward. The two are one
+ * mechanism.
+ */
+(function () {
+    if (window.parent === window) return;          // standalone: the viewport owns the scroll
+    var last = 0, pending = null;
+    /* MEASURE THE BODY, NOT documentElement.
+       documentElement.scrollHeight is floored at the VIEWPORT height in standards
+       mode, and inside an iframe the viewport IS the frame — so it can never
+       report shorter than the frame it is being measured for, and the frame can
+       only ever grow. Measured: a short sheet after a long one kept reporting the
+       long one's 3081px and the panel held 850px of dead space.
+       This is a SECOND, independent cause of the same ratchet as the 100vh floor
+       above. Removing the CSS floor alone does not fix it; both are required. */
+    function contentHeight() {
+        var b = document.body;
+        if (!b) return 0;
+        return Math.ceil(Math.max(b.getBoundingClientRect().height, b.scrollHeight));
+    }
+    function report() {
+        pending = null;
+        var h = contentHeight();
+        /* A 1px deadband. Sub-pixel layout jitter would otherwise post on every
+           frame, and each post resizes the frame, which re-fires the observer. */
+        if (!h || Math.abs(h - last) < 2) return;
+        last = h;
+        try { window.parent.postMessage({ type: 'fsHeight', height: h }, '*'); } catch (_) {}
+    }
+    function schedule() {
+        if (pending) return;
+        pending = (window.requestAnimationFrame || window.setTimeout)(report, 16);
+    }
+    if (window.ResizeObserver) {
+        /* body, for the same reason report() measures it — documentElement's box
+           tracks the frame, so observing it would fire on our own resize and
+           never on a shrink. */
+        new ResizeObserver(schedule).observe(document.body);
+    } else {
+        setInterval(schedule, 500);                // ancient browsers: poll rather than nothing
+    }
+    window.addEventListener('load', schedule);
+    schedule();
 })();
 </script>
 </body>

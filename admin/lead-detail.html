@@ -1594,7 +1594,10 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
     #tab-fee-sheet > div > div > div:last-child{ width:100% !important; flex-wrap:wrap !important; gap:8px !important; }
     #tab-fee-sheet .ld-btn-sm{ flex:1 1 40% !important; min-height:44px !important; justify-content:center; white-space:nowrap; }
     #feeSheetSaveStatus{ flex:1 1 100% !important; text-align:left !important; min-width:0 !important; }
-    #feeSheetIframe{ height:calc(100vh - 165px) !important; }
+    /* Height comes from the content on phones too — the frame is sized by the
+       fsHeight message, so a viewport-derived height here would fight it and win
+       (it carried !important). Only the loading floor is tightened. */
+    #feeSheetIframe{ min-height:240px !important; }
 
     /* ══ READ + ACT (phone workflow) ══════════════════════════════════════════
        The left sidebar holds the ENTIRE act toolkit — contact info, the Call /
@@ -4843,7 +4846,16 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
              together deliberately: 29 views on a July link is the fact that tells
              you whether it is still circulating. -->
         <div id="fsShareLinks" style="margin-bottom:14px;"></div>
-        <iframe id="feeSheetIframe" src="about:blank" style="width:100%;height:calc(100vh - 200px);border:1px solid #222;border-radius:10px;background:#1a1a1a;"></iframe>
+        <!-- HEIGHT IS DRIVEN BY THE CONTENT, not by the viewport. This used to be
+             height:calc(100vh - 200px), which gave a long sheet its own inner
+             scrollbar inside a page that already had one — and made the bottom of
+             the sheet reachable only by scrolling the inner frame. fee-sheet.html
+             posts {type:'fsHeight'} whenever its document resizes and the handler
+             below applies it.
+             min-height is a LOADING FLOOR, not a substitute fixed height: before
+             the first message arrives the frame would otherwise be a sliver. It is
+             deliberately small enough that a short sheet still shrinks past it. -->
+        <iframe id="feeSheetIframe" src="about:blank" style="width:100%;height:auto;min-height:320px;border:1px solid #222;border-radius:10px;background:#1a1a1a;display:block;"></iframe>
       </div>
     </div>
 
@@ -19461,6 +19473,30 @@ async function _fsSaveDraft(cid, draft) {
     }
   }
 }
+/* ── THE FEE SHEET FRAME GROWS WITH ITS CONTENT ─────────────────────────────
+ *
+ * fee-sheet.html observes its own documentElement and posts its height. The
+ * frame was previously pinned to calc(100vh - 200px), so any sheet taller than
+ * the viewport scrolled INSIDE the tab — a second scrollbar in a page that
+ * already had one, and the only way to reach the bottom of a long sheet.
+ *
+ * Deliberately NOT a large fixed height. A 2-4 unit sheet with every section on
+ * is roughly three times a short single-rate one, so any fixed value is either
+ * a scrollbar on the long sheet or dead space on the short one.
+ *
+ * The clamp is a guard, not a layout choice: a bug in the child (or a hostile
+ * frame) posting 10^9 would otherwise hand the browser an unrenderable element.
+ * Values are coerced and bounded rather than trusted.
+ */
+window.addEventListener('message', function(e) {
+  if (!e.data || e.data.type !== 'fsHeight') return;
+  var fr = document.getElementById('feeSheetIframe');
+  if (!fr) return;
+  var h = Number(e.data.height);
+  if (!isFinite(h) || h <= 0) return;
+  fr.style.height = Math.max(240, Math.min(40000, Math.ceil(h))) + 'px';
+});
+
 window.addEventListener('message', function(e) {
   if (!e.data) return;
   // Iframe finished applying the restored draft → safe to start autosaving now.
