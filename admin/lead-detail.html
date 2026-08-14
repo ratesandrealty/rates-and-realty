@@ -3163,6 +3163,14 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
               <div><label class="ls-sub">Loan Type</label><select id="ls_loan_type" class="ls-input" onchange="lsRecalc()"><option value="">— Select program —</option><option>Conventional</option><option>FHA</option><option>FHA VOE</option><option>ITIN</option><option>HELOAN</option><option>VA</option><option>USDA</option><option>Jumbo</option><option>Non-QM</option></select></div>
               <div><label class="ls-sub">Loan Program</label><select id="ls_loan_program" class="ls-input"><option>30-Year Fixed</option><option>15-Year Fixed</option><option>20-Year Fixed</option><option>10-Year Fixed</option><option>5/1 ARM</option><option>7/1 ARM</option><option>10/1 ARM</option></select></div>
             </div>
+            <!-- FHA finances the 1.75% upfront MIP into the note, so the balance
+                 being repaid is not the loan amount above. Both are shown: the
+                 base is what the file is underwritten at, the total is what P&I
+                 is computed on. Blank/zero for every non-FHA program. -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+              <div><label class="ls-sub">UFMIP financed (FHA)</label><input id="ls_ufmip_financed" type="number" class="ls-input" readonly style="color:#8f8f8f"></div>
+              <div><label class="ls-sub">Total loan (base + UFMIP)</label><input id="ls_total_loan_amount" type="number" class="ls-input" readonly style="color:#8f8f8f"></div>
+            </div>
             <div class="ls-card-label" style="margin-top:10px">Housing Expense (PITIA)</div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
               <div><label class="ls-sub">P&amp;I (auto)</label><input id="ls_pi_payment" type="number" class="ls-input" readonly style="color:#C9A84C;font-weight:700"></div>
@@ -27488,6 +27496,10 @@ async function _lpPrefill1003People(force) {
 /* ═══ LOAN SUMMARY / DTI CALCULATOR ═══ */
 var _lsScenarioId = null, _lsSaveTimer = null;
 function _lsNum(id) { var el = document.getElementById(id); var v = el && el.value ? parseFloat(el.value) : 0; return isNaN(v) ? 0 : v; }
+/* Unrounded figures from the last lsRecalc, for callers that must not re-derive
+   them. Reading the INPUT FIELDS back gives 2dp values, and summing those is how
+   the pre-approval letter's PITIA ended up a cent above the fee sheet's. */
+var _lsExact = null;
 function _lsSetNum(id, v, dp) { var el = document.getElementById(id); if (!el) return; var f = Math.pow(10, (dp == null ? 2 : dp)); el.value = (v != null && !isNaN(v)) ? (Math.round(v * f) / f) : ''; }
 function _lsFmt(v) { return '$' + Math.round(v || 0).toLocaleString(); }
 function _lsDtiColor(pct) { return pct < 36 ? '#22c55e' : pct < 45 ? '#eab308' : pct < 50 ? '#f97316' : '#ef4444'; }
@@ -27497,19 +27509,37 @@ function lsRecalc() {
   var rate = _lsNum('ls_interest_rate');
   var term = _lsNum('ls_loan_term_months') || 360;
   var apprV = _lsNum('ls_appraised_value');
-  // P&I
-  var pi = 0;
-  if (loanAmt && rate && term) {
-    var r = rate / 100 / 12;
-    pi = r === 0 ? loanAmt / term : loanAmt * r * Math.pow(1+r,term) / (Math.pow(1+r,term)-1);
-  }
-  _lsSetNum('ls_pi_payment', pi);
-  // LTV
-  var ltv = apprV ? (loanAmt / apprV * 100) : 0;
   // Loan type — VA loans never carry monthly mortgage insurance (only a one-time funding fee).
   var _lsLoanType = (document.getElementById('ls_loan_type') || {}).value || '';
   var _lsIsVA = /\bva\b/i.test(_lsLoanType);
   var _lsIsFHA = /\bfha\b/i.test(_lsLoanType);
+
+  /* ── WHAT IS ACTUALLY REPAID ───────────────────────────────────────────────
+   * FHA rolls the 1.75% upfront MIP into the note, so a $386,000 FHA loan is a
+   * $392,755 obligation. This panel priced BOTH P&I and MI off the base loan and
+   * the letter inherited it, quoting a payment $45.79/mo lighter than the share
+   * page for the identical scenario. LOAN AMOUNT stays the base figure — that is
+   * what an underwriter reads — and the financed fee is disclosed on its own
+   * line beside it.
+   * Same rule and the same 1.75% as public/fee.html's computeGovUpfrontFee and
+   * generate-fee-sheet's govUpfrontFee. VA and USDA are deliberately NOT rolled
+   * in here: this panel has no first-use/exempt input, and guessing a VA funding
+   * fee onto a letter is worse than omitting it. */
+  var _lsUfmip = _lsIsFHA ? +(loanAmt * 0.0175).toFixed(2) : 0;
+  var _lsTotalLoan = +(loanAmt + _lsUfmip).toFixed(2);
+  _lsSetNum('ls_ufmip_financed', _lsUfmip);
+  _lsSetNum('ls_total_loan_amount', _lsTotalLoan);
+
+  // P&I — on what is repaid, not on what is borrowed against the house.
+  var pi = 0;
+  if (_lsTotalLoan && rate && term) {
+    var r = rate / 100 / 12;
+    pi = r === 0 ? _lsTotalLoan / term : _lsTotalLoan * r * Math.pow(1+r,term) / (Math.pow(1+r,term)-1);
+  }
+  _lsSetNum('ls_pi_payment', pi);
+  // LTV stays on the BASE loan against the appraised value — it is a
+  // loan-to-value ratio, not a balance, and financing the fee does not move it.
+  var ltv = apprV ? (loanAmt / apprV * 100) : 0;
   /* MI — mode-driven (auto / % of loan / fixed $).
      Only AUTO is program-aware. The two manual modes are Rene overriding the
      estimate by hand and must not be second-guessed by loan type. */
@@ -27526,7 +27556,10 @@ function lsRecalc() {
          of the loan at >90% LTV and for 11 years below it, so an FHA loan at
          80% LTV still pays it. The `ltv > 80` gate is a CONVENTIONAL rule. */
       var _fhaRate = RRMiFactors.fhaRate(ltv);
-      mi = RRMiFactors.monthlyMI({ product: 'FHA', ltv: ltv, loanAmount: loanAmt });
+      /* totalLoanAmount, matching the share page and the fee-sheet PDF. FHA MIP
+         is charged on the financed balance; passing only the base loan is what
+         made this surface report $176.92 where /fee/ reported $180.01. */
+      mi = RRMiFactors.monthlyMI({ product: 'FHA', ltv: ltv, loanAmount: loanAmt, totalLoanAmount: _lsTotalLoan });
       /* HIGH BALANCE IS DELIBERATELY NOT PRICED HERE. FHA charges a higher MIP
          above a loan-size threshold, and which threshold is live is unresolved:
          $726,200 or the 2026 conforming limit. Daniel Garcia's $815,425 sits
@@ -27585,6 +27618,14 @@ function lsRecalc() {
       hoa = _lsNum('ls_hoa_monthly'),
       other = _lsNum('ls_other_monthly');
   var pitia = pi + mi + taxes + ins + hoa + other;
+  /* THE LETTER READS THESE, it does not recompute them. lsGeneratePreApproval
+     used to carry its OWN P&I formula off ls_loan_amount — a second
+     implementation that silently kept quoting the base loan after this panel
+     moved to the financed balance, and that summed already-rounded field values
+     so its PITIA landed a cent away from the fee sheet and the share page.
+     One computation, unrounded, stashed here. */
+  _lsExact = { pi: pi, mi: mi, taxes: taxes, ins: ins, hoa: hoa, other: other, pitia: pitia,
+               ufmip: _lsUfmip, totalLoan: _lsTotalLoan, loanAmount: loanAmt, ltv: ltv };
   document.getElementById('ls_total_housing').textContent = _lsFmt(pitia);
   // Income + debt
   var income = _lsNum('ls_total_monthly_income');
@@ -27985,15 +28026,28 @@ async function lsGeneratePreApproval() {
       return;
     }
     // VA loans never carry monthly MI — force 0 (ls_mi_monthly is already 0 for VA; belt-and-suspenders).
-    var mi         = /\bva\b/i.test(loanType) ? 0 : _lsNum('ls_mi_monthly');
+    /* RECALC FIRST, then read. Everything below takes its figures from this one
+       run rather than re-deriving them or reading the 2dp display fields back. */
+    lsRecalc();
+    var _x = _lsExact || {};
+    /* mi is COMPUTED, not typed, so it comes from the same unrounded source as
+       pi and pitia — reading the 2dp field back is half of the cent that
+       separated this letter from the fee sheet. */
+    var mi         = /\bva\b/i.test(loanType) ? 0 : ((_x.mi != null) ? _x.mi : _lsNum('ls_mi_monthly'));
     var down = _lsNum('ls_down_payment'), closing = _lsNum('ls_closing_costs'),
         prepaid = _lsNum('ls_prepaids'), credits = _lsNum('ls_credits');
     // Down payment = Purchase/Appraised − loan amount, DERIVED from the same `value`
     // that feeds purchase_price + LTV, so they can never drift apart on the PDF.
     var downDerived = value ? Math.max(0, value - loanAmount) : down;
-    var pi = 0;
-    if (loanAmount && rate && term) { var r = rate/100/12; pi = r===0 ? loanAmount/term : loanAmount*r*Math.pow(1+r,term)/(Math.pow(1+r,term)-1); }
-    var pitia = pi + mi + taxes + ins + hoa + other;
+    /* NO SECOND FORMULA. This carried its own P&I off ls_loan_amount, which
+       stayed on the BASE loan after the panel above moved to the financed
+       balance — so the letter would have quoted $2,439.78 while the fee sheet
+       and the share page quoted $2,482.48 for the same FHA file. The figures
+       from the lsRecalc() above are used verbatim. */
+    var pi    = (_x.pi != null) ? _x.pi : 0;
+    var pitia = (_x.pitia != null) ? _x.pitia : (pi + mi + taxes + ins + hoa + other);
+    var ufmipFinanced = _x.ufmip || 0;
+    var totalLoanAmt  = _x.totalLoan || loanAmount;
     var ltv = value ? (loanAmount/value*100) : 0;
     // Income/debt LIVE from the qualifier (combined across borrowers) — matches the on-screen DTI.
     var totalIncome = _lsNum('ls_total_monthly_income');
@@ -28052,6 +28106,12 @@ async function lsGeneratePreApproval() {
       loan_program: (document.getElementById('ls_loan_program') || {}).value || '30-Year Fixed',
       interest_rate:rate, quoted_rate:rate, loan_term_months:term, ltv:ltv, cltv:ltv,
       pi_payment:pi, taxes_monthly:taxes, insurance_monthly:ins, hoa_monthly:hoa, mi_monthly:mi, total_pitia:pitia,
+      /* loan_amount stays the BASE figure above — an underwriter reads the letter
+         for what the file is sized at. These two say what is actually repaid, so
+         the quoted P&I reconciles against something stated rather than appearing
+         to be arithmetic nobody can follow. */
+      ufmip_financed: ufmipFinanced,
+      total_loan_amount: totalLoanAmt,
       front_dti:frontDTI, back_dti:backDTI,
       credit_score: parseFloat(document.getElementById('ld-credit')?.value) || app.credit_score || 0,
       total_income:totalIncome, total_debt:totalDebt,

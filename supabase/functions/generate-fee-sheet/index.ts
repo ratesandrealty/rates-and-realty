@@ -98,9 +98,43 @@ function calcAPR(loanAmount: number, ratePercent: number, prepaidFinanceCharges:
    answer again from the fee sheet's 0.20% and the loan summary's LTV ladder, so
    the PDF could disagree with both the tool that produced it and the share link
    beside it. */
-function calcMI(loanProduct: string, ltv: number, loanAmount: number): number {
-  const mi = monthlyMI({ product: loanProduct, ltv, loanAmount });
+function calcMI(loanProduct: string, ltv: number, loanAmount: number, totalLoanAmount?: number): number {
+  const mi = monthlyMI({ product: loanProduct, ltv, loanAmount, totalLoanAmount });
   return mi == null ? 0 : mi;
+}
+
+/* ── THE FINANCED UPFRONT FEE — verbatim from public/fee.html's
+ *    computeGovUpfrontFee, for the same reason _fs_redact mirrors that file's
+ *    arithmetic: two implementations of one number is how the PDF starts
+ *    disagreeing with the share link beside it.
+ *
+ * THIS PDF USED TO IGNORE IT ENTIRELY. Measured on FHA $386,000 / $400,000:
+ * the share page repaid $392,755 and quoted $2,482.48 P&I with $180.01 MI; this
+ * PDF quoted $2,439.78 and $176.92 on $386,000, and listed no UFMIP anywhere —
+ * while its APR was computed WITH the UFMIP as a prepaid finance charge. The
+ * APR asserted a fee the rest of the document never named.
+ *
+ * VA config is not carried in this payload, so first-use / non-exempt is
+ * assumed — the same default public/fee.html applies. */
+function govUpfrontFee(loanProduct: string, baseLoanAmount: number, downPaymentPct: number):
+    { label: string; rate: number; amount: number; financed: boolean } | null {
+  if (!loanProduct || !baseLoanAmount) return null;
+  const p = loanProduct.toUpperCase();
+  const isWord = (w: string) => p === w || p.startsWith(w + ' ');
+  if (isWord('FHA')) {
+    const rate = 0.0175;
+    return { label: 'FHA Upfront MIP (UFMIP, 1.75%)', rate, amount: +(baseLoanAmount * rate).toFixed(2), financed: true };
+  }
+  if (isWord('VA')) {
+    const dp = downPaymentPct || 0;
+    const rate = dp < 5 ? 0.0215 : dp < 10 ? 0.0150 : 0.0125;
+    return { label: 'VA Funding Fee (1st use, ' + (rate * 100).toFixed(2) + '%)', rate, amount: +(baseLoanAmount * rate).toFixed(2), financed: true };
+  }
+  if (isWord('USDA')) {
+    const rate = 0.01;
+    return { label: 'USDA Upfront Guarantee Fee (1.00%)', rate, amount: +(baseLoanAmount * rate).toFixed(2), financed: true };
+  }
+  return null;
 }
 
 // ─── Build PDF ───────────────────────────────────────────────────────────────
@@ -140,6 +174,15 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   const state           = san(d.state || 'CA');
   const scenarios: Scenario[] = (d.scenarios || []).slice(0, 3);
   const numScenarios = scenarios.length;
+
+  /* ONE BASIS FOR THE WHOLE DOCUMENT. `loanAmount` is what the borrower borrows
+     against the house; `totalLoanAmount` is what they actually repay once a
+     financed upfront fee is rolled in. Payment, mortgage insurance, APR and the
+     cost disclosure all read the same pair from here — that they did not is the
+     defect this fixes. */
+  const govFee          = govUpfrontFee(loanProduct, loanAmount, downPct);
+  const govFeeAmount    = govFee && govFee.financed ? govFee.amount : 0;
+  const totalLoanAmount = +(loanAmount + govFeeAmount).toFixed(2);
 
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   const quoteNum = 'FE-' + Date.now().toString(36).toUpperCase();
@@ -312,7 +355,8 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   const taxSvc = scenarios.map(() => 85);
   const mers   = scenarios.map(() => 24.95);
   const proc   = scenarios.map(() => 995);
-  const subB   = scenarios.map((_, i) => appr[i] + credit[i] + flood[i] + taxSvc[i] + mers[i] + proc[i]);
+  const govV   = scenarios.map(() => govFeeAmount);
+  const subB   = scenarios.map((_, i) => appr[i] + credit[i] + flood[i] + taxSvc[i] + mers[i] + proc[i] + govV[i]);
 
   addCat('B. SERVICES YOU CANNOT SHOP FOR');
   addRow('Appraisal Fee', appr);
@@ -321,6 +365,10 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   addRow('Tax Service Fee', taxSvc);
   addRow('MERS Registration', mers);
   addRow('Processing Fee', proc);
+  /* DISCLOSED, not merely financed. A borrower repaying $392,755 on a $386,000
+     loan has to be able to see the $6,755. Same row, same label and the same
+     section the share page puts it in. */
+  if (govFee) addRow(govFee.label, govV);
   addSub('Subtotal B', subB);
 
   // C. SERVICES YOU CAN SHOP FOR (ALL SAME)
@@ -386,12 +434,18 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   // J. ESTIMATED CASH TO CLOSE
   const downPayment   = scenarios.map(() => purchasePrice * downPct / 100);
   const totalCreditsI = scenarios.map((_, i) => lenderCreditVals[i] + pointsCredit[i]);
-  const estFundsNeeded= scenarios.map((_, i) => downPayment[i] + totalH[i] + totalCreditsI[i]);
+  /* The financed fee is a COST that is not brought to closing — it is added to
+     the note instead. It has to appear in H and then come back out here, or the
+     disclosure and the cheque disagree. Cash to close is unchanged by this fix;
+     what changed is that the document now says why. */
+  const govFinanced   = scenarios.map(() => -govFeeAmount);
+  const estFundsNeeded= scenarios.map((_, i) => downPayment[i] + totalH[i] + totalCreditsI[i] + govFinanced[i]);
 
   addCat('J. ESTIMATED CASH TO CLOSE');
   addRow('Down Payment', downPayment);
   addRow('Total Closing Costs', totalH);
   addRow('Less: Lender Credits', totalCreditsI);
+  if (govFee) addRow('Less: Financed (' + govFee.label + ')', govFinanced);
   addGrand('Estimated Funds Needed', estFundsNeeded);
 
   // ── Draw table column headers ──
@@ -405,11 +459,15 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     const bgColor = s.recommended ? GOLD_HDR : DARK;
     rect(sx, y - hdrRowH, scenColW, hdrRowH, bgColor);
     const hdrLabel = 'Option ' + s.id + (s.recommended ? ' *' : '');
-    const _isFHA = (loanProduct || '').toUpperCase().includes('FHA');
-    const _ufmip = _isFHA ? loanAmount * 0.0175 : 0;            // FHA upfront MIP (prepaid finance charge)
-    const _monthlyMI = calcMI(loanProduct, ltv, loanAmount);    // FHA/conv monthly MI (ongoing finance charge)
-    const sPFC = loanAmount*(s.origComp||0)/100 + ((s.points||0)>0 ? loanAmount*s.points/100 : 0) + 1350 + 185 + _ufmip;
-    const sApr = calcAPR(loanAmount, s.rate||0, sPFC, _monthlyMI);
+    /* APR ON THE SAME BASIS AS THE PAYMENT AND THE DISCLOSURE.
+       This used to fold the UFMIP into the prepaid finance charges while
+       calcAPR priced the payment off the BASE loan and the tables below listed
+       no UFMIP at all — one document making three different claims about
+       whether the fee exists. The note is totalLoanAmount, the fee is a finance
+       charge against it, and the payment is the one printed above. */
+    const _monthlyMI = calcMI(loanProduct, ltv, loanAmount, totalLoanAmount);
+    const sPFC = loanAmount*(s.origComp||0)/100 + ((s.points||0)>0 ? loanAmount*s.points/100 : 0) + 1350 + 185 + govFeeAmount;
+    const sApr = calcAPR(totalLoanAmount, s.rate||0, sPFC, _monthlyMI);
     const subLabel = s.label + ' | ' + (s.rate || 0).toFixed(3) + '% (APR ' + sApr.toFixed(3) + '%)';
     T(hdrLabel, sx + 4, y - hdrRowH + 7, B, 7, s.recommended ? GOLD : WHITE);
     T(subLabel, sx + 4, y - hdrRowH + 1, R, 5, s.recommended ? GOLD : LGRAY);
@@ -488,10 +546,14 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   });
   y -= mpHdrH;
 
-  const piVals  = scenarios.map(s => calcMonthlyPI(loanAmount, s.rate || 0));
+  /* totalLoanAmount, not loanAmount. The borrower amortises the financed fee
+     along with everything else, so a payment quoted on the base loan is a
+     payment they will never make — it was $42.70/mo light on FHA
+     $386,000 at 6.5%. */
+  const piVals  = scenarios.map(s => calcMonthlyPI(totalLoanAmount, s.rate || 0));
   const taxMo   = scenarios.map(() => annualTax / 12);
   const insMo   = scenarios.map(() => annualIns / 12);
-  const miVals  = scenarios.map(_ => calcMI(loanProduct, ltv, loanAmount));
+  const miVals  = scenarios.map(_ => calcMI(loanProduct, ltv, loanAmount, totalLoanAmount));
   const totalMo = scenarios.map((_, i) => piVals[i] + taxMo[i] + insMo[i] + miVals[i]);
 
   const mpRows: { label: string; values: number[]; bold: boolean }[] = [

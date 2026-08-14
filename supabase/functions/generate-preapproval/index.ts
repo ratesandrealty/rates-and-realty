@@ -166,6 +166,12 @@ async function buildPDF(d: any): Promise<Uint8Array> {
   const borrower   = v(d.borrower_name);
   const coBorrower = v(d.co_borrower_name);
   const loanAmt    = parseFloat(String(d.loan_amount||0));
+  /* Financed upfront fee, supplied by the caller. This function COMPUTES
+     nothing — it renders what the loan sizer sends — so an older caller that
+     does not send these simply gets the pre-existing letter with no extra rows,
+     rather than a wrong number. */
+  const ufmipFin    = parseFloat(String(d.ufmip_financed||0)) || 0;
+  const totalLoanAmt= parseFloat(String(d.total_loan_amount||0)) || (loanAmt + ufmipFin);
   const purchPrice = parseFloat(String(d.purchase_price||0));
   const downPay    = parseFloat(String(d.down_payment||0));
   const rate       = parseFloat(String(d.interest_rate||0));
@@ -321,6 +327,14 @@ async function buildPDF(d: any): Promise<Uint8Array> {
     {lbl:'LOAN TYPE',val:loanType},{lbl:'PROGRAM',val:loanProg},{lbl:'INTEREST RATE*',val:fmtP(rate)},
     {lbl:'LOAN TERM',val:`${termMo} mo`},{lbl:'LTV / CLTV',val:`${ltv.toFixed(1)}% / ${cltv.toFixed(1)}%`},
     ...(purchPrice?[{lbl:'LOAN AMOUNT',val:fmtD(loanAmt)}]:[]),
+    /* FHA FINANCES THE UPFRONT MIP INTO THE NOTE, so LOAN AMOUNT above is not
+       the balance being repaid. LOAN AMOUNT deliberately stays the base figure —
+       that is what the file is underwritten at and what an underwriter reads —
+       and these two lines say what it becomes, so the Principal & Interest below
+       reconciles against something stated instead of looking like arithmetic
+       nobody can follow. Absent for every program with no financed upfront fee. */
+    ...(ufmipFin>0?[{lbl:'UFMIP (FINANCED)',val:fmtD(ufmipFin)}]:[]),
+    ...(ufmipFin>0?[{lbl:'TOTAL LOAN',val:fmtD(totalLoanAmt)}]:[]),
     ...(downPay?[{lbl:'DOWN PAYMENT',val:fmtD(downPay)}]:[]),
     {lbl:'OCCUPANCY',val:occ},
   ];

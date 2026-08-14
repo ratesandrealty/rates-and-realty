@@ -93,8 +93,13 @@ t('Jumbo is treated as conventional, not unknown',
   browser.monthlyMI({ product: 'Jumbo', ltv: 95, loanAmount: 400000 }) > 0);
 
 console.log('\nno surface has resurrected a hard-coded factor');
+/* FIVE SITES, and this list covered four. admin/lead-detail.html holds two
+   RRMiFactors call sites — the 1003 dash and the loan sizer that feeds EVERY
+   pre-approval letter — and was not guarded, so a hardcoded factor
+   reintroduced there would have passed. It is the surface whose number leaves
+   the building on a signed letter. */
 const SURFACES = [
-  'tools/fee-sheet.html', 'public/fee.html',
+  'tools/fee-sheet.html', 'public/fee.html', 'admin/lead-detail.html',
   'supabase/functions/generate-fee-sheet/index.ts', 'supabase/functions/mortgage-calc/index.ts',
 ];
 const BANNED = /0\.002\s*\/\s*12|0\.0030?\s*\/\s*12|0\.005\s*\/\s*12|0\.0052|0\.0068|0\.0085|0\.0102|pmiRate/;
