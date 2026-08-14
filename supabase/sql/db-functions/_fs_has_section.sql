@@ -1,6 +1,6 @@
 -- _fs_has_section(p_data jsonb, p_key text, p_mode text)
 -- language: plpgsql
--- Captured from production 2026-08-14.
+-- Captured from production 2026-08-14 (bridge widened to every comparison mode).
 
 CREATE OR REPLACE FUNCTION public._fs_has_section(p_data jsonb, p_key text, p_mode text DEFAULT NULL::text)
  RETURNS boolean
@@ -13,7 +13,10 @@ declare
   bdpp numeric;
 begin
   if p_key = 'bridge' then
-    if mode not in ('rate','single') then return false; end if;
+    /* Everywhere a per-option monthly payment exists. HELOC is excluded: that
+       sheet quotes a draw and an interest-only payment on the SAME property,
+       so there is no departing-home overlap to tabulate. */
+    if mode not in ('rate','single','price','property','buydown') then return false; end if;
     return coalesce((p_data->'bridge'->>'on')::boolean, false);
 
   elsif p_key = 'buydown' then

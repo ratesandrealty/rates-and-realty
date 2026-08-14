@@ -1494,7 +1494,7 @@ const SPECS = [
      *   2. the stubbed setter records the exact patch that went out.
      * Note what (2) asserts: ONE key. fsSetSection posting the whole map is the
      * bug that would silently reset a key an older client had never heard of. */
-    name: 'buydown section checkbox appears, and posts one key when clicked',
+    name: 'section checkboxes appear from the server list, and post one key each',
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,
     role: 'admin',
     rpcFns: {
@@ -1517,7 +1517,7 @@ const SPECS = [
           { key:'fee_schedule',   label:'Fee breakdown',    available:true,  on:false },
           { key:'lender_credits', label:'Lender credits',   available:true,  on:false },
           { key:'people',         label:'Co-borrowers',     available:false, on:false },
-          { key:'bridge',         label:'Bridge addendum',  available:false, on:false },
+          { key:'bridge',         label:'Bridge addendum',  available:true,  on:false },
           { key:'buydown',        label:'Buydown schedule', available:true,  on:false }
         ]
       }])`,
@@ -1528,7 +1528,7 @@ const SPECS = [
     evals: [
       ['(async function(){ await fsLoadShareLinks(); '
         + 'await new Promise(function(s){setTimeout(s,500);}); '
-        + 'return document.querySelectorAll("#fsShareLinks input[type=checkbox]").length; })()', 3],
+        + 'return document.querySelectorAll("#fsShareLinks input[type=checkbox]").length; })()', 4],
       /* UNAVAILABLE SECTIONS ARE NOT OFFERED. people and bridge are false for this
          snapshot, so their checkboxes must be absent — and buydown's must be
          present, which is what stops this passing on an empty panel. */
@@ -1537,7 +1537,7 @@ const SPECS = [
          names and reads as a section that does not exist. */
       ['[].filter.call(document.querySelectorAll("#fsShareLinks label"), function(l){'
         + 'return l.querySelector("input[type=checkbox]");}).map(function(l){return l.textContent.trim();})',
-       ['Fee breakdown', 'Lender credits', 'Buydown schedule']],
+       ['Fee breakdown', 'Lender credits', 'Bridge addendum', 'Buydown schedule']],
       ['(function(){var l=[].filter.call(document.querySelectorAll("#fsShareLinks label"),'
         + 'function(e){return /Buydown schedule/.test(e.textContent);})[0];'
         + 'return l ? l.querySelector("input[type=checkbox]").checked : "no checkbox";})()', false],
@@ -1555,7 +1555,18 @@ const SPECS = [
       /* ONE KEY, the right one, for the right slug. Not the whole map: posting
          every key is how a section an older client has never heard of gets
          silently reset to hidden. */
-      ['JSON.stringify(window.__bdPosted||[])', '[{"p_slug":"zztbdqa","p_sections":{"buydown":true}}]'],
+      /* Drive the SECOND control too. Two clicks, two posts, each carrying its
+         own single key — which is the property that matters: a panel posting the
+         whole map would show both keys in the first patch. */
+      ['(async function(){'
+        + 'var l=[].filter.call(document.querySelectorAll("#fsShareLinks label"), function(e){return /Bridge addendum/.test(e.textContent);})[0];'
+        + 'if(!l) return "no bridge checkbox to click";'
+        + 'l.querySelector("input[type=checkbox]").click();'
+        + 'await new Promise(function(s){setTimeout(s,700);});'
+        + 'return window.__bdClicks;})()',
+       [{ tag: 'INPUT', type: 'checkbox' }, { tag: 'INPUT', type: 'checkbox' }]],
+      ['JSON.stringify(window.__bdPosted||[])',
+       '[{"p_slug":"zztbdqa","p_sections":{"buydown":true}},{"p_slug":"zztbdqa","p_sections":{"bridge":true}}]'],
     ],
     /* No expectText: the Fee Sheet tab is not the open one, so its labels are
        not in innerText. The evals above assert the same thing structurally,

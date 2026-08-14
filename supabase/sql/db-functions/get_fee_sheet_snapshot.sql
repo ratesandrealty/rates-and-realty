@@ -55,6 +55,13 @@ begin
      and not coalesce((v_sec->>'buydown')::boolean,false) then
     v_data := v_data - 'buydown';
   end if;
+  /* Same rule for the bridge, and it matters more: data.bridge holds the value
+     and mortgage balance of somebody's OTHER property. No mode guard is needed
+     here, unlike buydown — there is no bridge MODE, so the flag being false
+     always means the section is off. */
+  if not coalesce((v_sec->>'bridge')::boolean,false) then
+    v_data := v_data - 'bridge';
+  end if;
 
   return jsonb_build_object(
     'status','ok', 'slug', v_row.slug, 'data', v_data,

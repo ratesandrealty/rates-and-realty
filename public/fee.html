@@ -65,6 +65,21 @@
      distinct from `.rec` (the recommended one) — they are different claims and
      start out on the same card, so one style for both would hide which is
      which the moment the reader picks a different option. */
+  /* Bridge addendum's "carrying both" table. This is the only table on the
+     page, so its style lives here with the other components rather than inline
+     — which is the whole point of the fix: the previous version hardcoded a
+     LIGHT palette (#FFFDF5 panels, #333/#555/#666 text) onto a page whose card
+     is #111214, so the narrative rendered at roughly 1.3:1 contrast. Borrower
+     facing, and live. Note the admin tool keeps its own light copy on purpose —
+     that sheet is printed. */
+  .br-tab{width:100%;border-collapse:collapse;font-size:.82rem;margin-top:10px}
+  .br-tab th{text-align:right;padding:7px 6px;border-bottom:1px solid rgba(201,168,76,0.35);color:var(--gold);font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;font-weight:800}
+  .br-tab th:first-child{text-align:left}
+  .br-tab td{text-align:right;padding:8px 6px;border-top:1px solid rgba(255,255,255,0.05);font-variant-numeric:tabular-nums;color:var(--text)}
+  .br-tab td:first-child{text-align:left;color:#cfcfcf}
+  .br-tab td.tot{font-weight:800;color:var(--gold)}
+  .br-note{margin-top:12px;padding:10px 12px;border-left:3px solid var(--gold);background:rgba(201,168,76,0.06);font-size:.8rem;color:var(--text);line-height:1.6;white-space:pre-wrap}
+  .br-basis{margin-top:10px;font-size:.74rem;color:var(--muted);line-height:1.6}
   .opt.pick{cursor:pointer;transition:border-color .12s,box-shadow .12s}
   .opt.pick:hover{border-color:rgba(201,168,76,0.45)}
   .opt.pick:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
@@ -557,16 +572,16 @@ function renderRate(snap){
     /* THE BRIDGE ADDENDUM, last and additive. Rebuilds one result per scenario
        purely to read totalMonthly for the "carrying both" column — calcScenario
        is pure, so this computes nothing the sheet above did not already show and
-       changes nothing it did. Rate/single only, matching the admin tool: in the
-       per-column modes each column has a different permanent payment, so one
-       addendum would be wrong for most of them. */
-    if(mode==='rate' || mode==='single'){
-      h+=bridgeAddendumPub(data, scenarios.map(function(s){
-        var r=calcScenario(inp,s);
-        r.headerLabel='Option '+(s.id||'')+': '+_helocRate(s.rate)+'%';
-        return r;
-      }));
-    }
+       changes nothing it did.
+       No longer rate/single-only. The bridge AMOUNT never depended on the mode:
+       bridgeComputePub reads value, balance, cltv, rate, months, points and fees
+       and nothing else — all facts about the DEPARTING home. Only the table
+       needed a per-option payment, and every comparison mode already has one. */
+    h+=bridgeAddendumPub(data, scenarios.map(function(s){
+      var r=calcScenario(inp,s);
+      r.headerLabel='Option '+(s.id||'')+': '+_helocRate(s.rate)+'%';
+      return r;
+    }));
 
     /* THE BUYDOWN ADDENDUM. Unlike the bridge it is NOT rate/single-only: it is
        priced on one loan and says which, so it is equally true beside a set of
@@ -666,6 +681,19 @@ function renderProperty(snap){
     });
     h+='</div></div>';
     h+=buydownAddendumPub(data, 'property');
+    /* netPayment, NOT totalMonthly. It is the figure each card above headlines —
+       it adds HOA and subtracts any rental income — so using totalMonthly here
+       would put a number in the addendum that contradicts the card directly
+       above it. Same rule for every caller: pass what your own cards show. */
+    h+=bridgeAddendumPub(data, results.map(function(r,i){
+      /* Same headerLabel format the admin tool builds, so the preview Rene reads
+         and the page the borrower reads name the columns identically. */
+      return { headerLabel: (cols[i].label||('Option '+(cols[i].id||(i+1))))
+                 + ' · $'+Math.round((Number(cols[i].purchasePrice)||0)/1000)+'K',
+               totalMonthly: r.netPayment };
+    }), { basisNote: results.some(function(r){ return r.monthlyRent>0; })
+          ? 'New-mortgage figures are the net monthly shown for each option above — including HOA, less any rental income.'
+          : 'New-mortgage figures are the total monthly shown for each option above, including HOA.' });
     h+=disclaimer(snap.created_at)+preparedBlock();
     document.getElementById('app').innerHTML=h;
 }
@@ -727,6 +755,11 @@ function renderPrice(snap){
     });
     h+='</div></div>';
     h+=buydownAddendumPub(data, 'price');
+    h+=bridgeAddendumPub(data, results.map(function(r,i){
+      return { headerLabel: (cols[i].label||('Option '+(cols[i].id||(i+1))))
+                 + ' · $'+Math.round((Number(cols[i].purchasePrice)||0)/1000)+'K',
+               totalMonthly: r.totalMonthly };
+    }), { basisNote: 'New-mortgage figures are the total monthly shown for each price above.' });
     h+=disclaimer(snap.created_at)+preparedBlock();
     document.getElementById('app').innerHTML=h;
 }
@@ -861,7 +894,7 @@ function bridgeComputePub(b){
            totalCost: totalInterest+pointsAmt+fees };
 }
 
-function bridgeAddendumPub(data, results){
+function bridgeAddendumPub(data, results, opts){
   const b = data.bridge || {};
   if(!b.on) return '';
   if(!(window.__SEC||{}).bridge) return '';          // opt-in, per link
@@ -871,48 +904,50 @@ function bridgeAddendumPub(data, results){
      state reach a link; if one ever slips through, silence is better on a
      borrower-facing page than an admin-facing complaint. */
   if(!(r.amount>0) || !(r.rate>0) || !(r.months>0)) return '';
+  opts = opts || {};
 
   const payoff=(b.payoff||'').trim();
+  /* ONE ROW PER OPTION — which is what makes this mode-independent. The old
+     comment on the rate/single guard said a per-column mode would need "three
+     addenda", but the table has always been a table: rate mode already carries
+     three different permanent payments in it. Each caller supplies the figure
+     that its own cards headline, so the addendum can never disagree with the
+     sheet above it. */
   const rows=(results||[]).map(function(res){
     const perm=Number(res.totalMonthly)||0;
-    return '<tr class="row-item"><td>'+esc(res.headerLabel||'Option')+'</td>'
-      +'<td style="text-align:right;">'+_brMoney2(perm)+'</td>'
-      +'<td style="text-align:right;">'+_brMoney2(r.monthly)+'</td>'
-      +'<td style="text-align:right;font-weight:700;">'+_brMoney2(perm+r.monthly)+'</td></tr>';
+    return '<tr><td>'+esc(res.headerLabel||'Option')+'</td>'
+      +'<td>'+_brMoney2(perm)+'</td>'
+      +'<td>'+_brMoney2(r.monthly)+'</td>'
+      +'<td class="tot">'+_brMoney2(perm+r.monthly)+'</td></tr>';
   }).join('');
 
   /* id so the suppression test can remove exactly this node and compare the
      rest byte-for-byte, and so anything else that needs to strip it has a
      handle rather than a string match. */
   return '<div class="sec" id="bridgeAddendumPub"><div class="sec-title">Bridge Loan Addendum</div><div class="card">'
-    + '<div style="font-size:12.5px;color:#555;margin-bottom:14px;">A short-term loan against the departing home, used before it sells. It sits alongside whichever option above is chosen — it does not replace it.</div>'
-    + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">'
-    +   '<div style="flex:1;min-width:150px;border:1px solid #C9A84C;border-radius:8px;padding:12px 14px;background:#FFFDF5;">'
-    +     '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#8a6d1f;">Total cost of the bridge</div>'
-    +     '<div style="font-size:22px;font-weight:700;color:#1a1208;">'+_brMoney(r.totalCost)+'</div>'
-    +     '<div style="font-size:11px;color:#666;margin-top:2px;">interest + points + fees over '+r.months+' months</div></div>'
-    +   '<div style="flex:1;min-width:150px;border:1px solid #ddd;border-radius:8px;padding:12px 14px;">'
-    +     '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#777;">Bridge amount</div>'
-    +     '<div style="font-size:22px;font-weight:700;color:#333;">'+_brMoney(r.amount)+'</div>'
-    +     '<div style="font-size:11px;color:#666;margin-top:2px;">'+esc(b.cltv||'')+'% CLTV less the existing balance</div></div>'
-    +   '<div style="flex:1;min-width:150px;border:1px solid #ddd;border-radius:8px;padding:12px 14px;">'
-    +     '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#777;">Bridge payment</div>'
-    +     '<div style="font-size:22px;font-weight:700;color:#333;">'+_brMoney2(r.monthly)+'</div>'
-    +     '<div style="font-size:11px;color:#666;margin-top:2px;">'+(r.io?'interest-only':'amortised')+' at '+r.rate.toFixed(3)+'%</div></div>'
+    + '<div class="br-basis" style="margin-top:0">A short-term loan against the departing home, used before it sells. It sits alongside whichever option above is chosen — it does not replace it.</div>'
+    /* THE COST IS THE HEADLINE. Every other section leads with a monthly payment
+       because the borrower lives with it for thirty years; a bridge is carried
+       for months and then repaid, so what it COSTS is the number the decision
+       turns on. `row(..., 'total')` is the page's own way of saying that. */
+    + '<div class="rows" style="margin-top:6px">'
+    +   row('Bridge amount', _brMoney(r.amount)+' <span style="opacity:.7">('+esc(b.cltv||'')+'% CLTV less the existing balance)</span>')
+    +   row('Bridge payment', _brMoney2(r.monthly)+' <span style="opacity:.7">('+(r.io?'interest-only':'amortised')+' at '+r.rate.toFixed(3)+'%)</span>')
+    +   row('Total cost of the bridge', _brMoney(r.totalCost), 'total')
     + '</div>'
+    + '<div class="br-basis">interest + points + fees over '+r.months+' months</div>'
     /* THE DISCLOSURE THAT MATTERS, and it is not optional within the section:
        while the departing home is unsold the borrower carries BOTH loans. */
-    + (rows ? '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">'
-      + '<thead><tr>'
-      +   '<th style="text-align:left;padding:7px 6px;border-bottom:2px solid #C9A84C;">While the departing home is unsold</th>'
-      +   '<th style="text-align:right;padding:7px 6px;border-bottom:2px solid #C9A84C;">New mortgage</th>'
-      +   '<th style="text-align:right;padding:7px 6px;border-bottom:2px solid #C9A84C;">Bridge</th>'
-      +   '<th style="text-align:right;padding:7px 6px;border-bottom:2px solid #C9A84C;">Both, monthly</th>'
-      + '</tr></thead><tbody>'+rows+'</tbody></table>' : '')
-    + (b.note && String(b.note).trim()
-        ? '<div style="margin-top:12px;padding:10px 12px;border-left:3px solid #C9A84C;background:#FFFDF5;font-size:12.5px;color:#3a3226;line-height:1.6;white-space:pre-wrap;">'
-          + esc(String(b.note).trim()) + '</div>' : '')
-    + '<div style="margin-top:12px;font-size:12px;color:#555;line-height:1.6;">'
+    + (rows ? '<table class="br-tab">'
+      + '<thead><tr><th>While the departing home is unsold</th><th>New mortgage</th><th>Bridge</th><th>Both, monthly</th></tr></thead>'
+      + '<tbody>'+rows+'</tbody></table>' : '')
+    /* WHAT THE "New mortgage" COLUMN IS ON. Rate, single, price and property all
+       state a full monthly payment; buydown states P&I only. A caller whose
+       figure is not comparable to the others must say so here rather than let
+       the column header imply it is. */
+    + (opts.basisNote ? '<div class="br-basis">'+esc(opts.basisNote)+'</div>' : '')
+    + (b.note && String(b.note).trim() ? '<div class="br-note">'+esc(String(b.note).trim())+'</div>' : '')
+    + '<div class="br-basis">'
     +   (payoff ? 'Repaid in full from the sale of <strong>'+esc(payoff)+'</strong>. ' : '')
     +   'Term '+r.months+' months at '+r.rate.toFixed(3)+'%, '+(r.io?'interest-only':'amortised over the term')+'. '
     +   'Interest '+_brMoney(r.totalInterest)+' &middot; points '+_brMoney(r.pointsAmt)+' &middot; other fees '+_brMoney(r.fees)+'. '
@@ -1143,6 +1178,23 @@ function renderBuydown(snap){
       +  'Qualification, the loan balance and the amortisation all follow the note rate of '+noteRate.toFixed(3)+'%. '
       +  'If the loan is paid off or refinanced early, any unused subsidy is credited to the payoff.'
       +'</div></div></div>';
+
+    /* THE BRIDGE, ON A BUYDOWN SHEET — and the one place the "New mortgage"
+       column is NOT comparable to the other modes.
+       Everything else on this page is P&I only (_bdPmt): no taxes, no
+       insurance, no HOA, no MI. Rate, single, price and property all state a
+       FULL monthly payment. Putting a P&I figure under the same column header
+       without saying so would understate what the borrower actually carries
+       while the departing home is unsold, so basisNote says it in words.
+       TWO ROWS, because the payment is time-varying and a bridge is carried for
+       months: year 1 is what they will actually be paying during the overlap,
+       the note rate is what they qualify at and what it becomes. */
+    h+=bridgeAddendumPub(data, [
+      { headerLabel: 'Year 1 — '+years[0].rate.toFixed(3)+'%',            totalMonthly: years[0].payment },
+      { headerLabel: 'Year '+afterYear+' onward — '+noteRate.toFixed(3)+'%', totalMonthly: notePmt }
+    ], { basisNote: 'New-mortgage figures on this sheet are principal and interest ONLY — property taxes, '
+       + 'insurance, any HOA dues and mortgage insurance are additional and are not included in the '
+       + '“Both, monthly” column.' });
 
     h+=disclaimer(snap.created_at)+preparedBlock();
     document.getElementById('app').innerHTML=h;

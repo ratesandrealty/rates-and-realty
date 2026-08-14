@@ -2998,9 +2998,15 @@ function bridgeInputs() {
    user clicked a mode button and came back. Caught in the browser, not by
    reading: every mode I clicked through was right, because clicking is what
    fixed it. */
+/* EVERY MODE THAT CAN DRAW THE ADDENDUM MUST BE ABLE TO EDIT IT. The panel used
+   to be rate/single only, which meant a price, property or buydown sheet could
+   carry bridge data from an earlier draft — bridgeInputs() reads the fields
+   whether or not they are on screen — with no way to see or change it. HELOC is
+   still excluded: see the mode scope on bridgeAddendumHtml. */
+const BRIDGE_MODES = ['rate', 'single', 'price', 'property', 'buydown'];
 function bridgeSyncVisibility(mode) {
     const el = document.getElementById('bridgeBlock');
-    if (el) el.style.display = (mode === 'rate' || mode === 'single') ? '' : 'none';
+    if (el) el.style.display = (BRIDGE_MODES.indexOf(mode) > -1) ? '' : 'none';
 }
 function bridgeToggle() {
     const on = !!($('br_on') && $('br_on').checked);
@@ -3012,28 +3018,28 @@ function bridgeToggle() {
  *
  * MODE SCOPE, stated rather than left to be discovered:
  *
- *   Single Rate, Rate Comparison  -> RENDERED. Every column shares one purchase
- *                                    and one set of sidebar inputs, so there is
- *                                    exactly one during-overlap figure per
- *                                    column and they can sit in one table.
- *   Price Comparison              -> NOT RENDERED, deliberately. Each column is a
- *                                    DIFFERENT purchase price with a different
- *                                    permanent payment, so "carrying both" is a
- *                                    different number per column. One addendum
- *                                    would be wrong for at least two of them,
- *                                    and three addenda is not an addendum.
- *   Property Comparison           -> NOT RENDERED, same reason.
- *   Buydown, HELOC                -> NOT RENDERED. Self-contained modes with
- *                                    their own sheets and their own inputs; the
- *                                    bridge panel is not even shown in the
- *                                    sidebar there.
+ *   Single Rate, Rate Comparison  -> RENDERED.
+ *   Price Comparison              -> RENDERED, one row per price point.
+ *   Property Comparison           -> RENDERED, one row per property type, on the
+ *                                    NET monthly (HOA in, rent out) because that
+ *                                    is the figure the column itself headlines.
+ *   Buydown                       -> RENDERED, two rows (year 1 and the note
+ *                                    rate). Its figures are P&I ONLY and the
+ *                                    addendum says so, because every other mode
+ *                                    here states a full monthly payment.
+ *   HELOC                         -> NOT RENDERED. That sheet quotes a draw
+ *                                    against the SAME property, so there is no
+ *                                    departing-home overlap to tabulate.
  *
- * The panel is hidden outside rate/single, so this is belt and braces — but a
- * render guard that depends on a display:none somewhere else is how a half-right
- * section eventually appears.
+ * THE OLD SCOPE NOTE WAS WRONG ABOUT THE CODE and is worth recording, because it
+ * reads convincingly. It said a per-column mode would need "three addenda", one
+ * per column. It never would have: `rows` has always been built by mapping over
+ * results, and Rate Comparison already puts three different permanent payments
+ * in that one table. Per-column variation is what the table is FOR. The only
+ * thing genuinely mode-dependent was which figure each caller passes.
  */
 function bridgeAddendumHtml(inp, results) {
-    if (!inp || (inp.mode !== 'rate' && inp.mode !== 'single')) return '';
+    if (!inp || BRIDGE_MODES.indexOf(inp.mode) < 0) return '';
     const b = bridgeInputs();
     if (!b.on) return '';
     /* THE SHEET TOGGLE. Off means the addendum is not drawn here at all — and
@@ -3064,7 +3070,28 @@ function bridgeAddendumHtml(inp, results) {
         ? 'Repaid in full from the sale of <strong>' + _fsEsc(payoff) + '</strong>.'
         : '<span style="color:#B4462A;font-weight:700;">Repayment source not stated — enter the departing property.</span>';
 
-    const rows = results.map((res) => {
+    /* WHICH FIGURE EACH MODE CONTRIBUTES — pass what that mode's own columns
+       headline, or the addendum contradicts the table directly above it.
+       Property headlines netPayment (HOA in, rent out); price and rate headline
+       totalMonthly. Mirrors the per-caller rule in public/fee.html. */
+    const src = (inp.mode === 'property')
+        ? (results || []).map(res => ({ headerLabel: res.headerLabel, totalMonthly: res.netPayment }))
+        : (results || []);
+    /* WHAT THE "New mortgage" COLUMN IS ON. Every mode here states a full
+       monthly payment except buydown, which is P&I only — so that one says so
+       rather than letting the shared header imply otherwise. */
+    const basisNote = (inp.mode === 'buydown')
+        ? 'New-mortgage figures on this sheet are principal and interest ONLY — property taxes, insurance, '
+          + 'any HOA dues and mortgage insurance are additional and are not included in the “Both, monthly” column.'
+        : (inp.mode === 'property')
+          ? ((results || []).some(res => (res.monthlyRent || 0) > 0)
+              ? 'New-mortgage figures are the net monthly shown for each option above — including HOA, less any rental income.'
+              : 'New-mortgage figures are the total monthly shown for each option above, including HOA.')
+          : (inp.mode === 'price')
+            ? 'New-mortgage figures are the total monthly shown for each price above.'
+            : '';
+
+    const rows = src.map((res) => {
         const perm = Number(res.totalMonthly) || 0;
         return '<tr class="row-item">'
             + '<td>' + _fsEsc(res.headerLabel || 'Option') + '</td>'
@@ -3120,6 +3147,9 @@ function bridgeAddendumHtml(inp, results) {
       +   '</tr></thead><tbody>'
       +   rows
       + '</tbody></table>'
+      + (basisNote
+          ? '<div style="margin-top:8px;font-size:11px;color:#555;line-height:1.55;">' + _fsEsc(basisNote) + '</div>'
+          : '')
 
       + (b.note && b.note.trim()
           ? '<div style="margin-top:12px;padding:10px 12px;border-left:3px solid #C9A84C;background:#FFFDF5;font-size:12.5px;color:#3a3226;line-height:1.6;white-space:pre-wrap;">'
@@ -3308,6 +3338,19 @@ function _bdReportHtml(res, inp, errs) {
         +   'subsidy is credited to the payoff. Estimate only &mdash; not a commitment to lend.'
         + '</div>'
         + '</div>'
+        /* THE BRIDGE, ON A BUYDOWN SHEET. Two rows, because the payment is
+           time-varying and a bridge is carried for months: year 1 is what is
+           actually being paid during the overlap, the note rate is what they
+           qualify at and what it becomes. bridgeAddendumHtml labels the P&I
+           basis — every other mode here states a FULL monthly payment.
+           mode is passed explicitly: bdInputs() has no `mode` field, and the
+           guard reads inp.mode. */
+        + bridgeAddendumHtml({ mode: 'buydown' }, [
+            { headerLabel: 'Year 1 — ' + res.years[0].rate.toFixed(3) + '%',
+              totalMonthly: res.years[0].payment },
+            { headerLabel: 'Year ' + afterYear + ' onward — ' + inp.noteRate.toFixed(3) + '%',
+              totalMonthly: res.notePmt },
+          ])
         + _fsReportFooter(dateStr, timeStr);
 }
 
