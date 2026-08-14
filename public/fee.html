@@ -568,6 +568,11 @@ function renderRate(snap){
       }));
     }
 
+    /* THE BUYDOWN ADDENDUM. Unlike the bridge it is NOT rate/single-only: it is
+       priced on one loan and says which, so it is equally true beside a set of
+       price or property columns. Both remaining modes append it identically. */
+    h+=buydownAddendumPub(data, mode);
+
     h+=disclaimer(snap.created_at)+preparedBlock();
     document.getElementById('app').innerHTML=h;
 }
@@ -660,6 +665,7 @@ function renderProperty(snap){
         +'</div>';
     });
     h+='</div></div>';
+    h+=buydownAddendumPub(data, 'property');
     h+=disclaimer(snap.created_at)+preparedBlock();
     document.getElementById('app').innerHTML=h;
 }
@@ -720,6 +726,7 @@ function renderPrice(snap){
         +'</div>';
     });
     h+='</div></div>';
+    h+=buydownAddendumPub(data, 'price');
     h+=disclaimer(snap.created_at)+preparedBlock();
     document.getElementById('app').innerHTML=h;
 }
@@ -953,6 +960,96 @@ function _bdSchedule(structure){ var c = BD_STRUCTURES[structure]; return c ? c.
 function _bdMoney(v){ return '$'+Math.round(v).toLocaleString('en-US'); }
 function _bdMoney2(v){ return '$'+v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,','); }
 
+/* ── THE LOAN A BUYDOWN IS PRICED ON, and why the fallback is mode-dependent
+ *
+ * An explicit bd.loan always wins. Without one, purchase price less down is the
+ * right answer in rate/single, where the sheet has exactly ONE loan basis — that
+ * is the fallback renderBuydown has always used.
+ *
+ * It is the WRONG answer in price and property comparison. There every column
+ * carries its own purchase price, so common.purchasePrice matches none of them,
+ * and a buydown drawn off it would state a loan amount the borrower is not being
+ * quoted anywhere on the page. So in those two modes there is no fallback: no
+ * explicit loan, no section.
+ *
+ * _fs_has_section() in Postgres applies the same rule, so the checkbox is
+ * offered exactly where this can draw something true. THE TWO MUST STAY IN
+ * STEP — same relationship as _fs_redact and this file's arithmetic. */
+function _bdLoan(data, mode){
+    var bd = data.buydown || {}, c = data.common || {};
+    var explicit = parseCurrency(bd.loan);
+    if(explicit > 0) return explicit;
+    if(mode === 'price' || mode === 'property') return 0;
+    var pp = parseCurrency(c.purchasePrice), dp = parseFloat(c.downPct) || 0;
+    return Math.max(0, pp - (pp * dp / 100));
+}
+
+/* ── THE BUYDOWN AS A SECTION, NOT A MODE ─────────────────────────────────
+ *
+ * renderBuydown draws a WHOLE PAGE and is reached by the mode dispatch, so it
+ * has no business consulting __SEC — the mode already decided, and gating it on
+ * a section flag would blank a buydown link. That is precisely why the buydown
+ * checkbox was inert: nothing anywhere consumed a buydown SECTION, so the flag
+ * could be written and no renderer would ever read it. This function is that
+ * missing consumer.
+ *
+ * Modelled on bridgeAddendumPub: opt-in per link, additive, appended last, and
+ * SILENT rather than complaining when it cannot draw. renderBuydown says "not
+ * finished yet" instead, because there the buydown is the entire page and an
+ * empty page needs explaining; here an unfinished addendum bolted onto an
+ * otherwise complete sheet is worse than its absence.
+ *
+ * Arithmetic is _bdPmt/_bdSchedule — the SAME functions renderBuydown uses, not
+ * a second copy. A section that disagreed with the buydown-mode sheet built from
+ * the same snapshot would be worse than no section at all. */
+function buydownAddendumPub(data, mode){
+    if(!(window.__SEC||{}).buydown) return '';          // opt-in, per link
+    var bd = data.buydown || {};
+    var noteRate = parseFloat(bd.rate) || 0;
+    var term = parseFloat(bd.term) || 30;
+    var loan = _bdLoan(data, mode);
+    var cuts = _bdSchedule(bd.structure || '2-1');
+    if(!(loan > 0) || !(noteRate > 0) || !cuts) return '';
+
+    var notePmt = _bdPmt(loan, noteRate, term);
+    var years = cuts.map(function(cut, idx){
+        var rate = Math.max(0, noteRate - cut);
+        var pay = _bdPmt(loan, rate, term);
+        return { year: idx+1, cut: cut, rate: rate, payment: pay, yearSaving: (notePmt - pay) * 12 };
+    });
+    var totalCost = years.reduce(function(s, y){ return s + y.yearSaving; }, 0);
+    var afterYear = years.length + 1;
+    var payerLabel = {seller:'Seller credit',lender:'Lender credit',builder:'Builder credit',borrower:'Borrower paid'}[bd.payer] || 'Seller credit';
+
+    /* id so a suppression test can remove exactly this node and compare the rest
+       byte-for-byte, and so anything else needing to strip it has a handle
+       rather than a string match. Same reason bridgeAddendumPub carries one. */
+    var h = '<div class="sec" id="buydownAddendumPub"><div class="sec-title">'
+      + esc(bd.structure || '2-1') + ' Temporary Buydown</div><div class="card">'
+      + '<div style="font-size:.78rem;color:var(--muted);margin-bottom:12px;line-height:1.6;">'
+      +   'A subsidy held in escrow lowers the payment for the first '
+      +   years.length + ' year' + (years.length > 1 ? 's' : '') + '. It sits alongside the figures above rather than replacing them: '
+      +   'the loan balance, the amortisation and qualification all follow the note rate of ' + noteRate.toFixed(3) + '%.'
+      + '</div><div class="rows">';
+    years.forEach(function(y){
+        h += row('Year ' + y.year + ' — note rate −' + y.cut + '%',
+                 _bdMoney2(y.payment) + ' <span style="opacity:.7">(' + y.rate.toFixed(3) + '%)</span>');
+    });
+    h += row('Year ' + afterYear + ' onward — note rate',
+             _bdMoney2(notePmt) + ' <span style="opacity:.7">(' + noteRate.toFixed(3) + '%)</span>', 'sub')
+      +  row('Total buydown cost — ' + esc(payerLabel), _bdMoney(totalCost), 'total')
+      + '</div>'
+      /* STATE THE LOAN IT WAS PRICED ON. In a price or property comparison the
+         columns above carry several different loan amounts, and a payment
+         schedule with no stated basis reads as applying to whichever one the
+         borrower happens to be looking at. */
+      + '<div style="margin-top:12px;font-size:.72rem;color:#666;line-height:1.6;">'
+      +   'Priced on a loan of ' + _bdMoney(loan) + ' over ' + esc(term) + ' years. '
+      +   'If the loan is paid off or refinanced early, any unused subsidy is credited to the payoff.'
+      + '</div></div></div>';
+    return h;
+}
+
 function renderBuydown(snap){
     const data=snap.data||{}, bd=data.buydown||{}, c=data.common||{};
     const name=snap.borrower_name||c.borrowerName||'Borrower';
@@ -960,12 +1057,11 @@ function renderBuydown(snap){
     const term=parseFloat(bd.term)||30;
     const noteRate=parseFloat(bd.rate)||0;
     /* Same fallback as bdInputs(): an explicit bd_loan wins, else purchase − down.
-       Without this a sheet built off the sidebar renders a $0 loan. */
-    let loan=parseCurrency(bd.loan);
-    if(!(loan>0)){
-        const pp=parseCurrency(c.purchasePrice), dp=parseFloat(c.downPct)||0;
-        loan=Math.max(0, pp-(pp*dp/100));
-    }
+       Without this a sheet built off the sidebar renders a $0 loan.
+       Via _bdLoan so the mode renderer and the section addendum resolve the loan
+       through one function — 'buydown' always allows the fallback, because in
+       buydown mode there is only ever one loan basis. */
+    const loan=_bdLoan(data, 'buydown');
     const payerLabel={seller:'Seller credit',lender:'Lender credit',builder:'Builder credit',borrower:'Borrower paid'}[bd.payer]||'Seller credit';
 
     /* A link whose draft was never finished must say so, not draw a $0 schedule
@@ -1097,7 +1193,7 @@ function renderError(msg){
         /* Section visibility is OPT-IN and resolved server-side; an older payload
            with no `sections` key means nothing was opted in, so default to all
            false rather than all true. Failing open here would undo the point. */
-        window.__SEC = Object.assign({lender_credits:false,fee_schedule:false,people:false}, data.sections||{});
+        window.__SEC = Object.assign({lender_credits:false,fee_schedule:false,people:false,bridge:false,buydown:false}, data.sections||{});
         const mode = (data.data && data.data.mode) || 'rate';
         document.title = (data.borrower_name?data.borrower_name+' — ':'')+'Loan Estimate | Rates & Realty';
         // Mirror the admin tool per mode: property → SFR/Condo/2-4 Unit comparison;

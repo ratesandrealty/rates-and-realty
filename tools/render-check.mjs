@@ -1475,6 +1475,93 @@ const SPECS = [
     ],
   },
   {
+    /* THE BUYDOWN CHECKBOX IS A REAL CONTROL, driven and recorded.
+     *
+     * _fsSectionToggles renders entirely from what the server serves, so adding
+     * `buydown` to _fs_share_section_keys is supposed to make a checkbox appear
+     * here with no change to lead-detail.html. "Supposed to" is the part worth
+     * checking: the panel filters on `available`, and a section that is offered
+     * but never drawn — or drawn but never offered — is exactly the dead-toggle
+     * defect this whole change exists to remove.
+     *
+     * The rpcFns payload below is the REAL output of list_fee_sheet_snapshots
+     * for the ZZ-TEST fixture's link, copied verbatim from the database rather
+     * than invented, so the shape the page parses is the shape it will get.
+     *
+     * THE CLICK IS PROVEN TWICE, and neither proof is "something changed":
+     *   1. a capture-phase listener installed before the click records that the
+     *      event reached the input, and
+     *   2. the stubbed setter records the exact patch that went out.
+     * Note what (2) asserts: ONE key. fsSetSection posting the whole map is the
+     * bug that would silently reset a key an older client had never heard of. */
+    name: 'buydown section checkbox appears, and posts one key when clicked',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    rpcFns: {
+      list_fee_sheet_snapshots: `() => ([{
+        slug: 'zztbdqa', status: 'live', has_video: false,
+        contact_id: '${FIXTURE}', borrower_name: 'ZZ-TEST Fixture Borrower',
+        created_at: '2026-08-14T05:10:25.720837+00:00',
+        expires_at: null, revoked_at: null, archived_at: null,
+        view_count: 0, last_viewed_at: null,
+        share_sections: {}, snapshot_mode: 'rate', mode_override: null,
+        modes: [
+          { key:'rate',     label:'Rate Comparison',     available:true },
+          { key:'single',   label:'Single Rate',         available:true },
+          { key:'price',    label:'Price Comparison',    available:true },
+          { key:'property', label:'Property Comparison', available:true },
+          { key:'buydown',  label:'Buydown',             available:true },
+          { key:'heloc',    label:'HELOC',               available:false }
+        ],
+        sections: [
+          { key:'fee_schedule',   label:'Fee breakdown',    available:true,  on:false },
+          { key:'lender_credits', label:'Lender credits',   available:true,  on:false },
+          { key:'people',         label:'Co-borrowers',     available:false, on:false },
+          { key:'bridge',         label:'Bridge addendum',  available:false, on:false },
+          { key:'buydown',        label:'Buydown schedule', available:true,  on:false }
+        ]
+      }])`,
+      /* Records rather than answers, onto window so an eval can read it back.
+         The assertion is on what the click POSTED, not on the page changing. */
+      set_fee_sheet_sections: `(args) => { window.__bdPosted = (window.__bdPosted||[]).concat([args]); return args.p_sections; }`,
+    },
+    evals: [
+      ['(async function(){ await fsLoadShareLinks(); '
+        + 'await new Promise(function(s){setTimeout(s,500);}); '
+        + 'return document.querySelectorAll("#fsShareLinks input[type=checkbox]").length; })()', 3],
+      /* UNAVAILABLE SECTIONS ARE NOT OFFERED. people and bridge are false for this
+         snapshot, so their checkboxes must be absent — and buydown's must be
+         present, which is what stops this passing on an empty panel. */
+      /* SECTION labels only. The mode picker is a <label> too — it wraps the
+         <select> — so an unfiltered label sweep picks up the concatenated mode
+         names and reads as a section that does not exist. */
+      ['[].filter.call(document.querySelectorAll("#fsShareLinks label"), function(l){'
+        + 'return l.querySelector("input[type=checkbox]");}).map(function(l){return l.textContent.trim();})',
+       ['Fee breakdown', 'Lender credits', 'Buydown schedule']],
+      ['(function(){var l=[].filter.call(document.querySelectorAll("#fsShareLinks label"),'
+        + 'function(e){return /Buydown schedule/.test(e.textContent);})[0];'
+        + 'return l ? l.querySelector("input[type=checkbox]").checked : "no checkbox";})()', false],
+      /* Drive it. The listener goes on FIRST and is capture-phase, so it records
+         the event regardless of whether the page has any handler at all. */
+      ['(async function(){'
+        + 'window.__bdClicks=[];'
+        + 'document.addEventListener("click", function(e){ window.__bdClicks.push({tag:e.target.tagName, type:e.target.type||null}); }, true);'
+        + 'var l=[].filter.call(document.querySelectorAll("#fsShareLinks label"), function(e){return /Buydown schedule/.test(e.textContent);})[0];'
+        + 'if(!l) return "no buydown checkbox to click";'
+        + 'l.querySelector("input[type=checkbox]").click();'
+        + 'await new Promise(function(s){setTimeout(s,700);});'
+        + 'return window.__bdClicks;})()',
+       [{ tag: 'INPUT', type: 'checkbox' }]],
+      /* ONE KEY, the right one, for the right slug. Not the whole map: posting
+         every key is how a section an older client has never heard of gets
+         silently reset to hidden. */
+      ['JSON.stringify(window.__bdPosted||[])', '[{"p_slug":"zztbdqa","p_sections":{"buydown":true}}]'],
+    ],
+    /* No expectText: the Fee Sheet tab is not the open one, so its labels are
+       not in innerText. The evals above assert the same thing structurally,
+       which is the right level for a control inside a closed tab anyway. */
+  },
+  {
     /* THE PLACES CONSOLIDATION, ON A FIXTURE — because the live page cannot
      * prove any of it. The Google key is referrer-restricted to the real domain
      * and the widget only fires on a human picking from a dropdown, so on

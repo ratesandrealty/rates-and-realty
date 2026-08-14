@@ -1,6 +1,6 @@
 -- get_fee_sheet_snapshot(p_slug text)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-13. This layer had NO git history:
+-- Captured from production 2026-08-14. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -44,6 +44,16 @@ begin
   if v_mode is not null then v_data := jsonb_set(v_data, '{mode}', to_jsonb(v_mode), true); end if;
   if not coalesce((v_sec->>'people')::boolean,false) then
     v_data := v_data - '_people';
+  end if;
+  /* NOT MERELY HIDDEN — REMOVED, same as _people. A section that is off must not
+     ship its numbers to an anonymous holder of the URL, or "hidden" is a CSS
+     claim rather than a disclosure one.
+     Guarded on the MODE: in buydown mode the buydown is the whole page and the
+     section flag is always false there (see _fs_has_section), so an unguarded
+     strip would blank every buydown link. */
+  if coalesce(v_mode,'') <> 'buydown'
+     and not coalesce((v_sec->>'buydown')::boolean,false) then
+    v_data := v_data - 'buydown';
   end if;
 
   return jsonb_build_object(

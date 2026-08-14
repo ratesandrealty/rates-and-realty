@@ -1,6 +1,6 @@
 -- _fs_share_section_keys()
 -- language: sql
--- Captured from production 2026-08-12.
+-- Captured from production 2026-08-14.
 
 CREATE OR REPLACE FUNCTION public._fs_share_section_keys()
  RETURNS jsonb
@@ -14,6 +14,7 @@ AS $function$
     {"key":"fee_schedule",   "label":"Fee breakdown"},
     {"key":"lender_credits", "label":"Lender credits"},
     {"key":"people",         "label":"Co-borrowers"},
-    {"key":"bridge",         "label":"Bridge addendum"}
+    {"key":"bridge",         "label":"Bridge addendum"},
+    {"key":"buydown",        "label":"Buydown schedule"}
   ]'::jsonb;
 $function$;
