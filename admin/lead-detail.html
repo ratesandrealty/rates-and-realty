@@ -945,6 +945,28 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
     .tp-high   { background:rgba(248,113,113,.1); color:#f87171; }
     .tp-normal { background:rgba(96,165,250,.1);  color:#60a5fa; }
     .tp-low    { background:rgba(74,222,128,.1);  color:#4ade80; }
+    /* Assignee chip. margin-left:auto now belongs to this one — it sits to the
+       LEFT of the priority pill, so the priority pill loses the auto margin and
+       the two stay adjacent at the right edge instead of splitting apart. */
+    .tk-chip {
+      margin-left: auto; padding: 3px 9px; border-radius: 999px;
+      font-size: 0.66rem; font-weight: 700; white-space: nowrap;
+      border: 1px solid transparent;
+    }
+    .tk-chip.is-mine       { background:rgba(201,168,76,.14); color:#C9A84C; border-color:rgba(201,168,76,.32); }
+    .tk-chip.is-other      { background:rgba(139,127,224,.13); color:#AB9FE0; border-color:rgba(139,127,224,.3); }
+    .tk-chip.is-unassigned { background:rgba(255,255,255,.05); color:rgba(255,255,255,.45); border-color:rgba(255,255,255,.12); }
+    .task-row .task-priority { margin-left: 8px; }
+    /* Section heading — only rendered when more than one bucket has rows. */
+    .tk-sec {
+      display:flex; align-items:center; gap:7px;
+      font-size:0.66rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+      color:rgba(255,255,255,.42); margin:16px 0 7px; padding-top:10px;
+      border-top:1px solid rgba(255,255,255,.07);
+    }
+    .tk-sec:first-child { margin-top:0; padding-top:0; border-top:none; }
+    .tk-sec-n { font-size:.62rem; background:rgba(255,255,255,.07); border-radius:999px; padding:1px 7px; color:rgba(255,255,255,.55); }
+    .tk-sec-done { color:rgba(255,255,255,.3); }
     .ld-add-task-btn {
       display: flex; align-items: center; gap: 8px;
       padding: 9px 18px; border-radius: 8px;
@@ -2829,7 +2851,7 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
           <div id="lpSnapshotBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;"></div></div>
         <div class="lp-card"><div class="lp-h" data-help-topic="crm.lead.critical_dates" data-help-title="Critical Dates">📅 Critical Dates</div>
           <div id="lpDatesBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px;"></div></div>
-        <div class="lp-card"><div class="lp-h" style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>🌅 VA Daily Tasks</span><!-- The separate "Assign to VA" button was removed. It sat beside a quick-add that created UNASSIGNED tasks, so two controls on one card looked equivalent and only one did what both appeared to do — 0 of 207 tasks ever got an assignee. Quick-add now assigns by default (_vaDefaultAssignee), which is what this button was for. openAssignVaModal() is retained for assigning to someone OTHER than the VA; nothing currently opens it. --></div><div id="lpVaTasksBody"></div></div>
+        <div class="lp-card" id="lpVaCard" hidden><div class="lp-h" id="lpVaHead" role="button" tabindex="0" onclick="lpVaToggle()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();lpVaToggle();}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;user-select:none;"><span><span id="lpVaCaret" style="display:inline-block;width:12px;color:#C9A84C;">▸</span> 🌅 VA Daily Tasks <span id="lpVaCount" style="font-size:10px;font-weight:700;background:rgba(201,168,76,.14);color:#C9A84C;border-radius:999px;padding:1px 7px;margin-left:4px;"></span></span><!-- The separate "Assign to VA" button was removed. It sat beside a quick-add that created UNASSIGNED tasks, so two controls on one card looked equivalent and only one did what both appeared to do — 0 of 207 tasks ever got an assignee. Quick-add now assigns by default (_vaDefaultAssignee), which is what this button was for. openAssignVaModal() is retained for assigning to someone OTHER than the VA; nothing currently opens it. --></div><div id="lpVaTasksWrap" hidden><div id="lpVaTasksBody"></div></div></div>
         <div class="lp-card"><div class="lp-h" data-help-topic="crm.lead.intake_checklist" data-help-title="Intake / Setup Checklist">✅ Intake / Setup Checklist</div><div id="lpIntakeBody"></div></div>
         <!-- Borrower Document Checklist REMOVED from the UI 2026-08-10 at Rene's
              request. The DATA IS INTACT: processing_items kind='doc', 214 rows
@@ -7044,6 +7066,7 @@ async function loadTasks() {
     });
     if (error) throw error;
     tasksData = data || [];
+    await _tkLoadNames();          // chips need display names, not email local parts
     renderTasks();
   } catch (err) {
     /* The old `catch (_) {}` swallowed everything, and supabase-js resolves
@@ -7059,6 +7082,73 @@ async function loadTasks() {
   }
 }
 
+/* ── ASSIGNEE BUCKETS ───────────────────────────────────────────────────────
+   Every row carries a chip saying whose it is. HEADERS ONLY APPEAR when a
+   bucket is non-empty AND at least two buckets have rows.
+
+   Measured before choosing this: of 1044 leads, 33 have any live task at all,
+   0 have one assigned to Rene, 5 have one of Aubrey's, and exactly 2 have a mix
+   that needs more than one section. Average 1.4 live tasks per lead. Three
+   permanent headers over 1.4 rows is mostly furniture, and a "Mine (0)" heading
+   on every lead is a promise the data does not keep — so Mine appears the
+   moment something is assigned, and not before, with no code change needed.
+
+   Buckets come from task_list's assignee_state, which the server computes
+   against auth.uid(). Nobody's uid is hardcoded here: "other" is keyed on
+   assigned_to and labelled from assignee_email, so a third staff member would
+   appear correctly without touching this file. */
+/* Display names come from team_roster(), NOT from the email local part.
+   Aubrey's account is processing@ratesandrealty.com, so the obvious
+   split('@')[0] rendered her chip as "Processing" — on a page where Processing
+   is also a pipeline status and a tab heading. A person's name must not read as
+   a state. Cached for the page's lifetime and only consulted for tasks that
+   actually have an assignee. */
+var _tkNames = null;
+async function _tkLoadNames() {
+  if (_tkNames) return _tkNames;
+  _tkNames = {};
+  try {
+    var r = await _authClient().rpc('team_roster');
+    (r && r.data ? r.data : []).forEach(function (m) {
+      if (m && m.user_id && m.display) _tkNames[m.user_id] = m.display;
+    });
+  } catch (e) { console.warn('[lead-detail] team_roster unavailable; chips fall back to email', e); }
+  return _tkNames;
+}
+
+function _tkBucket(t) {
+  if (t.assignee_state === 'mine') return { key: 'mine', label: 'Mine', cls: 'is-mine' };
+  if (!t.assigned_to) return { key: 'unassigned', label: 'Unassigned', cls: 'is-unassigned' };
+  var who = (_tkNames && _tkNames[t.assigned_to]) || '';
+  if (!who) {                 // roster unavailable — an email beats nothing
+    who = String(t.assignee_email || '').split('@')[0].replace(/[._-]+/g, ' ').trim();
+    who = who ? who.charAt(0).toUpperCase() + who.slice(1) : 'Assigned';
+  }
+  return { key: 'u:' + t.assigned_to, label: who, cls: 'is-other' };
+}
+
+function _tkRow(t) {
+  const done = t.status === 'completed';
+  /* _rrD, not new Date(): tasks.due_date is `timestamp WITHOUT time zone` and
+     every producer writes UTC, so a bare parse reads it as local and shows it
+     7 hours late for the 203 rows written at 17:00Z.
+     `cancelled` is excluded too — it is finished work and cannot be late. */
+  const overdue = t.due_date && !done && t.status !== 'cancelled' && _rrD(t.due_date) < new Date();
+  const b = _tkBucket(t);
+  return `
+      <div class="task-row">
+        <button class="task-check ${done ? 'done' : ''}" onclick="toggleTask('${t.id}', ${done})" title="${done ? 'Mark open' : 'Mark done'}"></button>
+        <div style="flex:1;min-width:0;">
+          <div class="task-title ${done ? 'done' : ''}">${esc(t.title)}</div>
+          ${t.due_date ? `<div class="task-due ${overdue ? 'overdue' : ''}">
+            ${overdue ? '⚠ ' : ''}Due ${fmtDate(t.due_date)}
+          </div>` : ''}
+        </div>
+        <span class="tk-chip ${b.cls}" title="Assignee">${esc(b.label)}</span>
+        <span class="task-priority tp-${t.priority || 'normal'}">${t.priority || 'normal'}</span>
+      </div>`;
+}
+
 function renderTasks() {
   const el = document.getElementById('tasks-list');
   if (!tasksData.length) {
@@ -7069,25 +7159,35 @@ function renderTasks() {
     </div>`;
     return;
   }
-  el.innerHTML = tasksData.map(t => {
-    const done = t.status === 'completed';
-    /* _rrD, not new Date(): tasks.due_date is `timestamp WITHOUT time zone` and
-       every producer writes UTC, so a bare parse reads it as local and shows it
-       7 hours late for the 198 rows written at 17:00Z.
-       `cancelled` is excluded too — it is finished work and cannot be late. */
-    const overdue = t.due_date && !done && t.status !== 'cancelled' && _rrD(t.due_date) < new Date();
-    return `
-      <div class="task-row">
-        <button class="task-check ${done ? 'done' : ''}" onclick="toggleTask('${t.id}', ${done})" title="${done ? 'Mark open' : 'Mark done'}"></button>
-        <div style="flex:1;min-width:0;">
-          <div class="task-title ${done ? 'done' : ''}">${esc(t.title)}</div>
-          ${t.due_date ? `<div class="task-due ${overdue ? 'overdue' : ''}">
-            ${overdue ? '⚠ ' : ''}Due ${fmtDate(t.due_date)}
-          </div>` : ''}
-        </div>
-        <span class="task-priority tp-${t.priority || 'normal'}">${t.priority || 'normal'}</span>
-      </div>`;
-  }).join('');
+
+  const live = tasksData.filter(t => t.status !== 'completed' && t.status !== 'cancelled');
+  const done = tasksData.filter(t => t.status === 'completed' || t.status === 'cancelled');
+
+  /* Insertion order decides section order: Mine, Unassigned, then everyone else
+     as encountered. Map preserves it, so no separate sort is needed. */
+  const groups = new Map();
+  live.forEach(t => {
+    const b = _tkBucket(t);
+    if (!groups.has(b.key)) groups.set(b.key, { label: b.label, rows: [] });
+    groups.get(b.key).rows.push(t);
+  });
+  const ordered = [...groups.entries()].sort((x, y) => {
+    const rank = k => (k === 'mine' ? 0 : k === 'unassigned' ? 2 : 1);
+    return rank(x[0]) - rank(y[0]);
+  });
+
+  const showHeaders = ordered.length >= 2;   // one bucket needs no label
+  let html = ordered.map(([, g]) =>
+    (showHeaders
+      ? `<div class="tk-sec">${esc(g.label)} <span class="tk-sec-n">${g.rows.length}</span></div>`
+      : '') + g.rows.map(_tkRow).join('')
+  ).join('');
+
+  if (done.length) {
+    html += `<div class="tk-sec tk-sec-done">Done <span class="tk-sec-n">${done.length}</span></div>`
+          + done.map(_tkRow).join('');
+  }
+  el.innerHTML = html;
 }
 
 function openTaskForm() {
@@ -7103,7 +7203,9 @@ function closeTaskForm() {
 
 async function createTask() {
   const title = document.getElementById('task-title-input').value.trim();
-  const due = document.getElementById('task-due-input').value;
+  /* 17:00 UTC via the one shared helper — see RRTime.dateToUtc. A raw
+     YYYY-MM-DD lands at 00:00 UTC, which renders as 5pm the PREVIOUS day. */
+  const due = window.RRTime.dateToUtc(document.getElementById('task-due-input').value);
   const pri = document.getElementById('task-pri-input').value;
   if (!title) { toast('Task title required', true); return; }
   if (!leadId) { toast('No lead associated', true); return; }
@@ -11098,7 +11200,9 @@ async function lpLoadProcessing(){
   lpLoadLoe(cid);
   lpLoadRelated(cid);
   lpLoadEsign(cid);
-  lpLoadVaTasks();
+  /* Decide whether the VA card appears at all before loading its contents —
+     the panel is collapsed, so lpLoadVaTasks() now runs on first expand. */
+  lpVaStripInit();
   lpLoadShares();
   lpLoadHealth(cid);       // status banner + urgent list + Critical Dates glow (one source of truth)
   lpFocusOrderFromHash();  // deep link: #processing&order=<order_id>
@@ -18144,6 +18248,61 @@ async function _vaDefaultAssignee(){
   return _vaAssigneeCache;
 }
 
+/* ── VA DAILY TASKS: shown only when this lead actually has any ─────────────
+ *
+ * The card used to render unconditionally, and its own list comes from
+ * va_task_list, which for an ADMIN returns every live task in the system (48
+ * today) rather than this lead's — so on a lead with no VA work it still drew a
+ * populated panel that had nothing to do with the loan in front of you.
+ *
+ * Visibility is now decided by task_list('lead'), scoped to this contact and
+ * filtered to work assigned to somebody OTHER than the viewer — which is Aubrey
+ * today and would be anyone else tomorrow without touching this. If that count
+ * is zero the whole card stays hidden: NO collapsed header promising content
+ * that is not there. If it is non-zero the card appears COLLAPSED, with the
+ * count on the header, and opens on click.
+ *
+ * The panel's internals are deliberately untouched — quick-add, the notes
+ * thread, the suggestion chips and the #vatask deep link all still work off
+ * va_task_list. Re-sourcing those is a larger change than this step asked for,
+ * and doing it halfway would break the deep link. */
+var _lpVaOpen = false;
+function lpVaToggle(){
+  _lpVaOpen = !_lpVaOpen;
+  var w = document.getElementById('lpVaTasksWrap');
+  var c = document.getElementById('lpVaCaret');
+  if (w) w.hidden = !_lpVaOpen;
+  if (c) c.textContent = _lpVaOpen ? '▾' : '▸';
+  if (_lpVaOpen && typeof lpLoadVaTasks === 'function') lpLoadVaTasks();
+}
+
+async function lpVaStripInit(){
+  var card = document.getElementById('lpVaCard');
+  if (!card) return;
+  var cid = lpCid();
+  if (!cid) { card.hidden = true; return; }
+  try{
+    var r = await _authClient().rpc('task_list', {
+      p_scope: 'lead', p_filters: { contact_id: cid }   // live only — the default
+    });
+    if (r.error) throw r.error;
+    var others = (r.data || []).filter(function(t){
+      return t.assigned_to && t.assignee_state !== 'mine';
+    });
+    if (!others.length) { card.hidden = true; return; }
+    card.hidden = false;
+    var n = document.getElementById('lpVaCount');
+    if (n) n.textContent = others.length;
+  }catch(e){
+    /* A failed count must not silently hide the card — that would look exactly
+       like "this lead has no VA tasks". Show it collapsed and say so on open. */
+    card.hidden = false;
+    var n2 = document.getElementById('lpVaCount');
+    if (n2) n2.textContent = '?';
+    console.error('[lead-detail] VA strip count failed', e);
+  }
+}
+
 async function lpLoadVaTasks(){
   const body = document.getElementById('lpVaTasksBody'); if(!body) return;
   if(!_vaTasks.length && !body.innerHTML.trim()) body.innerHTML='<div style="color:#888;font-size:12px;padding:8px;">Loading…</div>';
@@ -18250,7 +18409,9 @@ function _vaRenderTasks(){
 function _vaEditRow(t){
   const prio=(t.priority||'normal').toLowerCase();
   const prioOpts = VA_PRIORITIES.map(function(p){ return '<option value="'+p+'"'+(p===prio?' selected':'')+'>'+p.charAt(0).toUpperCase()+p.slice(1)+'</option>'; }).join('');
-  const dueVal = t.due_date ? String(t.due_date).slice(0,10) : '';
+  /* Same helper as everywhere else. slice(0,10) happened to be right for a
+     zone-less column, but "happens to agree" is how two conventions drift. */
+  const dueVal = window.RRTime.utcToDateInput(t.due_date);
   return '<div style="padding:8px 4px;border-bottom:1px solid rgba(255,255,255,.05);background:rgba(201,168,76,.04);">'
     + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">'
     +   '<input id="vaEditTitle" type="text" value="'+lpEsc(t.title||'')+'" placeholder="Title" style="'+_vaInp+'flex:1;min-width:140px;">'
@@ -18265,7 +18426,15 @@ function _vaEditRow(t){
     + '</div>';
 }
 
-function _vaDueToIso(v){ v=(v||'').trim(); return v ? new Date(v+'T00:00:00').toISOString() : null; }
+/* Covers vaNewDue, vaEditDue and avDue — three of the seven task date inputs.
+   It used to be `new Date(v+'T00:00:00').toISOString()`, which reads the picked
+   day as LOCAL midnight and converts, so a Pacific viewer wrote 07:00Z in
+   summer and 08:00Z in winter: a due date that depended on the season and on
+   who was looking. RRTime.dateToUtc writes the 17:00 UTC convention that
+   order_reminders_run already uses, with no Date parsing to be wrong about.
+   Deliberately no local fallback: if RRTime were missing this throws into the
+   caller's catch and says so, rather than quietly writing the old wrong value. */
+function _vaDueToIso(v){ return window.RRTime.dateToUtc(v); }
 
 async function lpVaAdd(){
   const titleEl=document.getElementById('vaNewTitle'); if(!titleEl) return;

@@ -523,8 +523,10 @@
       var desc = (task.raw && task.raw.description) || (task.raw && task.raw.text_content) || '';
       document.querySelector('[data-field=ct-description]').value = desc;
       document.querySelector('[data-field=ct-priority]').value = task.priority || 'none';
-      document.querySelector('[data-field=ct-due-date]').value = task.due_date
-        ? new Date(task.due_date).toISOString().substring(0, 10) : '';
+      /* utcToDateInput reads the stored DATE, rather than converting it — a
+         Pacific conversion here is exactly what moves the day. */
+      document.querySelector('[data-field=ct-due-date]').value =
+        window.RRTime.utcToDateInput(task.due_date);
       document.querySelector('[data-field=ct-contact]').value = task.contact_id || '';
       if (deleteBtn) deleteBtn.hidden = false;
     } else {
@@ -554,14 +556,13 @@
     var priorityRaw = document.querySelector('[data-field=ct-priority]').value;
     var priority = priorityRaw === 'none' ? null : priorityRaw;
     var dueDateStr = document.querySelector('[data-field=ct-due-date]').value;
-    // Force a 9 AM local-time anchor so toISOString gives a sensible date for
-    // the ClickUp API (which uses ms since epoch). Otherwise YYYY-MM-DD parses
-    // to UTC midnight and may render on the wrong day in negative-offset zones.
-    var dueIso = null;
-    if (dueDateStr) {
-      var d = new Date(dueDateStr + 'T09:00:00');
-      if (!isNaN(d.getTime())) dueIso = d.toISOString();
-    }
+    /* 17:00 UTC via the one shared helper. The previous 9 AM LOCAL anchor was
+       the right instinct — it existed to stop YYYY-MM-DD landing on the wrong
+       day — but it was DST-dependent: 16:00Z in summer, 17:00Z in winter, so
+       the same picked date produced two different stored times depending on the
+       season. This path reaches tasks.due_date through the bridge's CRM insert,
+       so it has to agree with the other six inputs. */
+    var dueIso = window.RRTime.dateToUtc(dueDateStr);
     var contactId = document.querySelector('[data-field=ct-contact]').value || null;
 
     var saveBtn = document.querySelector('[data-action=ct-save]');
