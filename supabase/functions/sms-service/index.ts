@@ -243,8 +243,13 @@ async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{co
   if (bypass !== undefined && bypass !== null && bypass !== '' && !BYPASS_REASONS.has(bypass)) {
     const why = `unrecognised quiet_hours_bypass '${bypass}' — must be one of: ${[...BYPASS_REASONS].join(', ')}`;
     console.error('[sms-service] REFUSED:', why);
-    await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:why,media_url:mediaUrl});
-    return { sent:false, error:why, blocked:true };
+    /* A DRY RUN WRITES NOTHING, including here. This branch logged
+       unconditionally and a rehearsal with a bad bypass left a real `blocked`
+       row in sms_log — measured, not theorised. The refusal itself still
+       happens either way; what a rehearsal must not do is leave evidence of a
+       message nobody tried to send. */
+    if (!dryRun) await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:why,media_url:mediaUrl});
+    return { sent:false, error:why, blocked:true, dry_run:dryRun||undefined, would_send:false };
   }
 
   /* QUIET HOURS. Runs even while enforcement is OFF, so the decision it would
