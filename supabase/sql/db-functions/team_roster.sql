@@ -21,7 +21,8 @@ begin
   from (
     select aur.user_id,
            lower(split_part(u.email::text,'@',1)) as handle,
-           coalesce(nullif(u.raw_user_meta_data->>'full_name',''),
+           coalesce(nullif(btrim(aur.display_name),''),
+                    nullif(u.raw_user_meta_data->>'full_name',''),
                     initcap(replace(split_part(u.email::text,'@',1), '.', ' '))) as display,
            aur.role::text as role,
            u.email::text as email,

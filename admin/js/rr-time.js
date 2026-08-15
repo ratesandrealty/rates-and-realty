@@ -134,6 +134,56 @@
       var p = new Intl.DateTimeFormat('en-CA', { timeZone: ZONE, year: 'numeric', month: '2-digit', day: '2-digit' });
       return p.format(d);
     },
+    /* ── TASK DUE DATES: the one conversion, in one place ──────────────────
+     *
+     * `tasks.due_date` is `timestamp WITHOUT time zone` holding UTC, and the
+     * convention settled in Step 1 is 17:00 UTC — what order_reminders_run
+     * writes and what 203 rows already carry.
+     *
+     * A bare <input type="date"> gives "YYYY-MM-DD", which written straight
+     * through lands at 00:00 UTC. parse() then reads that as UTC and the
+     * formatters render Pacific, so 00:00 UTC is 5:00 PM the PREVIOUS day:
+     * every one of the 27 hand-picked rows in production displays a day earlier
+     * than the date somebody chose. 17:00 UTC is 10:00 PDT / 09:00 PST — the
+     * same calendar day on both sides of a DST boundary, which is the whole
+     * reason that hour was picked.
+     *
+     * These live here rather than at each input because there are SEVEN task
+     * date fields across four files, and seven local implementations of one
+     * convention is how this repo ended up with six MI factor tables. */
+
+    /** "2026-08-22" (an <input type="date"> value) -> "2026-08-22 17:00:00",
+     *  ready for a zone-less UTC timestamp column. Returns null for empty so a
+     *  cleared field clears the column instead of writing a bogus date. */
+    dateToUtc: function (ymd, hourUtc) {
+      if (ymd == null) return null;
+      var s = String(ymd).trim();
+      if (!s) return null;
+      var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+      if (!m) return null;                       // not a date input value; refuse rather than guess
+      var h = (hourUtc == null ? 17 : hourUtc);
+      return s + ' ' + (h < 10 ? '0' + h : String(h)) + ':00:00';
+    },
+
+    /** The reverse, for populating an <input type="date"> from a stored value.
+     *  Deliberately reads the DATE PART of a zone-less string rather than
+     *  converting: the stored date is the date that was chosen, and running it
+     *  through a Pacific conversion is what moves it a day. Anything carrying an
+     *  explicit zone is converted properly, since that is a different kind of
+     *  value. */
+    utcToDateInput: function (v) {
+      if (v == null || v === '') return '';
+      if (typeof v === 'string') {
+        var s = v.trim();
+        var hasZone = /(Z|[+-]\d{2}:?\d{2})$/.test(s);
+        var m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+        if (m && !hasZone) return m[1];
+      }
+      var d = toDate(v);
+      if (!d) return '';
+      return d.toISOString().slice(0, 10);
+    },
+
     /** Relative for recent things, absolute (and zoned) once it stops being obvious. */
     relative: function (v) {
       var d = toDate(v);
