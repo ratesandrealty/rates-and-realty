@@ -219,6 +219,60 @@ than become readable. Do not add it to the view until that is answered.
 
 Not fixed. Logged only.
 
+### Answered: the omission was NOT deliberate
+
+Rene, same day. The question the fix was gated on is settled, so the gate is
+lifted — but the change is still not applied here.
+
+**Evidence:**
+
+- `borrower_type` holds `"Home Buyer"` / `"Homeowner"`, 7 of 35 rows populated.
+  Not PII by any reading.
+- `mortgage_applications_secure` omits exactly **five** columns: `borrower_type`,
+  three `co_borrower_dl_*` fields, `loan_number`. Three are plainly deliberate
+  PII protection. `borrower_type` does not fit the pattern.
+- `authenticated` lacks SELECT on **twelve** columns: `ssn`, `co_borrower_ssn`,
+  `date_of_birth`, `co_borrower_dob`, `dl_number`, three `co_borrower_dl_*`,
+  `bank_accounts`, `mismo_raw_xml`, `loan_number` — and `borrower_type`. Eleven
+  form a coherent PII policy. One does not.
+- **Likely mechanism:** the view and the grant were each written by enumerating
+  columns at a point in time. `borrower_type` was added to the base table later
+  and missed both. Consistent with the grant covering ~230 columns *including*
+  `id` and not this one — an enumeration that predates the column, not a
+  decision that excludes it.
+
+**The fix, decided and not yet applied:**
+
+1. Add `borrower_type` to `mortgage_applications_secure`.
+2. Add `borrower_type` to the `authenticated` SELECT grant.
+3. **Keep the caller reading the view, not the base table.**
+4. Correct wrong comment #11 at `lead-detail.html:10859` **in the same pass** —
+   it is the diagnosis, not a leftover, and shipping the fix while the comment
+   still says "race" leaves the next reader with a wrong explanation of code
+   that now works.
+
+Not applied in this session, deliberately: out of context, and it touches a
+grant.
+
+### Also open — the view and the grant disagree
+
+Logged, **not investigated.** Do not act on this without a deliberate look.
+
+| | withholds |
+|---|---|
+| `mortgage_applications_secure` | **5** columns |
+| `authenticated` SELECT grant | **12** columns |
+
+Seven genuinely sensitive columns — `ssn`, `co_borrower_ssn`, `date_of_birth`,
+`co_borrower_dob`, `dl_number`, `bank_accounts`, `mismo_raw_xml` — are protected
+**by the grant alone** and **are exposed by the view**.
+
+Whether that is a real exposure depends on who can read the view and how it is
+defined — a `security_invoker` view still answers under the caller's grants,
+while a definer-rights view does not. That is the thing to establish first.
+Guessing either way here would be inventing a finding; both "it is a hole" and
+"it is fine" are unproven.
+
 ## Google Maps deprecations — needs its own pass
 
 Real-lead run only (the fixture never reaches the Places code):
