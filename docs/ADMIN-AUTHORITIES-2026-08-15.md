@@ -56,11 +56,29 @@ So the blast radius of adding one address to `ADMIN_EMAILS` is: full CRM
 dashboard, the website editor, post-login routing, and a link on the borrower
 dashboard. That is why widening it to verify one drag was the wrong trade.
 
-**Note the asymmetry with the VA.** Aubrey is `role='va'` and is *not* in
-`ADMIN_EMAILS`, so by this authority she is not an admin — yet
-`dashboard/admin.html` is described in CLAUDE.md as her daily workspace. Either
-she reaches it another way or she does not reach it at all; that was not
-established here and is worth checking before anyone "fixes" this gate.
+**The asymmetry with the VA — SETTLED 2026-08-15. She cannot reach the page,
+and never could.** CLAUDE.md called `dashboard/admin.html` her daily workspace;
+that was wrong and has been corrected in place.
+
+- `auth/admin-login.html` routes `role === 'va'` to `/admin/va-dashboard.html`.
+  `components/auth-page.js` routes a non-admin to the borrower portal.
+- `admin/people.html` deliberately hides the Dashboard link from VAs
+  (`vahideDashboard`, "Hide admin-only topbar actions").
+- Edge logs, her uid, the full 24h window: 42 requests — `va_dashboard`, staff
+  chat, `presence_beat`, `current_app_role`. No `insights-data`, no
+  `calendar-data`, no `/rest/v1/leads|appointments|tasks`. The same query does
+  find the automation account's `calendar-data` calls, so it works.
+
+**This makes the gate consistent rather than broken**, which changes the
+priority of everything below: `ADMIN_EMAILS` currently admits exactly the one
+person the page is for. It is still a second source of truth, and
+`ADMIN_USER_IDS` is still dead, but nobody is locked out of a page they are
+supposed to have.
+
+**Two live defects it does expose:** `admin/va-help.html:62` and
+`admin/va-training.html:76` render an ungated "← Dashboard" link to
+`/dashboard/admin`, and neither page is in `PAGE_ACCESS`. A VA can open both and
+click a link that bounces her. Not fixed.
 
 ## 2. `ADMIN_USER_IDS` has always been dead
 

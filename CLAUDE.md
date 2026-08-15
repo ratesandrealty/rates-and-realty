@@ -653,12 +653,44 @@ fix one panel.
 **c) A PANEL THAT HIDES ON 403** — when the page is legitimately open and only
 one panel is narrower than it.
 
-`dashboard/admin.html` is the VA's daily workspace: Active Pipeline Snapshot,
-Follow Up, the Gmail widget, rate tiles. Its Insights tab calls `insights-data`,
-which is admin-only. Gating the whole page to admin would remove her dashboard to
-fix one tab. Instead `dashboard/utils/insights.js` hides the Insights section AND
-its nav entry when the call comes back 401/403, and moves the user off the hash
-if they are sitting on it — a nav button leading nowhere is its own defect.
+**CORRECTION, 2026-08-15: this section used to say `dashboard/admin.html` is the
+VA's daily workspace. IT IS NOT, AND SHE CANNOT REACH IT.** The pattern below is
+still right and still worth using — it is just not motivated by this page. What
+was wrong is the audience, and it had been repeated into the task-rebuild notes
+as "gating this would be worse for Aubrey than for Rene", which is backwards.
+
+Measured, not inferred:
+
+- `components/admin-dashboard.js:176` calls `requireAdmin()`, which checks the
+  hardcoded `ADMIN_EMAILS` allowlist — `["rene@ratesandrealty.com"]` — and
+  redirects anyone else to `/admin/people.html`. It never consults
+  `auth_user_roles`, so her `role='va'` is irrelevant to it.
+- `auth/admin-login.html` sends `role === 'va'` to **`/admin/va-dashboard.html`**;
+  `components/auth-page.js` sends a non-admin to the borrower portal. Neither
+  login routes a VA here.
+- `admin/people.html` **deliberately hides** the Dashboard link from VAs —
+  `vahideDashboard`, in a block commented "Hide admin-only topbar actions".
+- Edge logs, her uid, the full 24-hour retention window: 42 requests —
+  `va_dashboard`, staff chat, `presence_beat`, `current_app_role`. **Zero calls
+  to `insights-data` or `calendar-data`, and no `/rest/v1/leads|appointments|tasks`
+  reads at all.** The same query finds the automation account's `calendar-data`
+  calls, so it is capable of finding what it is looking for.
+
+Her real workspace is `/admin/va-dashboard.html` + `/admin/va-tasks.html`, both
+gated `['va','admin']` in `PAGE_ACCESS`.
+
+**Two live defects follow from this and are NOT fixed:** `admin/va-help.html:62`
+and `admin/va-training.html:76` both render an ungated "← Dashboard" link to
+`/dashboard/admin`, and neither page is in `PAGE_ACCESS`, so a VA can open them
+and click a link that bounces her to `/admin/people.html`. That is exactly the
+"nav button leading nowhere" defect this section names.
+
+The pattern itself, on its own merits:
+
+**c) A PANEL THAT HIDES ON 403** — when the page is legitimately open and only
+one panel is narrower than it. `dashboard/utils/insights.js` hides the Insights
+section AND its nav entry when `insights-data` comes back 401/403, and moves the
+user off the hash if they are sitting on it.
 
 The distinction that makes this safe: **the refusal is flagged on the error
 object at the fetch (`err.notPermitted = true`, set only for 401/403), never by

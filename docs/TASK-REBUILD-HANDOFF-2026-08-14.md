@@ -204,7 +204,25 @@ use Aubrey's real account, and do not create a second va.
 
 ## Board reality check before judging it
 
-With the Open chip meaning `crmIsLive()`, Aubrey's default board is:
+**CORRECTION, 2026-08-15: this is NOT Aubrey's board. It is Rene's.** The CRM
+task board lives on `/dashboard/admin`, which `requireAdmin()` gates on the
+hardcoded `ADMIN_EMAILS` allowlist — `["rene@ratesandrealty.com"]`. A VA is
+redirected to `/admin/people.html`, her login routes her to
+`/admin/va-dashboard.html`, and `people.html` deliberately hides the Dashboard
+link from her. Edge logs over the full 24h retention window show her hitting
+`va_dashboard`, staff chat and `presence_beat`, and never an endpoint only this
+page calls. See `docs/ADMIN-AUTHORITIES-2026-08-15.md`.
+
+The board work stands unchanged — the Blocked column, inert cancelled cards and
+the refusal are all still correct, and the va-role refusal still matters because
+the predicate reads `sessionStorage.rnr_app_role` and would fire the moment a VA
+ever did reach the page. What was wrong is the audience: any argument of the
+form "gating this would be worse for Aubrey than for Rene" is backwards, because
+she is not on this page at all.
+
+Her surfaces are `/admin/va-dashboard.html` and `/admin/va-tasks.html`.
+
+With the Open chip meaning `crmIsLive()`, the default board is:
 
 | chip | To Do | Pending | Blocked | Complete |
 |---|---|---|---|---|
