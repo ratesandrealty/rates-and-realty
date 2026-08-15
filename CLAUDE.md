@@ -415,6 +415,38 @@ outlive the thing that maintains it. `recordRun` also never throws — a monitor
 that dies because it could not write its own logbook is worse than one with a
 gap in the logbook.
 
+### `no_alert=1` — evaluating the monitor without paging anyone
+
+A red run texts Rene's cell. Before this existed, the only way to prove a NEW
+check actually goes red was to send a real alert — so new checks got added and
+never broken, which is the exact failure "a harness that has only ever passed
+proves nothing" warns about.
+
+```
+POST /gdrive-health-monitor  {"no_alert": true}     (or ?no_alert=1)
+```
+
+Computes everything, returns `would_send`, sends nothing. **It is checked BEFORE
+the cooldown and does not consume one**, so a suppressed evaluation leaves the
+real alerting state exactly as it found it — otherwise testing a check would
+silence the next genuine alert. Per-invocation only: never persisted, never a
+config value, and the run is still written to `monitor_runs` with
+`skipped_reason = 'no_alert_requested'`, so a muted run is visible as muted
+rather than as a healthy one.
+
+### The ClickUp outbox check has TWO red conditions and they are different
+
+`clickup_outbox` rows that reach `status='failed'` have burned all six attempts
+and will never retry. Rows still `pending` long after they were due mean the
+DRAIN is not running — which is what happened to three crons on 2026-08-15, each
+failing for days with nothing looking.
+
+**`next_attempt_at <= now()` is part of the stall condition, not a detail.** A
+row backing off after failures is pending, old, and perfectly healthy; without
+that clause the check reports the retry mechanism working as a fault. Proven by
+a control row 121 minutes old and due in 24 — flagged as failed:1 stalled:1,
+never stalled:2.
+
 ### NEVER add a check that can pass when it could not run
 
 A check has three outcomes, not two: passed, failed, **could not run**. The
