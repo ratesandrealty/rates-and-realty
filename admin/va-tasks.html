@@ -559,7 +559,22 @@ function renderTask(t) {
    attributable to the account the same way completed_by already is. */
 async function setTaskStatus(btn, taskId, status) {
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  const { error } = await _supabase.rpc('va_task_set_status', { p_id: taskId, p_status: status });
+  /* task_set_status, not va_task_set_status — the one write path. It validates
+     the status against the five legal values and authorises PER TASK (admin, or
+     assignee, or the lead is shared with you) rather than on role alone, and it
+     drives the _task_clickup_sync seam.
+
+     Activity logging was the one thing va_task_set_status did that this did
+     not, so it was added to task_set_status first; consolidating onto a write
+     path that quietly drops history would not be a consolidation. Verified:
+     open→pending and pending→open log status_changed, →completed logs
+     completed, and a repeated pending→pending logs nothing.
+
+     The no-reopen rule is NOT in either function — it lives in the table
+     trigger fn_tasks_block_reopen, so it applies to every write path equally
+     and this swap cannot change it. This page can only send 'pending' or
+     'open' anyway, and completed tasks never appear on it. */
+  const { error } = await _supabase.rpc('task_set_status', { p_id: taskId, p_status: status });
   if (error) {
     console.error('[va-tasks] status change failed', error);
     showToast('⚠ Could not update task', true);
@@ -592,10 +607,15 @@ async function askQuestion(taskId) {
 async function completeTask(btn, taskId) {
   if (btn) { btn.disabled = true; btn.textContent = 'Completing…'; }
 
+  /* task_set_status, not a direct table update. The direct write skipped the
+     status validation, the per-task authorisation check and the
+     _task_clickup_sync seam, and RLS was the only thing deciding whether it was
+     allowed. Completion stamping was never the gap here - the
+     trg_tasks_stamp_completion trigger already sets completed_at/_source on any
+     update path - and this now also writes a task_activity row, which the
+     direct update never did. */
   const { error } = await _supabase
-    .from('tasks')
-    .update({ status: 'completed' })
-    .eq('id', taskId);
+    .rpc('task_set_status', { p_id: taskId, p_status: 'completed' });
 
   if (error) {
     console.error('[va-tasks] complete failed', error);
@@ -705,10 +725,15 @@ function renderLeadCard(l) {
 async function completeSharedTask(btn, taskId) {
   if (btn) { btn.disabled = true; btn.textContent = 'Completing…'; }
 
+  /* task_set_status, not a direct table update. The direct write skipped the
+     status validation, the per-task authorisation check and the
+     _task_clickup_sync seam, and RLS was the only thing deciding whether it was
+     allowed. Completion stamping was never the gap here - the
+     trg_tasks_stamp_completion trigger already sets completed_at/_source on any
+     update path - and this now also writes a task_activity row, which the
+     direct update never did. */
   const { error } = await _supabase
-    .from('tasks')
-    .update({ status: 'completed' })
-    .eq('id', taskId);
+    .rpc('task_set_status', { p_id: taskId, p_status: 'completed' });
 
   if (error) {
     console.error('[va-tasks] complete (shared) failed', error);

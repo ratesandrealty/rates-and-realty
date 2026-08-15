@@ -1,6 +1,6 @@
 -- task_set_status(p_id uuid, p_status text)
 -- language: plpgsql
--- Captured from production 2026-08-14.
+-- Captured from production 2026-08-15.
 
 CREATE OR REPLACE FUNCTION public.task_set_status(p_id uuid, p_status text)
  RETURNS tasks
@@ -38,6 +38,18 @@ begin
     updated_at = now()
   where tasks.id = p_id
   returning * into v_row;
+
+  /* Mirrors what va_task_set_status logged before admin/va-tasks.html was
+     moved onto this function. Kept as three kinds rather than one, because
+     "reopened" is the interesting one and flattening it into
+     status_changed would lose the distinction the feed is read for. */
+  if v_status = 'completed' and coalesce(v_task.status,'') is distinct from 'completed' then
+    perform _log_task_activity(p_id, 'completed', null, jsonb_build_object('from', v_task.status, 'to', v_status));
+  elsif coalesce(v_task.status,'') = 'completed' and v_status is distinct from 'completed' then
+    perform _log_task_activity(p_id, 'reopened', null, jsonb_build_object('from', v_task.status, 'to', v_status));
+  elsif coalesce(v_task.status,'open') is distinct from v_status then
+    perform _log_task_activity(p_id, 'status_changed', null, jsonb_build_object('from', v_task.status, 'to', v_status));
+  end if;
 
   perform _task_clickup_sync(v_row.id);
   return v_row;
