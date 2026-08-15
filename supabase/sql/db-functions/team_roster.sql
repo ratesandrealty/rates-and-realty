@@ -1,6 +1,6 @@
 -- team_roster()
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-11. This layer had NO git history:
+-- Captured from production 2026-08-15. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -29,6 +29,7 @@ begin
            null::uuid as partner_id
     from auth_user_roles aur
     join auth.users u on u.id = aur.user_id
+    where not aur.service_account /* the roster is people; automation logins are not staff */
 
     union all
 

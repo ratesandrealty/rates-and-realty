@@ -1,6 +1,6 @@
 -- app_notify_system(p_source_kind text, p_source_id uuid, p_body text, p_actor_display text, p_contact_id uuid, p_roles text[], p_link text)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-15. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -38,7 +38,7 @@ begin
          'system', p_source_kind, p_source_id, p_contact_id, v_preview,
          nullif(trim(coalesce(p_link,'')),'')
   from auth_user_roles aur
-  where aur.role = any(p_roles);
+  where aur.role = any(p_roles) and not aur.service_account; /* no in-app notifications for unattended logins */
 
   get diagnostics n = row_count;
   return n;

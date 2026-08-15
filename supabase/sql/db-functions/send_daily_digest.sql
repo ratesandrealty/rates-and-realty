@@ -1,6 +1,6 @@
 -- send_daily_digest(p_dry_run boolean)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-11. This layer had NO git history:
+-- Captured from production 2026-08-15. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -67,7 +67,7 @@ begin
   for r in
     select distinct on (aur.user_id) aur.user_id, u.email::text as email, aur.role
     from auth_user_roles aur join auth.users u on u.id = aur.user_id
-    where aur.role in ('admin','va')
+    where aur.role in ('admin','va') and not aur.service_account /* a service account is an admin for authorization and not a person for digests */
   loop
     if not p_dry_run then
       if r.email is not null and r.email <> '' then
