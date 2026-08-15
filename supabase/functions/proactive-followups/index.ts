@@ -30,6 +30,11 @@ type SbClient = ReturnType<typeof createClient>
  * entry can be deleted once nothing else references it — checked at the time of
  * writing: nothing does. Left in place rather than deleted blind, since a vault
  * entry costs nothing and a wrong deletion is unrecoverable. */
+/* Read once, at module scope: the routed send below needs them and they were
+   previously only pulled inline inside the handler. */
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
+const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+
 const STALE_LEAD_DAYS = 14
 const PREAPPROVAL_WARN_DAYS = 30
 const CREDIT_WARN_DAYS = 90
@@ -146,16 +151,42 @@ async function urgentRecentlySent(sb: SbClient, alertType: string, contactId: st
 
 // ── TWILIO ─────────────────────────────────────────────────────────────────
 
-async function sendSmsToLO(body: string, sid: string, token: string, from: string, to: string): Promise<{ ok: boolean; sid?: string; error?: string }> {
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`
-  const auth = btoa(`${sid}:${token}`)
-  const params = new URLSearchParams()
-  params.set('To', to); params.set('From', from); params.set('Body', body.slice(0, SMS_MAX_LENGTH))
+/* ROUTED THROUGH sms-service (2026-08-15). This used to POST the Twilio API
+ * directly, which meant it never reached quietHours() at all — not "bypassed
+ * the flag", never evaluated the check, and wrote no SMS_WOULD_BLOCK row
+ * either. See docs/SMS-BYPASSES-QUIET-HOURS-2026-08-15.md.
+ *
+ * bypass = 'staff_alert', and that is a measured claim rather than an
+ * assumption: all 81 rows in proactive_alerts_sent went to +17144728508, which
+ * is Rene's notify_phone, and none went to a borrower. If this ever starts
+ * texting borrowers the bypass must go with it — that is precisely the decision
+ * the closed set exists to force somebody to make.
+ *
+ * `from` is passed through so the number on the recipient's phone does not
+ * change as a side effect of a compliance refactor. dryRun threads to
+ * sms-service's own dry run: every check still runs, nothing is sent or
+ * written. */
+let FORCE_QUIET = false   // set per-request by ?dry_run=send&enforce_quiet=true; dry runs only
+async function sendSmsToLO(body: string, _sid: string, _token: string, from: string, to: string, dryRun = false): Promise<{ ok: boolean; sid?: string; error?: string }> {
   try {
-    const resp = await fetch(url, { method: 'POST', headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body: params.toString() })
-    if (!resp.ok) return { ok: false, error: `Twilio ${resp.status}: ${(await resp.text().catch(() => '')).substring(0, 200)}` }
+    const resp = await fetch(`${SUPABASE_URL}/functions/v1/sms-service`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SERVICE_KEY, 'Authorization': `Bearer ${SERVICE_KEY}` },
+      body: JSON.stringify({
+        trigger: 'proactive_alert',
+        to_phone: to,
+        params: { message: body.slice(0, SMS_MAX_LENGTH) },
+        from_phone: from,
+        quiet_hours_bypass: 'staff_alert',
+        ...(dryRun ? { dry_run: true, ...(FORCE_QUIET ? { dry_run_enforce_quiet_hours: true } : {}) } : {}),
+      }),
+    })
     const data = await resp.json().catch(() => ({}))
-    return { ok: true, sid: (data as { sid?: string })?.sid }
+    if (!resp.ok || data?.error) return { ok: false, error: `sms-service: ${data?.error || resp.status}` }
+    /* A dry run reports ok WITHOUT a sid, so a caller that keys on sid cannot
+       mistake a rehearsal for a send. */
+    if (data?.dry_run) return { ok: data.would_send === true, error: data.would_send ? undefined : 'dry_run: would not send' }
+    return { ok: data?.sent === true, sid: data?.sid, error: data?.sent ? undefined : (data?.error || 'not sent') }
   } catch (err) { return { ok: false, error: (err as Error).message } }
 }
 
@@ -198,7 +229,7 @@ function composeDigest(stale: ReturnType<typeof getStaleLeads> extends Promise<i
 
 // ── RUNNERS ────────────────────────────────────────────────────────────────
 
-async function runDigest(sb: SbClient, twilio: { sid: string; token: string; from: string; to: string }, force = false) {
+async function runDigest(sb: SbClient, twilio: { sid: string; token: string; from: string; to: string }, force = false, dryRun = false) {
   if (!force && await digestAlreadySentToday(sb)) {
     return { sent: false, reason: 'Already sent digest today (Pacific).' }
   }
@@ -208,7 +239,7 @@ async function runDigest(sb: SbClient, twilio: { sid: string; token: string; fro
   const counts = { stale: stale.length, preapp: preapp.length, credit: credit.length, lock: lock.length }
   const body = composeDigest(stale, preapp, credit, lock)
   if (!body) return { sent: false, reason: 'Nothing to alert about.', counts }
-  const send = await sendSmsToLO(body, twilio.sid, twilio.token, twilio.from, twilio.to)
+  const send = await sendSmsToLO(body, twilio.sid, twilio.token, twilio.from, twilio.to, dryRun)
   await logAlert(sb, {
     alert_type: 'digest', mode: 'digest', alert_payload: body, recipient_phone: twilio.to,
     twilio_message_sid: send.sid || null, delivery_ok: send.ok, delivery_error: send.error || null,
@@ -216,7 +247,7 @@ async function runDigest(sb: SbClient, twilio: { sid: string; token: string; fro
   return { sent: send.ok, body, twilio_sid: send.sid, error: send.error, counts }
 }
 
-async function runUrgent(sb: SbClient, twilio: { sid: string; token: string; from: string; to: string }) {
+async function runUrgent(sb: SbClient, twilio: { sid: string; token: string; from: string; to: string }, dryRun = false) {
   const [lockUrgent, preappUrgent] = await Promise.all([getLocksExpiring(sb, URGENT_WINDOW_DAYS), getPreapprovalsExpiring(sb, URGENT_WINDOW_DAYS)])
   let sent = 0, skipped = 0
   const sentAlerts: Array<Record<string, unknown>> = []
@@ -224,8 +255,8 @@ async function runUrgent(sb: SbClient, twilio: { sid: string; token: string; fro
   for (const x of lockUrgent) {
     if (await urgentRecentlySent(sb, 'lock_expiring', x.contact_id)) { skipped++; continue }
     const body = `Urgent: ${x.name}'s rate lock expires ${ptFriendlyDate(x.rate_lock_expiry)} (${x.days_left}d). Contact them today.`
-    const send = await sendSmsToLO(body, twilio.sid, twilio.token, twilio.from, twilio.to)
-    await logAlert(sb, { alert_type: 'lock_expiring', mode: 'urgent', contact_id: x.contact_id, application_id: x.application_id, alert_payload: body, recipient_phone: twilio.to, twilio_message_sid: send.sid || null, delivery_ok: send.ok, delivery_error: send.error || null })
+    const send = await sendSmsToLO(body, twilio.sid, twilio.token, twilio.from, twilio.to, dryRun)
+    if (!dryRun) await logAlert(sb, { alert_type: 'lock_expiring', mode: 'urgent', contact_id: x.contact_id, application_id: x.application_id, alert_payload: body, recipient_phone: twilio.to, twilio_message_sid: send.sid || null, delivery_ok: send.ok, delivery_error: send.error || null })
     if (send.ok) sent++
     sentAlerts.push({ type: 'lock_expiring', name: x.name, days_left: x.days_left, sent: send.ok, error: send.error })
   }
@@ -233,8 +264,8 @@ async function runUrgent(sb: SbClient, twilio: { sid: string; token: string; fro
   for (const x of preappUrgent) {
     if (await urgentRecentlySent(sb, 'preapproval_expiring', x.contact_id)) { skipped++; continue }
     const body = `Urgent: ${x.name}'s preapproval expires ${ptFriendlyDate(x.preapproval_expiry)} (${x.days_left}d). Re-issue or extend.`
-    const send = await sendSmsToLO(body, twilio.sid, twilio.token, twilio.from, twilio.to)
-    await logAlert(sb, { alert_type: 'preapproval_expiring', mode: 'urgent', contact_id: x.contact_id, application_id: x.application_id, alert_payload: body, recipient_phone: twilio.to, twilio_message_sid: send.sid || null, delivery_ok: send.ok, delivery_error: send.error || null })
+    const send = await sendSmsToLO(body, twilio.sid, twilio.token, twilio.from, twilio.to, dryRun)
+    if (!dryRun) await logAlert(sb, { alert_type: 'preapproval_expiring', mode: 'urgent', contact_id: x.contact_id, application_id: x.application_id, alert_payload: body, recipient_phone: twilio.to, twilio_message_sid: send.sid || null, delivery_ok: send.ok, delivery_error: send.error || null })
     if (send.ok) sent++
     sentAlerts.push({ type: 'preapproval_expiring', name: x.name, days_left: x.days_left, sent: send.ok, error: send.error })
   }
@@ -285,7 +316,14 @@ serve(async (req) => {
 
   const mode = (url.searchParams.get('mode') || 'digest').toLowerCase()
   const force = url.searchParams.get('force') === 'true'
-  const dryRun = url.searchParams.get('dry_run') === 'true'
+  const dryRunParam = (url.searchParams.get('dry_run') || '').toLowerCase()
+  const dryRun = dryRunParam === 'true'
+  /* `dry_run=true` previews the DATA and returns before the send helper — it
+     proves nothing about the routed path. `dry_run=send` runs the real digest,
+     composes the real body and calls sms-service in ITS dry-run mode: every
+     guard runs, nothing is sent, nothing is written on either side. */
+  const dryRunSend = dryRunParam === 'send'
+  FORCE_QUIET = dryRunSend && url.searchParams.get('enforce_quiet') === 'true'
 
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
@@ -295,7 +333,7 @@ serve(async (req) => {
     from: Deno.env.get('SMS_ASSISTANT_FROM_NUMBER') || Deno.env.get('TWILIO_PHONE_NUMBER') || '',
     to: (Deno.env.get('AUTHORIZED_PHONES') || '').split(',')[0]?.trim() || '',
   }
-  if (!dryRun && (!twilio.sid || !twilio.token || !twilio.from || !twilio.to)) {
+  if (!dryRun && !dryRunSend && (!twilio.sid || !twilio.token || !twilio.from || !twilio.to)) {
     return new Response(JSON.stringify({ error: 'Missing Twilio config', twilio_config_present: { sid: !!twilio.sid, token: !!twilio.token, from: !!twilio.from, to: !!twilio.to } }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }
 

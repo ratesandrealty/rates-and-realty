@@ -230,9 +230,10 @@ async function isOptedOut(to_phone:string, contact_id?:string): Promise<boolean>
    does not (blocked, blocked_quiet_hours, local_time), and callers read .sid off
    the result. Without this the union hides sid and the call sites stop compiling. */
 type SendOutcome = { sent:boolean; sid?:string; error?:string; blocked?:boolean; blocked_quiet_hours?:boolean; local_time?:string|null;
-  dry_run?:boolean; would_send?:boolean; trigger_type?:string; from?:string; body?:string; opted_out?:boolean };
+  dry_run?:boolean; would_send?:boolean; trigger_type?:string; from?:string; body?:string; opted_out?:boolean;
+  quiet_hours?:Record<string,unknown>; enforcement_simulated?:boolean };
 
-async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{contact_id?:string;portal_user_id?:string;borrower_id?:string;trigger_id?:string},mediaUrl?:string,fromOverride?:string,bypass?:string,dryRun?:boolean): Promise<SendOutcome> {
+async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{contact_id?:string;portal_user_id?:string;borrower_id?:string;trigger_id?:string},mediaUrl?:string,fromOverride?:string,bypass?:string,dryRun?:boolean,dryEnforceQuiet?:boolean): Promise<SendOutcome> {
   const effectiveTrigger = trigger === 'manual' ? 'custom' : trigger;
   const msg = T[effectiveTrigger](params);
 
@@ -256,10 +257,22 @@ async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{co
      have made is recorded before it starts making it — the flag changes whether
      we ACT on the verdict, never whether we compute it. */
   const qh = await quietHours(to_phone);
+  /* ENFORCEMENT, and the one legitimate way to answer "what happens when the
+     flag is on" without turning it on for everybody.
+     `dry_run_enforce_quiet_hours` is honoured ONLY inside a dry run, so it can
+     never cause a real refusal or a real send — it exists because the guard's
+     blocking branch was otherwise unprovable except by flipping a global env
+     var on a live function, which is not a test, it is a change. */
+  const enforcing = QUIET_HOURS_ENFORCED || (dryRun === true && dryEnforceQuiet === true);
   if (!qh.allowed) {
     const bypassed = bypass ? BYPASS_REASONS.has(bypass) : false;
     if (!bypassed) {
-      try {
+      /* A REHEARSAL MUST NOT WRITE HERE. This audit trail is the evidence the
+         SMS_QUIET_HOURS decision will be made on; a dry run adding rows to it
+         inflates the very count somebody will read as "real traffic quiet hours
+         would have blocked". Same defect as the sms_log row a dry run used to
+         leave on the bypass-refusal path. */
+      if (!dryRun) try {
         await sb.from('audit_log').insert({
           table_name:'quiet_hours', row_id:ids.contact_id || null,
           operation: QUIET_HOURS_ENFORCED ? 'SMS_BLOCKED' : 'SMS_WOULD_BLOCK',
@@ -268,13 +281,14 @@ async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{co
           changed_by:_actorUid,
         });
       } catch (_) { /* never let the logbook stop the decision */ }
-      if (QUIET_HOURS_ENFORCED) {
+      if (enforcing) {
         if (!dryRun) await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:qh.reason,media_url:mediaUrl});
         return { sent:false, error:qh.reason, blocked:true, blocked_quiet_hours:true, local_time:qh.localTime,
-                 dry_run:dryRun||undefined, would_send:false, trigger_type:effectiveTrigger };
+                 dry_run:dryRun||undefined, would_send:false, trigger_type:effectiveTrigger,
+                 ...(dryRun && !QUIET_HOURS_ENFORCED ? { enforcement_simulated:true } : {}) };
       }
     } else {
-      try {
+      if (!dryRun) try {
         await sb.from('audit_log').insert({
           table_name:'quiet_hours', row_id:ids.contact_id || null, operation:'SMS_BYPASSED',
           new_data:{ channel:'sms', bypass_reason:bypass, to:to_phone, trigger:effectiveTrigger,
@@ -301,7 +315,13 @@ async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{co
   if (dryRun) {
     return { sent:false, dry_run:true, would_send:true, trigger_type:effectiveTrigger,
              from: (fromOverride||'').trim() || TWILIO_FROM, body: msg,
-             local_time: qh.localTime ?? null };
+             local_time: qh.localTime ?? null,
+             /* Reported even when the send would go through, because "allowed"
+                and "allowed only because a bypass carried it" are different
+                facts and a rehearsal that shows only the first hides the one
+                worth checking. */
+             quiet_hours: { in_window: qh.allowed, bypass: bypass || null,
+                            enforcing, area_code: qh.areaCode ?? null, tz: qh.tz ?? null } };
   }
 
   const result = await sendTwilioSMS(to_phone, msg, mediaUrl, fromOverride);
@@ -420,11 +440,12 @@ Deno.serve(async (req:Request) => {
        * side effect of a compliance refactor. */
       const fromAllowed = effectiveTrigger === 'custom' || PASSTHROUGH_TRIGGERS.includes(effectiveTrigger);
       const fromOverride = (fromAllowed && typeof body.from_phone === 'string') ? body.from_phone : undefined;
-      const result = await handleSingleSMS(trigger, to_phone, params, {contact_id, portal_user_id, borrower_id, trigger_id}, media_url, fromOverride, quiet_hours_bypass, body.dry_run === true);
+      const result = await handleSingleSMS(trigger, to_phone, params, {contact_id, portal_user_id, borrower_id, trigger_id}, media_url, fromOverride, quiet_hours_bypass, body.dry_run === true, body.dry_run_enforce_quiet_hours === true);
       if (!body.dry_run && trigger === 'portal_signup') await sendTwilioSMS(RENE_PHONE, `New portal signup: ${params.firstName} ${params.lastName||''} (${params.email||to_phone}). ID: ${params.borrowerId||'—'}. Check CRM.`);
       if (!body.dry_run && trigger === 'showing_request') await sendTwilioSMS(RENE_PHONE, `New showing request from ${params.firstName}: ${params.homeCount} home${params.homeCount!==1?'s':''} on ${params.date||'TBD'}. Check CRM showings.`);
       return ok({success:true, sent:result.sent, sid:result.sid, error:result.error,
                  ...(result.dry_run ? { dry_run:true, would_send:result.would_send, trigger_type:result.trigger_type,
+                   quiet_hours:result.quiet_hours, enforcement_simulated:result.enforcement_simulated,
                                         from:result.from, body:result.body, blocked_quiet_hours:result.blocked_quiet_hours,
                                         opted_out:result.opted_out, local_time:result.local_time } : {})});
     }
