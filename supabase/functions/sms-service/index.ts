@@ -154,7 +154,19 @@ const BYPASS_REASONS = new Set(['staff_alert', 'staff_message', 'user_initiated'
 
 type QuietVerdict = { allowed:boolean; areaCode:string|null; tz:string|null; localTime:string|null; known:boolean; reason:string };
 
-async function quietHours(toPhone:string): Promise<QuietVerdict> {
+/* `at` and `silent` are DRY-RUN ONLY, and both exist for the same reason.
+ *
+ * A time-of-day guard can only be exercised against the real clock during the
+ * hours it is about: at 4pm Pacific every US area code is inside the window, so
+ * the refusal branch is untestable for most of the working day, and at 2am the
+ * allow branch is. CLAUDE.md already records the social failure that follows —
+ * somebody runs the suite at the wrong hour, sees the "wrong" answer, and
+ * repairs a working guard into uselessness. Injecting the instant makes both
+ * directions provable at any hour without touching SMS_QUIET_HOURS.
+ *
+ * `silent` stops a rehearsal writing the UNKNOWN_AREA_CODE row — the same rule
+ * as everywhere else here: a dry run writes nothing. */
+async function quietHours(toPhone:string, opts?:{ at?:Date; silent?:boolean }): Promise<QuietVerdict> {
   const digits = (toPhone || '').replace(/\D/g, '');
   const nat = digits.length === 11 && digits[0] === '1' ? digits.slice(1) : digits;
   const areaCode = nat.length >= 10 ? nat.slice(0, 3) : null;
@@ -175,7 +187,7 @@ async function quietHours(toPhone:string): Promise<QuietVerdict> {
 
   if (!tz) {
     console.warn(`[sms-service] QUIET HOURS: unknown area code ${areaCode} — allowing`);
-    try {
+    if (!opts?.silent) try {
       await sb.from('audit_log').insert({
         table_name:'quiet_hours', row_id:areaCode, operation:'UNKNOWN_AREA_CODE',
         new_data:{ area_code:areaCode, to:toPhone, allowed:true, channel:'sms' },
@@ -185,7 +197,7 @@ async function quietHours(toPhone:string): Promise<QuietVerdict> {
              reason:`area code ${areaCode} is not in area_code_timezones — allowed, and logged` };
   }
 
-  const now = new Date();
+  const now = opts?.at ?? new Date();
   const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour:'numeric', hour12:false }).format(now));
   const localTime = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour:'numeric', minute:'2-digit', hour12:true }).format(now);
   const allowed = hour >= SMS_WINDOW_START && hour < SMS_WINDOW_END;
@@ -233,7 +245,7 @@ type SendOutcome = { sent:boolean; sid?:string; error?:string; blocked?:boolean;
   dry_run?:boolean; would_send?:boolean; trigger_type?:string; from?:string; body?:string; opted_out?:boolean;
   quiet_hours?:Record<string,unknown>; enforcement_simulated?:boolean };
 
-async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{contact_id?:string;portal_user_id?:string;borrower_id?:string;trigger_id?:string},mediaUrl?:string,fromOverride?:string,bypass?:string,dryRun?:boolean,dryEnforceQuiet?:boolean): Promise<SendOutcome> {
+async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{contact_id?:string;portal_user_id?:string;borrower_id?:string;trigger_id?:string},mediaUrl?:string,fromOverride?:string,bypass?:string,dryRun?:boolean,dryEnforceQuiet?:boolean,dryAt?:string): Promise<SendOutcome> {
   const effectiveTrigger = trigger === 'manual' ? 'custom' : trigger;
   const msg = T[effectiveTrigger](params);
 
@@ -256,7 +268,10 @@ async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{co
   /* QUIET HOURS. Runs even while enforcement is OFF, so the decision it would
      have made is recorded before it starts making it — the flag changes whether
      we ACT on the verdict, never whether we compute it. */
-  const qh = await quietHours(to_phone);
+  /* A simulated instant is accepted only inside a dry run — a real send always
+     asks the real clock. */
+  const simulatedAt = (dryRun && dryAt) ? new Date(dryAt) : null;
+  const qh = await quietHours(to_phone, { at: (simulatedAt && !isNaN(simulatedAt.getTime())) ? simulatedAt : undefined, silent: dryRun === true });
   /* ENFORCEMENT, and the one legitimate way to answer "what happens when the
      flag is on" without turning it on for everybody.
      `dry_run_enforce_quiet_hours` is honoured ONLY inside a dry run, so it can
@@ -321,7 +336,8 @@ async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{co
                 facts and a rehearsal that shows only the first hides the one
                 worth checking. */
              quiet_hours: { in_window: qh.allowed, bypass: bypass || null,
-                            enforcing, area_code: qh.areaCode ?? null, tz: qh.tz ?? null } };
+                            enforcing, area_code: qh.areaCode ?? null, tz: qh.tz ?? null,
+                            evaluated_at: simulatedAt ? simulatedAt.toISOString() + ' (SIMULATED)' : 'now' } };
   }
 
   const result = await sendTwilioSMS(to_phone, msg, mediaUrl, fromOverride);
@@ -440,7 +456,7 @@ Deno.serve(async (req:Request) => {
        * side effect of a compliance refactor. */
       const fromAllowed = effectiveTrigger === 'custom' || PASSTHROUGH_TRIGGERS.includes(effectiveTrigger);
       const fromOverride = (fromAllowed && typeof body.from_phone === 'string') ? body.from_phone : undefined;
-      const result = await handleSingleSMS(trigger, to_phone, params, {contact_id, portal_user_id, borrower_id, trigger_id}, media_url, fromOverride, quiet_hours_bypass, body.dry_run === true, body.dry_run_enforce_quiet_hours === true);
+      const result = await handleSingleSMS(trigger, to_phone, params, {contact_id, portal_user_id, borrower_id, trigger_id}, media_url, fromOverride, quiet_hours_bypass, body.dry_run === true, body.dry_run_enforce_quiet_hours === true, body.dry_run_at);
       if (!body.dry_run && trigger === 'portal_signup') await sendTwilioSMS(RENE_PHONE, `New portal signup: ${params.firstName} ${params.lastName||''} (${params.email||to_phone}). ID: ${params.borrowerId||'—'}. Check CRM.`);
       if (!body.dry_run && trigger === 'showing_request') await sendTwilioSMS(RENE_PHONE, `New showing request from ${params.firstName}: ${params.homeCount} home${params.homeCount!==1?'s':''} on ${params.date||'TBD'}. Check CRM showings.`);
       return ok({success:true, sent:result.sent, sid:result.sid, error:result.error,

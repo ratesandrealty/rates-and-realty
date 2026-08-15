@@ -167,6 +167,7 @@ async function urgentRecentlySent(sb: SbClient, alertType: string, contactId: st
  * sms-service's own dry run: every check still runs, nothing is sent or
  * written. */
 let FORCE_QUIET = false   // set per-request by ?dry_run=send&enforce_quiet=true; dry runs only
+let DRY_AT: string | null = null   // ?at=<iso>, dry runs only: evaluate quiet hours at that instant
 async function sendSmsToLO(body: string, _sid: string, _token: string, from: string, to: string, dryRun = false): Promise<{ ok: boolean; sid?: string; error?: string }> {
   try {
     const resp = await fetch(`${SUPABASE_URL}/functions/v1/sms-service`, {
@@ -178,7 +179,7 @@ async function sendSmsToLO(body: string, _sid: string, _token: string, from: str
         params: { message: body.slice(0, SMS_MAX_LENGTH) },
         from_phone: from,
         quiet_hours_bypass: 'staff_alert',
-        ...(dryRun ? { dry_run: true, ...(FORCE_QUIET ? { dry_run_enforce_quiet_hours: true } : {}) } : {}),
+        ...(dryRun ? { dry_run: true, ...(FORCE_QUIET ? { dry_run_enforce_quiet_hours: true } : {}), ...(DRY_AT ? { dry_run_at: DRY_AT } : {}) } : {}),
       }),
     })
     const data = await resp.json().catch(() => ({}))
@@ -324,6 +325,7 @@ serve(async (req) => {
      guard runs, nothing is sent, nothing is written on either side. */
   const dryRunSend = dryRunParam === 'send'
   FORCE_QUIET = dryRunSend && url.searchParams.get('enforce_quiet') === 'true'
+  DRY_AT = dryRunSend ? url.searchParams.get('at') : null
 
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
