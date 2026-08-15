@@ -7023,14 +7023,40 @@ async function saveNote() {
 async function loadTasks() {
   if (!leadId) return;
   try {
-    const { data } = await sb.from('tasks')
-      .select('*')
-      .eq('related_table', 'leads')
-      .eq('related_id', leadId)
-      .order('created_at', { ascending: false });
+    /* THIS TAB WAS BLIND TO ALMOST EVERY TASK ON THE LEAD. It filtered
+       related_table='leads' AND related_id=leadId — a pair written only by this
+       form and by the New Lead form on people.html. Measured: 5 rows carried it
+       out of 298, so 293 tasks on 64 leads existed and were invisible here,
+       including every ClickUp-automation and order-reminder task.
+
+       contact_id is the real link and always has been; 291 of 298 rows carry
+       it. task_list('lead') reads by contact_id, applies the same visibility
+       rules as everywhere else, and returns provenance/bucket/assignee_state so
+       this tab can eventually separate Rene's work from Aubrey's.
+
+       status_group:'all' is required, not incidental — the default is 'live'
+       and this tab renders completed tasks with a strike-through and a toggle
+       back to open. Dropping to the default would hide them and make the
+       toggle look broken. */
+    const { data, error } = await sb.rpc('task_list', {
+      p_scope: 'lead',
+      p_filters: { contact_id: leadId, status_group: 'all' }
+    });
+    if (error) throw error;
     tasksData = data || [];
     renderTasks();
-  } catch (_) {}
+  } catch (err) {
+    /* The old `catch (_) {}` swallowed everything, and supabase-js resolves
+       with { error } rather than throwing, so a failed read left tasksData at
+       its previous value and renderTasks() drew "No tasks yet" — identical to a
+       lead that genuinely has none. An empty task list must not be the way a
+       broken one looks. */
+    console.error('[lead-detail] task_list failed', err);
+    const el = document.getElementById('tasks-list');
+    if (el) el.innerHTML = '<div class="ld-empty" style="padding:40px;">'
+      + '<div class="ld-empty-icon">⚠</div><h4>Tasks could not be loaded</h4>'
+      + '<p>' + esc((err && err.message) || 'Unknown error') + '</p></div>';
+  }
 }
 
 function renderTasks() {
@@ -7082,14 +7108,19 @@ async function createTask() {
   if (!title) { toast('Task title required', true); return; }
   if (!leadId) { toast('No lead associated', true); return; }
   try {
-    const { data, error } = await sb.from('tasks').insert({
-      related_table: 'leads',
-      related_id: leadId,
-      title,
-      due_date: due || null,
-      priority: pri,
-      status: 'open'
-    }).select().single();
+    /* task_upsert, and related_table/related_id are gone with it. They were
+       never the link — contact_id is — and task_list/va_daily_tasks read
+       `related_table is not null` as "a machine made this", so every task typed
+       here was filed as automation output. Same defect that was fixed on
+       people.html; this was its other writer. The five historical rows were
+       backfilled (snapshots/tasks-related-table-leads-20260815.json). */
+    const { data, error } = await sb.rpc('task_upsert', {
+      p_title: title,
+      p_due_date: due || null,
+      p_priority: pri,
+      p_status: 'open',
+      p_contact_id: leadId
+    });
     if (error) throw error;
     tasksData.unshift(data);
     renderTasks();
@@ -7104,7 +7135,12 @@ async function createTask() {
 async function toggleTask(id, wasDone) {
   const newStatus = wasDone ? 'open' : 'completed';
   try {
-    const { error } = await sb.from('tasks').update({ status: newStatus }).eq('id', id);
+    /* task_set_status, not a direct update: it validates the status, authorises
+       per task rather than leaving RLS to decide alone, writes a task_activity
+       row, and drives the _task_clickup_sync seam. Reopening is refused by the
+       fn_tasks_block_reopen trigger for non-admins on every path, so this
+       toggle behaves the same for Rene and is refused for a va either way. */
+    const { error } = await sb.rpc('task_set_status', { p_id: id, p_status: newStatus });
     if (error) throw error;
     const t = tasksData.find(x => x.id === id);
     if (t) t.status = newStatus;
