@@ -176,12 +176,25 @@ function normalizeGoogleEvent(ev: any) {
  * clickup_task_cache 282. */
 const DB_ROW_LIMIT = 2000;
 
-async function fetchAppointments(start: string, end: string) {
-  const { data } = await sb.from("appointments")
+/* The DB fetchers used to `return []` on any failure, so a database error, an
+ * RLS refusal or a truncated page rendered as "no events" — indistinguishable
+ * from an empty calendar. That is the same defect fetchGoogleEvents already
+ * documents and fixes above; the four database sources simply never got it.
+ *
+ * A collector is passed in rather than changing four return types, so the
+ * dedupe and assembly below stay untouched. It is per-request, never module
+ * state: one isolate serves concurrent requests and a shared object would
+ * attribute one caller's failure to another. */
+type Warn = (msg: string) => void;
+
+async function fetchAppointments(start: string, end: string, warn: Warn) {
+  const { data, error } = await sb.from("appointments")
     .select("id, contact_id, title, type, scheduled_at, duration_minutes, status, notes, attendee_name, meeting_url, google_event_id")
     .gte("scheduled_at", start).lte("scheduled_at", end)
     .neq("status", "canceled").order("scheduled_at", { ascending: true }).limit(DB_ROW_LIMIT);
-  if (!data) return [];
+  if (error) { warn(`Appointments could not be read: ${error.message}`); return []; }
+  if (!data) { warn("Appointments returned no result."); return []; }
+  if (data.length >= DB_ROW_LIMIT) warn(`More than ${DB_ROW_LIMIT} appointments in this range; the list is truncated. Narrow the range.`);
   const contactIds = [...new Set(data.map(a => a.contact_id).filter(Boolean))];
   const contactMap = new Map();
   if (contactIds.length > 0) {
@@ -210,13 +223,15 @@ async function fetchAppointments(start: string, end: string) {
   });
 }
 
-async function fetchTours(start: string, end: string) {
-  const { data } = await sb.from("showing_batches")
+async function fetchTours(start: string, end: string, warn: Warn) {
+  const { data, error } = await sb.from("showing_batches")
     .select("id, contact_id, title, scheduled_start, status, share_token, google_event_id, synced_to_google_at")
     .gte("scheduled_start", start).lte("scheduled_start", end)
     .not("scheduled_start", "is", null).neq("status", "canceled")
     .order("scheduled_start", { ascending: true }).limit(DB_ROW_LIMIT);
-  if (!data) return [];
+  if (error) { warn(`Tours could not be read: ${error.message}`); return []; }
+  if (!data) { warn("Tours returned no result."); return []; }
+  if (data.length >= DB_ROW_LIMIT) warn(`More than ${DB_ROW_LIMIT} tours in this range; the list is truncated. Narrow the range.`);
   const contactIds = [...new Set(data.map(b => b.contact_id).filter(Boolean))];
   const contactMap = new Map();
   const stopsCounts: Record<string, number> = {};
@@ -250,7 +265,7 @@ async function fetchTours(start: string, end: string) {
   });
 }
 
-async function fetchCrmTasks(start: string, end: string) {
+async function fetchCrmTasks(start: string, end: string, warn: Warn) {
   try {
     const { data, error } = await sb.from("tasks")
       .select("id, title, due_date, contact_id, status, priority, description")
@@ -267,7 +282,9 @@ async function fetchCrmTasks(start: string, end: string) {
          this coalesce(status,'open'); PostgREST needs it spelled as an or(). */
       .or("status.is.null,status.not.in.(completed,cancelled)")
       .order("due_date", { ascending: true }).limit(DB_ROW_LIMIT);
-    if (error || !data) return [];
+    if (error) { warn(`CRM tasks could not be read: ${error.message}`); return []; }
+    if (!data) { warn("CRM tasks returned no result."); return []; }
+    if (data.length >= DB_ROW_LIMIT) warn(`More than ${DB_ROW_LIMIT} CRM tasks in this range; the list is truncated. Narrow the range.`);
     const contactIds = [...new Set(data.map(t => t.contact_id).filter(Boolean))];
     const contactMap = new Map();
     if (contactIds.length > 0) {
@@ -290,10 +307,10 @@ async function fetchCrmTasks(start: string, end: string) {
         metadata: { task_id: t.id, priority: t.priority, status: t.status },
       };
     });
-  } catch (e) { return []; }
+  } catch (e) { warn(`CRM tasks failed: ${(e as Error)?.message || String(e)}`); return []; }
 }
 
-async function fetchClickupTasks(start: string, end: string) {
+async function fetchClickupTasks(start: string, end: string, warn: Warn) {
   try {
     const { data, error } = await sb.from("clickup_task_cache")
       .select("clickup_task_id, contact_id, title, status, priority, due_date, url, assignee_username")
@@ -301,7 +318,9 @@ async function fetchClickupTasks(start: string, end: string) {
       .not("due_date", "is", null)
       .not("status", "in", "(complete,closed,done)")
       .order("due_date", { ascending: true }).limit(DB_ROW_LIMIT);
-    if (error || !data) return [];
+    if (error) { warn(`ClickUp tasks could not be read: ${error.message}`); return []; }
+    if (!data) { warn("ClickUp tasks returned no result."); return []; }
+    if (data.length >= DB_ROW_LIMIT) warn(`More than ${DB_ROW_LIMIT} ClickUp tasks in this range; the list is truncated. Narrow the range.`);
     const contactIds = [...new Set(data.map(t => t.contact_id).filter(Boolean))];
     const contactMap = new Map();
     if (contactIds.length > 0) {
@@ -327,7 +346,7 @@ async function fetchClickupTasks(start: string, end: string) {
         metadata: { clickup_task_id: t.clickup_task_id, status: t.status, priority: t.priority, assignee: t.assignee_username },
       };
     });
-  } catch (e) { return []; }
+  } catch (e) { warn(`ClickUp tasks failed: ${(e as Error)?.message || String(e)}`); return []; }
 }
 
 Deno.serve(async (req) => {
@@ -349,12 +368,20 @@ Deno.serve(async (req) => {
       const sourcesParam = url.searchParams.get("sources") || "google,appts,tours,tasks,clickup";
       const sources = new Set(sourcesParam.split(","));
 
+      /* Per-request, never module state: one isolate serves concurrent
+         requests, so a shared collector would report one caller's failure to
+         another. Keyed by source so the banner can name what is missing. */
+      const dbWarnings: Record<string, string> = {};
+      const warnFor = (source: string): Warn => (msg: string) => {
+        dbWarnings[source] = dbWarnings[source] ? `${dbWarnings[source]} ${msg}` : msg;
+      };
+
       const promises: Promise<any>[] = [];   // heterogeneous: google returns {events,warning}, the rest return arrays
       promises.push(sources.has("google") ? fetchGoogleEvents(start, end) : Promise.resolve({ events: [], warning: null }));
-      promises.push(sources.has("appts") ? fetchAppointments(start, end) : Promise.resolve([]));
-      promises.push(sources.has("tours") ? fetchTours(start, end) : Promise.resolve([]));
-      promises.push(sources.has("tasks") ? fetchCrmTasks(start, end) : Promise.resolve([]));
-      promises.push(sources.has("clickup") ? fetchClickupTasks(start, end) : Promise.resolve([]));
+      promises.push(sources.has("appts") ? fetchAppointments(start, end, warnFor("appointments")) : Promise.resolve([]));
+      promises.push(sources.has("tours") ? fetchTours(start, end, warnFor("tours")) : Promise.resolve([]));
+      promises.push(sources.has("tasks") ? fetchCrmTasks(start, end, warnFor("tasks")) : Promise.resolve([]));
+      promises.push(sources.has("clickup") ? fetchClickupTasks(start, end, warnFor("clickup")) : Promise.resolve([]));
 
       const [googleResult, appointments, tours, tasks, clickupTasks] = await Promise.all(promises);
       const googleEvents = googleResult.events || [];
@@ -384,7 +411,11 @@ Deno.serve(async (req) => {
         /* Present ONLY when something went wrong or was truncated. A caller that
          * ignores it is no worse off than before; a caller that shows it can tell
          * "no events" from "we could not read them". */
-        ...(googleWarning ? { warnings: { google: googleWarning } } : {}),
+        /* Present ONLY when something went wrong or was truncated, and now
+           covering all five sources rather than Google alone. */
+        ...((googleWarning || Object.keys(dbWarnings).length)
+              ? { warnings: { ...(googleWarning ? { google: googleWarning } : {}), ...dbWarnings } }
+              : {}),
         generated_at: new Date().toISOString(),
       });
     }

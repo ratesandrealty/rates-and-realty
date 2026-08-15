@@ -528,6 +528,29 @@
     }
   }
 
+  /* One banner listing every source that could not be read, named. Cleared on
+     every refresh so a warning cannot outlive the failure that caused it. */
+  function renderWarnings(warnings) {
+    var host = document.querySelector('[data-target=cal-warnings]');
+    if (!host) {
+      var main = document.querySelector('[data-target=cal-main]');
+      if (!main || !main.parentNode) return;
+      host = document.createElement('div');
+      host.setAttribute('data-target', 'cal-warnings');
+      main.parentNode.insertBefore(host, main);
+    }
+    var keys = Object.keys(warnings || {});
+    if (!keys.length) { host.innerHTML = ''; host.style.display = 'none'; return; }
+    host.style.display = '';
+    host.innerHTML = '<div class="cal-warn" role="status" style="margin:0 0 10px;padding:9px 12px;'
+      + 'border:1px solid rgba(224,168,82,.45);background:rgba(224,168,82,.10);'
+      + 'border-radius:8px;color:#E0A852;font-size:12px;line-height:1.5;">'
+      + keys.map(function (k) {
+          return '<div>⚠ <strong>' + esc(k) + '</strong> — ' + esc(String(warnings[k])) + '</div>';
+        }).join('')
+      + '</div>';
+  }
+
   // ── Refresh / view dispatcher ────────────────────────────────────
   async function refresh() {
     var main = document.querySelector('[data-target=cal-main]');
@@ -536,6 +559,16 @@
       var data = await fetchEvents();
       allEvents = data.events || [];
       updateCounts(data.counts || {});
+      /* calendar-data has returned a `warnings` object since the Google pager
+         was added, and NOTHING HAS EVER READ IT. A source that failed or was
+         truncated reported itself honestly and the result was discarded, so the
+         calendar still rendered short and looked merely quiet.
+
+         An empty calendar because a fetch failed must not look like an empty
+         calendar. This is deliberately a banner above the grid rather than a
+         toast: the events it is warning about are missing for as long as you are
+         looking at them, so the notice has to persist as long as the view does. */
+      renderWarnings(data.warnings);
       updateTitle();
       if (viewMode === 'day') renderDay();
       else if (viewMode === 'week') renderWeek();
