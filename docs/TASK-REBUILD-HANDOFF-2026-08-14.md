@@ -1,8 +1,9 @@
-# Task system rebuild — handoff, 2026-08-14
+# Task system rebuild — handoff
 
-Steps 1–3 of a six-step rebuild. **Steps 1 and 2 are shipped. Step 3 is half
-shipped: everything verifiable by SQL is live; every page change is on a branch,
-unmerged and unverified, because no admin session token was available.**
+**STATUS as of 2026-08-15: Steps 1-4 are shipped and deployed. Steps 5 and 6
+remain.** This file was written on 2026-08-14 describing Step 3 as half-done
+with two unmerged branches; that is no longer true and the sections below have
+been corrected in place rather than appended to.
 
 Nothing in this document is a plan. It is what is true in the repo and the
 database right now.
@@ -96,74 +97,48 @@ constraint predates the tracked history. Proven directly:
 
 ---
 
-## On branches — unmerged, unverified, NOT deployed
+## Step 3 — ALL SIX SURFACES MERGED AND DEPLOYED (2026-08-15)
 
-Both branch off `main`. `main` matches production.
+The two branches described here as unmerged are merged. Every surface was
+verified in a real browser BEFORE merging, with the branch file served by
+request interception against the real backend, using the automation account.
 
-### `step3-s1-task-capture` — 1bf2eea
+| # | surface | evidence |
+|---|---|---|
+| 1 | `admin/js/task-capture.js` | one row per capture (297→298), `related_table` null, `assigned_by` stamped |
+| 2 | `admin/people.html` | 1044 rows before and after, 0 errors; create→update→complete round-tripped |
+| 3 | `admin/va-tasks.html` | 3 cards both sides, text byte-identical; Complete and Park driven through the UI |
+| 4 | lead-detail Tasks tab | 0 → 6 rows on a real lead; break test showed the failure instead of an empty list |
+| 5 | `components/admin-dashboard.js` + board | va refused / admin allowed on one card, **no writes observed** |
+| 6 | `calendar-data` | counts identical before/after; four DB sources now report failures instead of returning `[]` |
 
-`admin/js/task-capture.js` (+53 / −21)
+Two defects were fixed along the way that the surfaces exposed: the Tasks tab
+had been blind to 293 of 298 tasks, and `people.html` filed every hand-typed
+task as automation output.
 
-- `createCrmTask` → `task_upsert`. RPC proven with that exact parameter set.
-- `related_table='email_thread'` removed. Only this file wrote it, `related_id`
-  was never set beside it, nothing reads it, no row carries it — and it would
-  now make a hand-captured task read as machine-made.
-- **A duplicate-row bug fixed.** `clickup-bridge POST /task` also inserts into
-  `tasks` when `contact_id` is set, so ticking both destinations on a lead made
-  two rows. Observed once in production: `"test task"`, 2026-08-07 22:33:01 and
-  :03, 1.6s apart.
+## Step 4 — ClickUp outbox, SHIPPED 2026-08-15
 
-**Unverified:** open the widget, capture, confirm ONE row lands with the right
-description.
+39 SQL-created tasks that had never reached ClickUp are now there. See the
+Step 4 section at the end of this file for the reconciliation analysis, which
+is the part worth reading before changing any of it.
 
-### `step3-board-pending-mapping` — 1806005, f555450
+## Sessions are no longer a blocker
 
-`components/admin-dashboard.js` (+94 / −10), `dashboard/admin.html` (+16 / −1)
+`node tools/automation-session.mjs` mints a token for the `automation@` service
+account — its own session, its own rotated refresh token, never Rene's. Use
+`--token` for anything auth-gated.
 
-- Dead `in_progress` column mapped to **`pending`**. Dropping into it previously
-  wrote a value the CHECK refuses — the column threw rather than being merely
-  empty.
-- **`question` gets its own Blocked column**, out-only: a question is set by
-  asking one through `task_note_add`, not by dragging.
-- **`cancelled` is inert** — `draggable="false"`, 55% opacity, struck-through
-  badge, refused from every target. The drag selector also moved from
-  `[draggable]` to `[draggable="true"]`, which matched regardless of value.
-- **The dead drag is gone.** `dragover` and `drop` read one `crmDropRefusal()`,
-  so a refused column shows `not-allowed` and never accepts.
-- Open chip now means `crmIsLive()`, so `pending` and `question` stop being
-  invisible.
+`/dashboard/admin` additionally gates on `requireAdmin()`, which reads a
+hardcoded `ADMIN_EMAILS` allowlist that the bot is deliberately NOT on. To reach
+it in a test, intercept `/api/env.js` and append the bot to `ADMIN_EMAILS`
+**inside the headless browser only** — config, not code, production untouched.
+See `docs/ADMIN-AUTHORITIES-2026-08-15.md`.
 
-**Unverified, and this is the largest unverified surface in the project.**
-
----
-
-## What still needs a session token
-
-Nothing below has been done. Order is fixed and frontend-first: move one page,
-confirm it in a real browser, then the next. **Do not drop any old RPC until
-every page is off it.**
-
-1. `admin/js/task-capture.js` — built, verify
-2. `admin/people.html`
-3. `admin/va-tasks.html`
-4. `admin/lead-detail.html` Tasks tab
-5. `components/admin-dashboard.js` — merge the board branch, verify
-6. `calendar-data` edge function
-
-Also outstanding: consolidating `add_task_note` onto `task_note_add` (they are
-different functions, not duplicates — `task_note_add` is the superset and sets
-`status='question'`), and `lead-detail.html:7047` which has no question/pending
-distinction.
-
-### Board checks that need a real session
-
-| check | session |
-|---|---|
-| Blocked column renders and refuses drops | any |
-| A cancelled card cannot start a drag | any |
-| Complete → To Do refusal fires with the not-allowed cursor and no write | **must be `va` role** — as admin it is allowed and proves nothing |
-
----
+Still outstanding from Step 3: consolidating `add_task_note` onto
+`task_note_add` (different functions, not duplicates — `task_note_add` is the
+superset and sets `status='question'`), and the VA task panel in lead-detail
+(`:18240`, `:18249`, `:18313` `va_task_add`, `:18336` `va_task_set_status`,
+`:18543` `add_task_note`). No RPC has been dropped, so nothing breaks meanwhile.
 
 ## The VA-session analysis
 
@@ -238,12 +213,8 @@ argument against merging the board branch on its own merits.
 
 ---
 
-## Steps 4–6, not started
+## Steps 5–6, not started
 
-4. **ClickUp outbox** — a table plus a five-minute cron drain, replacing
-   `_task_clickup_sync`'s body. 38 open automated tasks are invisible in ClickUp
-   today. Decide deliberately: the bridge marks CRM tasks completed when the
-   ClickUp counterpart disappears, and that would start applying to them.
 5. **UI** — date picker, collapsible VA board, lead-detail Tasks tab with
    Mine/Aubrey's/Unassigned separated, read-only loan checklist from
    `va_processing_board`. Also the deferred `clickup-auto-create` `setHours(17)`
@@ -254,3 +225,121 @@ argument against merging the board branch on its own merits.
    alert on anything born overdue. **Do not live-probe it** — an unauthenticated
    probe of `loan-date-nudges` once texted Rene's real phone. Use
    `+1 714 555 0142` and confirm the send path is stubbed first.
+
+---
+
+## Step 4 — the ClickUp outbox, and the reconciliation it had to survive
+
+`order_reminders_run` and `surface_stale_leads` INSERT into `tasks` directly, so
+39 open tasks had never reached ClickUp. They are there now.
+
+### The shape
+
+```
+tasks AFTER INSERT ─► trg_tasks_enqueue_clickup ─► clickup_enqueue ─► clickup_outbox
+                                                                          │
+                          cron 46, */5 ─► clickup-bridge /outbox-drain ◄──┘
+```
+
+A trigger cannot make the HTTP call: `order_reminders_run` is SECURITY DEFINER
+inside a pg_cron transaction, and an outbound call from there ties the
+reminder's existence to ClickUp being reachable. `_task_clickup_sync` — the
+Step-3 no-op seam already called by `task_upsert` and `task_set_status` — now
+enqueues too. **No new call sites were added.**
+
+### WHICH tasks, and why not "clickup_task_id IS NULL"
+
+The literal rule would sweep up hand-captured tasks where somebody
+**deliberately unticked ClickUp** in the capture widget and push them anyway.
+The two SQL writers are identifiable positively instead:
+
+```
+order_reminders_run  ->  related_table = 'loan_orders'
+surface_stale_leads  ->  related_table = 'auto_followup_lead'
+```
+
+Verified before relying on it: **0 tasks have BOTH `related_table` and
+`clickup_task_id`**, so the marker separates SQL-created from bridge-created
+work cleanly, and the bridge's own insert already carries the id at INSERT time
+so the trigger skips it. Measured at backfill: 42 open tasks lacked a ClickUp
+id, **39** carried `related_table`; the other 3 were hand-captured CRM-only and
+were correctly left alone.
+
+The coupling is worth stating: `related_table` also means "a machine made this"
+to `task_list` and `va_daily_tasks`. If a human write path ever sets it again,
+those tasks start syncing as a side effect. Two did until 2026-08-15 —
+`people.html` and lead-detail both wrote `related_table='leads'` — and both were
+moved off it, which is what makes the marker safe to use now.
+
+### The reconciliation question, answered before it ran
+
+`syncPull` completes any CRM task whose ClickUp counterpart has vanished.
+
+**Could the first drain mass-complete anything? No — structurally.** `stale` is
+built from ClickUp ids in `clickup_task_cache`; the 39 had `clickup_task_id
+IS NULL`, so they were in neither the cache nor `stale`, and `.in(...)` cannot
+match NULL. A drain only CREATES, so `liveIds` only grows.
+
+**What happens to a task deleted in ClickUp by mistake** (within ≤15 min, cron 15):
+
+- It does **not** fire when a task is merely *closed* — the fetch uses
+  `include_closed=true`. Only **delete**, **archive** or **move to another list**.
+- The task is now set to **`cancelled`, not `completed`**. "Deleted in ClickUp"
+  is not "the work was done", and recording them identically put false
+  completions in the history: 167 of 251 completed tasks were
+  `completed_source='system'`, 164 with no surviving cache row.
+- A **`task_activity` row** is written (`kind='cancelled_clickup_missing'`) with
+  the ClickUp id and list. The old path was a direct UPDATE and left no trace.
+- **CRM-origin tasks are exempt** — anything with a `clickup_outbox` row.
+  ClickUp's absence must not cancel work the CRM invented, and
+  `order_reminders_run` would recreate it on the next run: a churn loop.
+- Recoverable: `fn_tasks_block_reopen` blocks only `va`/`agent`, so an admin can
+  reopen.
+
+**Origin is read from `clickup_outbox`, not a flag.** A row there is the record
+that the CRM created the task and pushed it out — a fact about what happened
+rather than something somebody must remember to set. Outbox rows are kept after
+sending for exactly this reason, and no backfill was needed: every task
+predating the outbox is bridge-origin by construction.
+
+### The guard, and where a skip shows up
+
+`fetchAllTasksFromList` pages at most 10 × 100. **Past 1000 tasks the remainder
+is simply absent, and the old code read "absent from my page window" as "deleted
+in ClickUp"** — which would cancel every unread task in one tick, silently. The
+list holds ~351 today, but the outbox exists to push more into it.
+
+`fetchAllTasksFromList` now returns `{ tasks, complete }`, and
+`clickup_prune_missing` **refuses to reconcile** when `complete` is false.
+
+**A skipped prune writes a notification to the CRM bell** via
+`app_notify_system` (`source_kind='clickup_sync'`, admin role, links to
+`/dashboard/admin#tasks`) — not a log file. `syncPull` also returns
+`prune_skipped` and a `reconciled` array rather than folding it into `pruned:0`,
+because "skipped the prune" and "found nothing stale" both report zero and are
+very different facts.
+
+### Proofs (2026-08-15)
+
+| | result |
+|---|---|
+| `order_reminders_run` on the fixture, rolled back | outbox 0 → 1, `related_table=loan_orders`; **hand-captured control NOT enqueued** |
+| guard, rolled back | incomplete fetch → `ran:false`, 0 cancelled, 1 notification written |
+| cancel semantics, rolled back | bridge-origin → `cancelled` + activity row; CRM-origin → untouched |
+| real drain | ClickUp `86e2uvr9x` created, id/url/list written back, cached |
+| break (bad list id) | `failed:1`, **HTTP 207**, `validateListIDEx List ID invalid`, row stayed `pending` with `attempts=1` and a backed-off retry; recovered on the next drain |
+| idempotence | outbox forced back to `pending` with the task already linked → `already_linked:1`, `sent:0`, **one** ClickUp task |
+| backfill | 39 queued, drained 25 + 14, **39 sent, 0 failed, 0 still invisible** |
+
+Fixture ClickUp tasks deleted afterwards; probe rows removed.
+
+### Known limits
+
+- **`OUTBOX_MAX_ATTEMPTS = 6`** then the row is `failed` and stops. Nothing
+  watches `clickup_outbox` for `status='failed'` yet — that is the obvious next
+  monitor, and the cheapest one in this project.
+- The drain does **create only**. It does not push later edits or status changes
+  to ClickUp; `task_set_status` still only enqueues, and an already-sent row is
+  a no-op.
+- The leads embed in `admin-api-v2` still falls back to a flat select
+  (pre-existing, unrelated).

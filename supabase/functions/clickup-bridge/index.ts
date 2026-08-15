@@ -96,19 +96,27 @@ async function clickupFetch(path: string, init: RequestInit = {}): Promise<any> 
   try { return JSON.parse(text); } catch { return {}; }
 }
 
-async function fetchAllTasksFromList(listId: string): Promise<any[]> {
+/* RETURNS WHETHER IT SAW THE WHOLE LIST, not just the tasks.
+ *
+ * The pager stops at 10 x 100. Past 1000 tasks the remainder is simply absent
+ * from the result, and the caller used to read "absent from my page window" as
+ * "deleted in ClickUp" — which would cancel every unread task in one tick,
+ * silently. `complete` is false when the pager ran out of pages while the last
+ * page was still full, which is exactly when there is more to read. */
+async function fetchAllTasksFromList(listId: string): Promise<{ tasks: any[]; complete: boolean }> {
   const all: any[] = [];
   let page = 0;
   const maxPages = 10;
+  let complete = false;
   while (page < maxPages) {
     const data = await clickupFetch(`/list/${listId}/task?archived=false&include_closed=true&subtasks=true&page=${page}`);
     const tasks = data.tasks || [];
-    if (tasks.length === 0) break;
+    if (tasks.length === 0) { complete = true; break; }
     all.push(...tasks);
-    if (tasks.length < 100) break;
+    if (tasks.length < 100) { complete = true; break; }
     page++;
   }
-  return all;
+  return { tasks: all, complete };
 }
 
 function matchContactInTitle(title: string, contacts: any[]): string | null {
@@ -123,15 +131,124 @@ function matchContactInTitle(title: string, contacts: any[]): string | null {
   return null;
 }
 
+/* ═══ OUTBOX DRAIN ═══════════════════════════════════════════════════════════
+ * order_reminders_run and surface_stale_leads INSERT into `tasks` directly, so
+ * their work has never reached ClickUp. A trigger enqueues them; this drains the
+ * queue. The trigger cannot make the call itself — order_reminders_run is
+ * SECURITY DEFINER inside a pg_cron transaction, and an HTTP call from there
+ * would tie the reminder's existence to ClickUp being reachable.
+ *
+ * IDEMPOTENCE has three independent layers, because "run it twice" is the
+ * normal case for a cron drain that overlaps a retry:
+ *   1. clickup_outbox is UNIQUE on task_id, so a task cannot be queued twice.
+ *   2. A row whose task already carries a clickup_task_id is marked sent
+ *      WITHOUT calling ClickUp.
+ *   3. The write-back is conditional — .is("clickup_task_id", null) — so two
+ *      racing drains cannot both claim the same task.
+ *
+ * A FAILED SEND IS A WRITE, not a return value: attempts, last_error and a
+ * backed-off next_attempt_at. The row stays `pending` and is retried until it
+ * has burned MAX_ATTEMPTS, then it is `failed` and stops — visible, not lost. */
+const OUTBOX_MAX_ATTEMPTS = 6;
+
+async function createClickupOnly(t: any, listId: string) {
+  const payload: any = { name: t.title };
+  if (t.description) payload.description = t.description;
+  if (t.due_date) payload.due_date = new Date(t.due_date).getTime();
+  const map: Record<string, number> = { urgent: 1, high: 2, normal: 3, low: 4 };
+  payload.priority = map[t.priority || "normal"] || 3;
+  if (t.contact_id) {
+    const { data: c } = await sb.from("contacts").select("first_name, last_name").eq("id", t.contact_id).maybeSingle();
+    const tag = c ? `${c.first_name || ""} ${c.last_name || ""}`.trim() : "";
+    if (tag) payload.tags = [tag.toLowerCase().replace(/\s+/g, "-")];
+  }
+  return await clickupFetch(`/list/${listId}/task`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+async function drainOutbox(limit = 25) {
+  const nowIso = () => new Date().toISOString();
+  const listId = await resolveListId();
+  const { data: rows, error: claimErr } = await sb.from("clickup_outbox")
+    .select("id, task_id, attempts")
+    .eq("status", "pending")
+    .lte("next_attempt_at", nowIso())
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (claimErr) return { claimed: 0, sent: 0, already_linked: 0, skipped: 0, failed: 1, errors: [{ stage: "claim", error: claimErr.message }] };
+
+  let sent = 0, already = 0, skipped = 0, failed = 0;
+  const errors: any[] = [];
+
+  for (const row of rows || []) {
+    const { data: t } = await sb.from("tasks")
+      .select("id, title, description, due_date, priority, contact_id, clickup_task_id, status")
+      .eq("id", row.task_id).maybeSingle();
+
+    if (!t) {
+      await sb.from("clickup_outbox").update({ status: "skipped", last_error: "task no longer exists", updated_at: nowIso() }).eq("id", row.id);
+      skipped++; continue;
+    }
+    if (t.clickup_task_id) {   // layer 2 — already there, do not call ClickUp
+      await sb.from("clickup_outbox").update({ status: "sent", clickup_task_id: t.clickup_task_id, sent_at: nowIso(), updated_at: nowIso(), last_error: null }).eq("id", row.id);
+      already++; continue;
+    }
+    if (t.status === "completed" || t.status === "cancelled") {
+      await sb.from("clickup_outbox").update({ status: "skipped", last_error: `task is ${t.status}`, updated_at: nowIso() }).eq("id", row.id);
+      skipped++; continue;
+    }
+
+    try {
+      const created = await createClickupOnly(t, listId);
+      if (!created || !created.id) throw new Error("ClickUp returned no task id");
+
+      const { data: claimed, error: wbErr } = await sb.from("tasks").update({
+        clickup_task_id: created.id, clickup_url: created.url,
+        clickup_list_id: listId, clickup_synced_at: nowIso(),
+      }).eq("id", t.id).is("clickup_task_id", null).select("id");   // layer 3
+      if (wbErr) throw new Error("write-back failed: " + wbErr.message);
+      if (!claimed || claimed.length === 0) throw new Error("write-back matched no row (another drain won the race)");
+
+      await sb.from("clickup_task_cache").upsert({
+        clickup_task_id: created.id, contact_id: t.contact_id || null,
+        list_id: listId, list_name: created.list?.name || "Todo",
+        title: created.name, status: created.status?.status || "to do",
+        priority: created.priority?.priority || null,
+        due_date: created.due_date ? new Date(parseInt(created.due_date)).toISOString() : null,
+        url: created.url, fetched_at: nowIso(), raw: created,
+      }, { onConflict: "clickup_task_id" });
+
+      await sb.from("clickup_outbox").update({
+        status: "sent", clickup_task_id: created.id, sent_at: nowIso(), updated_at: nowIso(), last_error: null,
+      }).eq("id", row.id);
+      sent++;
+    } catch (e: any) {
+      const attempts = (row.attempts || 0) + 1;
+      const backoffMin = Math.min(60, 5 * Math.pow(2, attempts - 1));
+      await sb.from("clickup_outbox").update({
+        attempts,
+        last_error: String(e?.message || e).slice(0, 500),
+        status: attempts >= OUTBOX_MAX_ATTEMPTS ? "failed" : "pending",
+        next_attempt_at: new Date(Date.now() + backoffMin * 60000).toISOString(),
+        updated_at: nowIso(),
+      }).eq("id", row.id);
+      failed++;
+      errors.push({ task_id: row.task_id, attempts, error: String(e?.message || e).slice(0, 200) });
+    }
+  }
+  return { claimed: (rows || []).length, sent, already_linked: already, skipped, failed, errors };
+}
+
 async function syncPull() {
   const listIds = [CLICKUP_TODO_LIST_ID];
   const { data: contacts } = await sb.from("contacts").select("id, first_name, last_name");
   let upserted = 0;
   let pruned = 0;
+  let skipped = 0;
+  const reconciled: any[] = [];
   const errors: any[] = [];
   for (const listId of listIds) {
     try {
-      const tasks = await fetchAllTasksFromList(listId);
+      const { tasks, complete } = await fetchAllTasksFromList(listId);
       const liveIds = new Set(tasks.map((t: any) => t.id));
       for (const t of tasks) {
         const due = t.due_date ? new Date(parseInt(t.due_date)).toISOString() : null;
@@ -157,7 +274,10 @@ async function syncPull() {
       }
     } catch (e: any) { errors.push({ listId, error: e.message }); }
   }
-  return { synced: upserted, pruned, lists: listIds.length, errors };
+  /* `reconciled` is returned rather than summarised away: a run that SKIPPED
+     the prune and a run that found nothing stale both report pruned:0, and those
+     are very different facts. */
+  return { synced: upserted, pruned, prune_skipped: skipped, reconciled, lists: listIds.length, errors };
 }
 
 async function listTasks(url: URL) {
@@ -464,6 +584,13 @@ Deno.serve(async (req) => {
     }
     if (req.method === "POST" && action === "sync-pull") {
       return j(await syncPull());
+    }
+    if (req.method === "POST" && action === "outbox-drain") {
+      const res = await drainOutbox();
+      /* 207 when anything failed. A drain that could not deliver must not answer
+         200 — this repo has a documented habit of callers that check res.ok and
+         nothing else (docs/SWALLOWED-FAILURES-2026-08-15.md). */
+      return j(res, res.failed > 0 ? 207 : 200);
     }
     if (req.method === "POST" && action === "task") {
       const body = await req.json();
