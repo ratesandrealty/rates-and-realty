@@ -289,6 +289,87 @@ exactly that object, in the one shared module three surfaces now delegate to. An
 announced end-of-life on a path just made canonical deserves its own
 investigation rather than a line in a console audit.
 
+### APPLIED — 2026-08-14
+
+Shipped in the order below. Step 4 is only provable before step 5, which is why
+it sits where it does.
+
+| # | change | evidence |
+|---|---|---|
+| 1 | `borrower_type` added to `mortgage_applications_secure` | 261 → **262** columns, at ordinal 262; `reloptions` still `{security_invoker=false}`; row predicate byte-identical |
+| 2 | `lead-detail.html` reads the **view**; the base-table fallback deleted | one fewer request per load |
+| 3 | wrong comment #11 replaced with the measured cause | — |
+| 4 | **break test, grant still absent** | see below |
+| 5 | `grant select (borrower_type) … to authenticated` | — |
+| 6 | grant is surgical | see below |
+
+The view was rebuilt by string-replacement on `pg_get_viewdef` with five
+assertions (anchor present, anchor unique, replacement fired, predicate
+survived, column exposed), not by retyping 261 columns. A hand-transcribed view
+definition is how a column quietly changes meaning.
+
+**Step 4 — the break test, and why the first run of it was not trustworthy.**
+The refusal message reads `permission denied for TABLE mortgage_applications`
+even though the cause is a column privilege. Taken at face value that proves
+nothing: a probe that refuses every column equally would look identical. Run
+column by column, it discriminates:
+
+```
+before the grant, base table, as `authenticated`
+  id                     : ALLOWED    has_column_privilege=true
+  contact_id             : ALLOWED    has_column_privilege=true
+  remaining_loan_balance : ALLOWED    has_column_privilege=true
+  borrower_type          : REFUSED    has_column_privilege=false
+  ssn                    : REFUSED    has_column_privilege=false
+  loan_number            : REFUSED    has_column_privilege=false
+```
+
+So with the view fixed and the grant still absent, the page works and the base
+table still refuses — **the view is doing the work, not the grant.**
+
+**Step 6 — after the grant:**
+
+```
+  borrower_type : ALLOWED
+  ssn, co_borrower_ssn, dl_number, co_borrower_dl_number,
+  bank_accounts, mismo_raw_xml, loan_number : REFUSED
+```
+
+One column moved. The migration asserts this itself — it re-checks all eleven
+withheld columns and `anon`, and fails rather than reporting success, because a
+grant that widened something else would otherwise be found much later.
+
+**The data was never in question:** 35 application rows, 7 with a value —
+4 `Home Buyer`, 3 `Homeowner` — matching what was measured before the change.
+Reading the view from a service connection returns **0 rows**, which is the row
+predicate working as designed (`current_app_role()` is `none` there), not a
+symptom.
+
+### The twin — `lead-detail.html:27324`, NOT fixed
+
+The same wrong comment, a second time:
+
+> *"co_borrower_dl_number / _state / _expiry are NOT in the
+> mortgage_applications_secure view … Pull them straight from the base
+> mortgage_applications table by the active app id (**admin_all_mortgage_applications
+> RLS permits this SELECT**)."*
+
+It does not. Those three columns are in the **deliberate** PII set — withheld
+from the view *and* from the grant — and the probe above confirms
+`co_borrower_dl_number` is still REFUSED. So that read has been 403ing on every
+co-borrower load, silently, inside `const { data: _cbDl } = …` with no error
+branch. **The three co-borrower DL fields never populate.**
+
+Left alone on purpose. Unlike `borrower_type` this is not an enumeration slip,
+so there is no "restore the intended behaviour" fix — it needs a decision:
+expose driver's-licence data to `authenticated`, or stop reading it here and
+remove the fields. Those have different answers and neither is a cleanup.
+
+Worth noting the pattern: **two callers, same page, same wrong diagnosis,
+different underlying truth.** One column was missed by accident and one class
+was withheld on purpose, and the comment says "RLS allows it" in both places.
+The comment was copied; the reasoning was not redone.
+
 ## Reproducing this
 
 Scripts are in the session scratchpad: `console-audit.mjs` (console + network +
