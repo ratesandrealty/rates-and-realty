@@ -58,7 +58,7 @@ import {
   getAppointments, getCommunications, getLeadDetail, getLoanTypes,
   updateLead, updateLeadStage, updateLeadStatus, updateLeadScore, getAllTasks,
   updateTaskStatus, updateTask, deleteTask
-} from "/api/admin-api-v2.js?v=63dc303f5b";
+} from "/api/admin-api-v2.js?v=1627f660b5";
 import { summarizeLead, draftEmail, draftSMS, chatWithAI } from "/api/ai-api.js";
 import { currency, formatDate, renderEmptyState, setMessage } from "/components/ui.js";
 
