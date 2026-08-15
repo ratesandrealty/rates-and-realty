@@ -661,6 +661,80 @@ async function checkSignatureRecords(): Promise<RecordCheck> {
   }
 }
 
+/* ── ClickUp outbox ─────────────────────────────────────────────────────────
+ *
+ * Step 4 gave order_reminders_run and surface_stale_leads a path to ClickUp: a
+ * trigger enqueues, a five-minute cron drains. A send that fails is a WRITE —
+ * attempts, last_error, a backed-off next_attempt_at — and after
+ * OUTBOX_MAX_ATTEMPTS (6) the row goes `failed` and stops. Nothing watched that,
+ * so a task could stop reaching ClickUp permanently and in silence.
+ *
+ * TWO RED CONDITIONS, because they are different failures:
+ *   · failed  — the row burned all six attempts. Something is wrong with the
+ *               task or with ClickUp's answer to it, and it will never retry.
+ *   · stalled — a row still `pending` far longer than the drain interval. That
+ *               is not a send failure, it is the DRAIN not running: exactly the
+ *               shape of the three crons found dead on 2026-08-15, each of which
+ *               had been failing for days with nothing looking.
+ *
+ * A query error returns ran:false. An outbox check that cannot read the outbox
+ * must not report a healthy outbox — same rule as the Drive probe and the
+ * signature sweep. */
+const OUTBOX_STALL_MINUTES = 30;      // drain is */5; 30 minutes is six missed runs
+
+type OutboxCheck = {
+  ok: boolean; ran: boolean; reason?: string;
+  failed: number; stalled: number; oldest_pending_minutes: number | null; samples: string[];
+};
+
+async function checkClickupOutbox(): Promise<OutboxCheck> {
+  const empty = { failed: 0, stalled: 0, oldest_pending_minutes: null, samples: [] };
+  try {
+    const { data: failed, error: e1 } = await sb.from("clickup_outbox")
+      .select("task_id, attempts, last_error, updated_at")
+      .eq("status", "failed").order("updated_at", { ascending: false }).limit(25);
+    if (e1) return { ok: false, ran: false, reason: `clickup_outbox failed query: ${e1.message}`, ...empty };
+
+    /* `next_attempt_at <= now()` IS PART OF THE CONDITION, not a detail. A row
+       that has failed a few times is deliberately parked in the future by the
+       backoff — pending, old, and perfectly healthy. Without this clause the
+       check reports a retrying row as stalled, which is a false alarm on the
+       exact mechanism that is working. Stalled means: the drain SHOULD have
+       taken this row and did not. */
+    const nowIso = new Date().toISOString();
+    const cutoff = new Date(Date.now() - OUTBOX_STALL_MINUTES * 60_000).toISOString();
+    const { data: stalled, error: e2 } = await sb.from("clickup_outbox")
+      .select("task_id, attempts, created_at")
+      .eq("status", "pending")
+      .lte("next_attempt_at", nowIso)
+      .lt("created_at", cutoff)
+      .order("created_at", { ascending: true }).limit(25);
+    if (e2) return { ok: false, ran: false, reason: `clickup_outbox pending query: ${e2.message}`, ...empty };
+
+    const oldest = (stalled || [])[0]?.created_at
+      ? Math.round((Date.now() - new Date((stalled as any[])[0].created_at).getTime()) / 60_000)
+      : null;
+
+    const samples = [
+      ...(failed || []).map((r: any) =>
+        `failed after ${r.attempts}: ${String(r.last_error || "no reason recorded").slice(0, 120)}`),
+      ...(stalled || []).slice(0, 5).map((r: any) =>
+        `pending ${Math.round((Date.now() - new Date(r.created_at).getTime()) / 60_000)}m (attempts ${r.attempts})`),
+    ].slice(0, 8);
+
+    return {
+      ok: (failed || []).length === 0 && (stalled || []).length === 0,
+      ran: true,
+      failed: (failed || []).length,
+      stalled: (stalled || []).length,
+      oldest_pending_minutes: oldest,
+      samples,
+    };
+  } catch (e) {
+    return { ok: false, ran: false, reason: String(e).slice(0, 200), ...empty };
+  }
+}
+
 const MIRROR_STALE_MINUTES = 30;
 
 async function checkDocumentMirror(): Promise<{ ok: boolean; stranded: number; oldest_minutes: number | null; samples: string[] }> {
@@ -1137,9 +1211,18 @@ Deno.serve(async (req) => {
   try {
     const url = new URL(req.url);
     let force = url.searchParams.get("force") === "1";
+    /* EVALUATE WITHOUT PAGING ANYONE. A red run texts Rene's cell, so before
+       this existed the only way to prove a new check actually goes red was to
+       send him a real alert — which means new checks get added and never
+       tested, and "a harness that has only ever passed proves nothing".
+       Per-invocation only: it is never persisted, never a config value, and the
+       suppressed run is still recorded in monitor_runs with its reason, so a
+       muted run is visible as muted rather than as a healthy one. */
+    let noAlert = url.searchParams.get("no_alert") === "1";
     if (req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       if (body.force) force = true;
+      if (body.no_alert) noAlert = true;
     }
 
     const oauth = await checkOAuth();
@@ -1154,8 +1237,10 @@ Deno.serve(async (req) => {
      * a restore is exactly when direction A goes from zero to many. */
     const recon = await reconcileStorage(sb);
     const sigRec = await checkSignatureRecords();
+    const outbox = await checkClickupOutbox();
     const allOk = oauth.ok && driveCred.ok && staticKeys.ok && embeddings.ok
-      && syncStatus.ok && indexing.ok && backup.ok && recon.ok && mirror.ok && sigRec.ok;
+      && syncStatus.ok && indexing.ok && backup.ok && recon.ok && mirror.ok && sigRec.ok
+      && outbox.ok;
 
     const result: any = {
       checked_at: new Date().toISOString(),
@@ -1192,6 +1277,13 @@ Deno.serve(async (req) => {
       reconcile_ok: recon.ok,
       reconcile_dangling: recon.dangling,
       reconcile_orphans: recon.orphans,
+      clickup_outbox_ok: outbox.ok,
+      clickup_outbox_ran: outbox.ran,
+      clickup_outbox_reason: outbox.reason ?? null,
+      clickup_outbox_failed: outbox.failed,
+      clickup_outbox_stalled: outbox.stalled,
+      clickup_outbox_oldest_pending_minutes: outbox.oldest_pending_minutes,
+      clickup_outbox_samples: outbox.samples,
       signature_records_ok: sigRec.ok,
       signature_records_ran: sigRec.ran,
       signature_records_reason: sigRec.reason ?? null,
@@ -1253,6 +1345,7 @@ Deno.serve(async (req) => {
       { key: "mirror", label: "Documents reaching Drive", ok: mirror.ok, ran: true },
       { key: "storage_dangling", label: "Dangling references", ok: !recon.dangling.some((d) => d.count !== 0), ran: true },
       { key: "signature_records", label: "Signed record PDFs", ok: sigRec.ok, ran: sigRec.ran },
+      { key: "clickup_outbox", label: "ClickUp outbox", ok: outbox.ok, ran: outbox.ran },
       { key: "storage_orphans", label: "Orphaned storage objects", ok: !recon.orphans.some((o) => o.over > 0), ran: true },
       { key: "static_keys", label: "API credentials", ok: staticKeys.ok, ran: true },
       { key: "backup", label: "CRM backup", ok: backup.ok && !backup.failed_run, ran: true },
@@ -1492,6 +1585,15 @@ Deno.serve(async (req) => {
      * cooldown. */
     const digestMessage = [...digestHeader, alert.message].join("\n");
     alert = { key: digestKey, message: digestMessage };
+
+    /* Checked BEFORE the cooldown, and deliberately does not consume one: a
+       suppressed evaluation must leave the real alerting state exactly as it
+       found it, or testing a check would silence the next genuine one. */
+    if (noAlert) {
+      result.alert_skipped_reason = "no_alert_requested";
+      await recordRun(result, "unhealthy_silent", redChecks.map((c) => c.key), unrunnable.map((c) => c.key), digestKey, false, "no_alert_requested");
+      return ok({ ...result, status: "unhealthy_silent", would_send: alert.message });
+    }
 
     if (!force) {
       const can = await shouldAlert(alert.key, redChecks.some((c) => c.key === "drive_write" && c.ran));
