@@ -1028,6 +1028,40 @@ across a redirect. The CSP violation in the lead-detail audit was attributed to
 lead-detail by arrival time and actually belonged to the login page it redirected
 to; `Log.entryAdded` carries the document URL and got it right.
 
+### The render-check stub does not cover `admin-api-v2.js` pages AT ALL
+
+The stub owns `window.supabase` and defends that ownership carefully — the
+non-writable property with a swallowing setter, described above. But
+`api/supabase-client.js` never touches the global:
+
+```js
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { … });
+```
+
+Its own client, from its own module import. The stub cannot see it, and
+render-check has no request interception to reach it. So for **every page whose
+data arrives through `api/admin-api-v2.js`** — all of `dashboard/admin`, the CRM
+task board included — `spec.tables`, `spec.rpc` and `spec.stubRow` are **inert**,
+and the page talks to real PostgREST as anon.
+
+**Consequence: every assertion on `dashboard/admin` run without `--token` has
+been passing against zero rendered cards.** Anon gets nothing back, the board
+renders empty, and a presence-only assertion on a container that exists but is
+empty passes — the identical shape to the `#shell` break-test above, which is the
+failure this harness was built to catch.
+
+This is why the board refusal spec is `tokenOnly`. It is also why a green
+dashboard/admin run without a token should be read as **untested**, not passing.
+
+Closing it means intercepting the module (CDP `Fetch`, the way the surface-1
+verification served a branch file) rather than owning a global. Until then the
+gap is load-bearing: assume any dashboard/admin coverage you did not personally
+run with `--token` proves nothing.
+
+Same family as the two traps above — the harness reports fewer problems than
+exist, which is precisely why nobody questions it.
+
 ### Rationale written ABOVE a `CREATE` does not survive
 
 `tools/recapture-db-functions.mjs` pulls `pg_get_functiondef` out of Postgres,
