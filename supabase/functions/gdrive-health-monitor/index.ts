@@ -695,19 +695,10 @@ async function checkClickupOutbox(): Promise<OutboxCheck> {
       .eq("status", "failed").order("updated_at", { ascending: false }).limit(25);
     if (e1) return { ok: false, ran: false, reason: `clickup_outbox failed query: ${e1.message}`, ...empty };
 
-    /* `next_attempt_at <= now()` IS PART OF THE CONDITION, not a detail. A row
-       that has failed a few times is deliberately parked in the future by the
-       backoff — pending, old, and perfectly healthy. Without this clause the
-       check reports a retrying row as stalled, which is a false alarm on the
-       exact mechanism that is working. Stalled means: the drain SHOULD have
-       taken this row and did not. */
-    const nowIso = new Date().toISOString();
     const cutoff = new Date(Date.now() - OUTBOX_STALL_MINUTES * 60_000).toISOString();
     const { data: stalled, error: e2 } = await sb.from("clickup_outbox")
       .select("task_id, attempts, created_at")
-      .eq("status", "pending")
-      .lte("next_attempt_at", nowIso)
-      .lt("created_at", cutoff)
+      .eq("status", "pending").lt("created_at", cutoff)
       .order("created_at", { ascending: true }).limit(25);
     if (e2) return { ok: false, ran: false, reason: `clickup_outbox pending query: ${e2.message}`, ...empty };
 
