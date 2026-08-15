@@ -380,8 +380,21 @@
       /* Each destination is attempted independently and reported independently.
        * A failure in one must never suppress the other, and must never be
        * papered over with a success toast. */
+      /* TWO ROWS FOR ONE CAPTURE, and it has happened. clickup-bridge POST /task
+       * ALSO inserts into `tasks` whenever contact_id or assigned_to is set, so
+       * ticking both destinations on a lead produced a CRM-only row and a
+       * ClickUp-linked row seconds apart. Measured in production: "test task",
+       * 2026-08-07 22:33:01 and :03, 1.6s apart, one with no clickup_task_id and
+       * one with. The bridge owns the row in that case; creating a second one
+       * here is the duplicate.
+       * When there is NO contact_id the bridge inserts nothing, so the CRM row
+       * still has to be made here or the capture reaches ClickUp only. */
+      var bridgeOwnsCrmRow = wantCu && !!ctx.contact_id;
       var crmTaskId = null;
-      if (wantCrm) {
+      if (wantCrm && bridgeOwnsCrmRow) {
+        results.push('✅ CRM task created and linked to the lead (via the ClickUp task)');
+        anyOk = true;
+      } else if (wantCrm) {
         try {
           crmTaskId = await createCrmTask(title, body, ctx, shotPath);
           results.push('✅ CRM task created' + (ctx.contact_id ? ' and linked to the lead' : ''));
@@ -394,7 +407,10 @@
 
       if (wantCu) {
         try {
-          var cu = await createClickupTask(title, body, ctx);
+          /* shotPath goes to the bridge too when the bridge is the one creating
+             the CRM row — otherwise the screenshot reference is only on the row
+             createCrmTask would have made, and that row no longer exists. */
+          var cu = await createClickupTask(title, body, ctx, bridgeOwnsCrmRow ? shotPath : null);
           var line = '✅ ClickUp task created';
           if (cu && cu.url) line += ' — ' + cu.url;
           // Attachment is reported on its own line: the task existing and the
@@ -432,27 +448,41 @@
   }
 
   // ── PERSISTENCE ────────────────────────────────────────────────────────────
-  /* CRM side writes `tasks` — the same table clickup-bridge already populates and
-   * that calendar-data / va-tasks read. contact_id is set whenever the page gave
-   * us one, so the task shows on the lead. */
+  /* CRM side goes through task_upsert — the one write path — rather than
+   * inserting into `tasks` directly. Same table calendar-data / va-tasks read;
+   * what changes is that status validation, assigned_by stamping and the
+   * ClickUp sync seam now happen server-side instead of being this file's
+   * problem. contact_id is set whenever the page gave us one, so the task shows
+   * on the lead.
+   *
+   * related_table='email_thread' IS DELIBERATELY GONE, and it is not a loss.
+   * This file was the only writer of that value, `related_id` was never set
+   * alongside it (the old comment said the columns "already exist for generic
+   * linkage" and then used half of one), NOTHING anywhere reads it — the
+   * email_thread_tags table and its RPCs are an unrelated mechanism — and no
+   * row in `tasks` carries it. It would now do active harm: task_list and
+   * va_daily_tasks read `related_table is not null` as evidence a MACHINE made
+   * the task, so a hand-captured task from an email would have been labelled
+   * auto and shown as not-from-Rene. The thread context is already in the
+   * description the capture widget writes. */
   async function createCrmTask(title, body, ctx, shotPath) {
     var c = cl();
     if (!c) throw new Error('not signed in');
-    var row = {
-      title: title,
-      description: body,
-      status: 'open',
-      priority: 'normal',
-      contact_id: ctx.contact_id || null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-    // related_table/related_id already exist on `tasks` for generic linkage.
-    if (ctx.kind === 'email' && ctx.thread_id) { row.related_table = 'email_thread'; }
-    if (shotPath) row.description += '\nScreenshot: ' + BUCKET + '/' + shotPath;
-    var r = await c.from('tasks').insert(row).select('id').single();
+    var desc = body;
+    if (shotPath) desc += '\nScreenshot: ' + BUCKET + '/' + shotPath;
+    var r = await c.rpc('task_upsert', {
+      p_title: title,
+      p_description: desc,
+      p_priority: 'normal',
+      p_contact_id: ctx.contact_id || null,
+      p_status: 'open'
+    });
     if (r.error) throw new Error(r.error.message);
-    return r.data && r.data.id;
+    /* task_upsert RETURNS public.tasks. PostgREST hands a composite back as an
+       object, but returns an array shape in some versions — accept both rather
+       than depend on which. */
+    var row = Array.isArray(r.data) ? r.data[0] : r.data;
+    return row && row.id;
   }
 
   function fnBase() { return (SB_URL || '') + '/functions/v1/clickup-bridge'; }
@@ -469,12 +499,14 @@
    * lead-detail and va-tasks already call. Nothing about ClickUp is rebuilt
    * here. Sent with the real session token, not the anon key: clickup-bridge
    * runs verify_jwt=true. */
-  async function createClickupTask(title, body, ctx) {
+  async function createClickupTask(title, body, ctx, shotPath) {
     var tok = await sessionToken();
+    var desc = body;
+    if (shotPath) desc += '\nScreenshot: ' + BUCKET + '/' + shotPath;
     var r = await fetch(fnBase() + '/task', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok, 'apikey': CFG.SUPABASE_ANON_KEY || '' },
-      body: JSON.stringify({ title: title, description: body, priority: 'normal', contact_id: ctx.contact_id || null })
+      body: JSON.stringify({ title: title, description: desc, priority: 'normal', contact_id: ctx.contact_id || null })
     });
     var j = await r.json().catch(function () { return {}; });
     if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
