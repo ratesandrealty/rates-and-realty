@@ -3,6 +3,59 @@ import { supabase } from "/api/supabase-client.js";
 
 // ── DASHBOARD DATA ────────────────────────────────────────────────────────────
 
+/* PostgREST caps a select at max-rows and says so ONLY in Content-Range, which
+ * supabase-js does not surface unless you ask for a count. Measured on
+ * 2026-08-15: `leads` holds 1048 rows and this fetch returned exactly 1000, so
+ * every figure on the overview — the KPI cards, both charts, the conversion
+ * rate — was computed over 1000 of 1048 and nothing said so.
+ *
+ * Pages until a short page comes back. `leads` is the only table here that
+ * exceeds the cap (tasks 298, uploaded_documents 114, mortgage_applications 35,
+ * notes 3), so the others are left alone rather than paginated speculatively.
+ *
+ * MERGED CONTACTS ARE EXCLUDED, and this is what makes the dashboard agree with
+ * the People page. `people-admin` counts through liveContacts(), which filters
+ * `merged_into_contact_id IS NULL` — 1044. The `leads` VIEW does not expose that
+ * column at all, so the ids are fetched separately from `contacts` (authenticated
+ * does hold a SELECT grant on it — checked, not assumed) and filtered here.
+ * Without this the charts count a merged duplicate AND its survivor. */
+async function fetchAllLeads(leadsSelect) {
+  const PAGE = 1000;
+
+  async function pageThrough(sel) {
+    let rows = [], from = 0;
+    for (;;) {
+      const { data, error } = await supabase
+        .from("leads").select(sel)
+        .order("created_at", { ascending: false })
+        .range(from, from + PAGE - 1);
+      if (error) return { data: rows, error };
+      rows = rows.concat(data || []);
+      if (!data || data.length < PAGE) return { data: rows, error: null };
+      from += PAGE;
+      if (from > 100000) return { data: rows, error: null };   // runaway guard
+    }
+  }
+
+  let res = await pageThrough(leadsSelect);
+  if (res.error) {
+    console.error("[admin-api] Leads load error (with embed):", res.error);
+    res = await pageThrough("*");
+    if (res.error) console.error("[admin-api] Leads flat fallback also failed:", res.error);
+  }
+
+  /* Four rows today. If this read fails, DO NOT silently keep the merged rows —
+     say so, because the totals will then disagree with People and the reason
+     would be invisible. */
+  const merged = await supabase.from("contacts").select("id").not("merged_into_contact_id", "is", null);
+  if (merged.error) {
+    console.error("[admin-api] merged-contact filter failed; totals will include merged duplicates:", merged.error);
+    return res;
+  }
+  const dead = new Set((merged.data || []).map((r) => r.id));
+  return { data: (res.data || []).filter((l) => !dead.has(l.id)), error: res.error || null };
+}
+
 export async function getAdminDashboardData() {
   console.log('getAdminDashboardData v2026033102 starting...');
 
@@ -13,7 +66,7 @@ export async function getAdminDashboardData() {
 
   const [contactsResult, leadsResult, applicationsResult, documentsResult, notesResult, tasksResult] = await Promise.all([
     supabase.from("contacts_secure").select("*").order("created_at", { ascending: false }),
-    supabase.from("leads").select(leadsSelect).order("created_at", { ascending: false }),
+    fetchAllLeads(leadsSelect),
     supabase.from("mortgage_applications").select("id, loan_type, loan_amount, status, updated_at, contact_id, property_address_street").order("updated_at", { ascending: false }),
     supabase.from("uploaded_documents").select("*").order("created_at", { ascending: false }),
     supabase.from("notes").select("*").order("created_at", { ascending: false }),
@@ -35,18 +88,9 @@ export async function getAdminDashboardData() {
   if (notesResult.error) console.error("[admin-api] Notes load error:", notesResult.error);
   if (tasksResult.error) console.error("[admin-api] Tasks load error:", tasksResult.error);
 
-  // Leads: if the embed failed (e.g. schema FK not yet named contact_id),
-  // fall back to a flat select so the dashboard still renders.
-  let leadsData = leadsResult.data;
-  if (leadsResult.error) {
-    console.error("[admin-api] Leads load error (with embed):", leadsResult.error);
-    const flat = await supabase
-      .from("leads")
-      .select("*")
-      .order("created_at", { ascending: false });
-    if (flat.error) console.error("[admin-api] Leads flat fallback also failed:", flat.error);
-    leadsData = flat.data || [];
-  }
+  // fetchAllLeads already paginates, falls back from the embed to a flat select
+  // and drops merged duplicates, so there is nothing left to do here.
+  const leadsData = leadsResult.data;
 
   return {
     contacts: contactsResult.data || [],
@@ -451,9 +495,62 @@ export async function getAnalyticsData(leads, tasks, applications) {
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 3600 * 1000);
   const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
+  /* SOURCE FOLDING. `l.source || "website"` used to bucket every NULL source
+     into "website", so 14 leads with no recorded source were reported as a
+     marketing channel — and sat next to the real "Website" as a separate slice
+     because the case differed. NULL is now its own "Unknown".
+
+     Folding is case + separator only: lowercase, trim, underscores and hyphens
+     to spaces. That merges "Referral"/"referral" (26) and "Business Partner
+     Referral"/"business_partner_referral" (17). It deliberately does NOT merge
+     "Business Referral" (5) into "Business Partner Referral" — those differ by a
+     WORD, not by spelling, and guessing they mean the same thing is a data
+     decision rather than a display one.
+
+     The label shown is the most COMMON original spelling, not the fold key, so
+     the legend reads "CSV Import" rather than "csv import". */
+  const SOURCE_TOP_N = 8;
+  const foldSource = (s) =>
+    s == null || !String(s).trim()
+      ? "__unknown__"
+      : String(s).trim().replace(/[_-]+/g, " ").replace(/\s+/g, " ").toLowerCase();
+
+  const sourceBuckets = new Map();
+  leads.forEach((l) => {
+    const key = foldSource(l.source);
+    let b = sourceBuckets.get(key);
+    if (!b) { b = { key, n: 0, spellings: new Map() }; sourceBuckets.set(key, b); }
+    b.n += 1;
+    if (key !== "__unknown__") {
+      const raw = String(l.source).trim();
+      b.spellings.set(raw, (b.spellings.get(raw) || 0) + 1);
+    }
+  });
+
+  const sourceRanked = [...sourceBuckets.values()]
+    .map((b) => ({
+      key: b.key,
+      n: b.n,
+      label: b.key === "__unknown__"
+        ? "Unknown"
+        : [...b.spellings.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0][0],
+    }))
+    .sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
+
+  const head = sourceRanked.slice(0, SOURCE_TOP_N);
+  const tail = sourceRanked.slice(SOURCE_TOP_N);
+  /* "Other sources", NOT "Other". A literal source value of "Other" exists (18
+     leads), so an overflow bucket called "Other" would put two different slices
+     with the same label in one legend. */
+  const bySourceChart = tail.length
+    ? head.concat([{ key: "__other__", label: `Other sources (${tail.length})`,
+                     n: tail.reduce((s, b) => s + b.n, 0) }])
+    : head;
+
+  // Raw per-source counts kept for anything that wants the unfolded truth.
   const bySource = {};
   leads.forEach((l) => {
-    const src = l.source || "website";
+    const src = l.source == null || !String(l.source).trim() ? "Unknown" : String(l.source).trim();
     bySource[src] = (bySource[src] || 0) + 1;
   });
 
@@ -463,11 +560,40 @@ export async function getAnalyticsData(leads, tasks, applications) {
     byLoanType[type] = (byLoanType[type] || 0) + 1;
   });
 
-  const allStages = ["new", "contacted", "prequalified", "preapproved", "in_process", "in_escrow", "closed", "lost"];
-  const byStage = {};
-  allStages.forEach((s) => {
-    byStage[s] = leads.filter((l) => (l.status || "new") === s).length;
+  /* STAGES ARE DERIVED FROM THE DATA. The old fixed list —
+     new/contacted/prequalified/preapproved/in_process/in_escrow/closed/lost —
+     matched NOTHING. Real pipeline_status values are "New Lead", "Contacted",
+     "Pre-Approved", "Processing", "Clear to Close", "Closed", so every count was
+     zero: measured 2026-08-15, 1000 of 1000 rows matched no stage. The bar chart
+     would have rendered six empty bars for ever and conversionRate read 0% with
+     8 closed leads.
+
+     FUNNEL_ORDER mirrors PIPELINE_STAGES in dashboard/admin.html so this chart
+     and the Pipeline Board tell the same story in the same sequence. That is a
+     SECOND COPY of the order and the two must be kept in step; it lives here
+     because ordering a funnel is a property of the data, and dashboard/admin.html
+     is an inline script that cannot import from this module. Any status not in
+     the list is appended rather than dropped, so a new pipeline value shows up
+     as itself instead of vanishing. */
+  const FUNNEL_ORDER = [
+    "New Lead", "Contacted", "Follow Up", "Pre-Approved",
+    "Under Contract", "Processing", "Clear to Close", "Closed", "Lost",
+  ];
+  const stageCounts = new Map();
+  leads.forEach((l) => {
+    const s = l.status == null || !String(l.status).trim() ? "Unknown" : String(l.status).trim();
+    stageCounts.set(s, (stageCounts.get(s) || 0) + 1);
   });
+  const orderedStages = FUNNEL_ORDER.filter((s) => stageCounts.has(s))
+    .concat([...stageCounts.keys()].filter((s) => !FUNNEL_ORDER.includes(s)).sort());
+
+  const byStage = {};                                  // insertion order IS funnel order
+  orderedStages.forEach((s) => { byStage[s] = stageCounts.get(s); });
+  const byStageChart = orderedStages.map((s) => ({ stage: s, n: stageCounts.get(s) }));
+
+  const closedCount = [...stageCounts.entries()]
+    .filter(([s]) => s.trim().toLowerCase() === "closed")
+    .reduce((sum, [, n]) => sum + n, 0);
 
   const weeklyLeads = [0, 0, 0, 0];
   leads.forEach((l) => {
@@ -497,15 +623,23 @@ export async function getAnalyticsData(leads, tasks, applications) {
     newThisWeek,
     hotLeads,
     closedThisMonth,
-    newLeads: byStage["new"] || 0,
+    newLeads: byStage["New Lead"] || 0,   // was byStage["new"], a key that never existed
     openTasks,
     submitted,
     appointmentsToday,
     weeklyLeads,
     bySource,
+    bySourceChart,      // folded, top-N + "Other sources", ready to draw
     byLoanType,
     byStage,
-    conversionRate: leads.length > 0 ? Math.round(((byStage["closed"] || 0) / leads.length) * 100) : 0
+    byStageChart,       // ordered [{stage, n}], funnel order
+    /* closedCount is matched case-insensitively against the REAL status, not a
+       byStage["closed"] key that never existed. This read 0% with 8 closed
+       leads. Kept as a whole percent to match the card, with the exact fraction
+       alongside so a rounded 1% can be checked against 8/1044. */
+    conversionRate: leads.length > 0 ? Math.round((closedCount / leads.length) * 100) : 0,
+    closedCount,
+    leadsCounted: leads.length
   };
 }
 
