@@ -39,6 +39,73 @@ const CHROME_CANDIDATES = [
 const BASE = process.env.RC_BASE || 'https://admin.ratesandrealty.com';
 const FIXTURE = 'aa74cc5e-2186-4b40-8608-3d2aa033b9ca';   // ZZ-TEST Fixture Borrower
 
+/* Drag a COMPLETED card onto To Do on the CRM board and report what happened, as
+ * one expression, because evals compare an expression to an exact value.
+ *
+ * Returns a 3-field verdict rather than a boolean so a failure says WHICH half
+ * broke. "missing:..." when a selector found nothing — the difference between
+ * "the refusal did not fire" and "there was nothing to drag", which a boolean
+ * would flatten into the same red.
+ *
+ * The card is re-found BY ID after the drop, never held by reference: the refusal
+ * branch calls renderAllTasksTable(), which replaces every node, so a retained
+ * element would test detached DOM and report "stayed" no matter what happened.
+ * window.alert is swallowed and restored — headless Chromium blocks on a real
+ * dialog, and the message is the assertion anyway. */
+const RC_BOARD_DRAG = `(function(){
+  var msgs=[], A=window.alert; window.alert=function(m){msgs.push(String(m));};
+  try{
+    var B='[data-target="cm-board"] ';
+    var card=document.querySelector(B+'.board-card[data-status="completed"]');
+    var col=document.querySelector(B+'[data-drop-col="todo"]');
+    if(!card||!col) return 'missing:card='+!!card+',col='+!!col;
+    var id=card.dataset.taskId, dt=new DataTransfer();
+    card.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:dt}));
+    col.dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:dt}));
+    var blocked=col.classList.contains('is-drop-blocked');
+    col.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:dt}));
+    var sel='.board-card[data-task-id="'+(window.CSS&&CSS.escape?CSS.escape(id):id)+'"]';
+    var inTodo=!!document.querySelector(B+'[data-drop-col="todo"] '+sel);
+    var inDone=!!document.querySelector(B+'[data-drop-col="done"] '+sel);
+    return (msgs.length?'refused':'noalert')+'|'
+         +(blocked?'blocked':'notblocked')+'|'
+         +((!inTodo&&inDone)?'stayed':(inTodo?'moved':'vanished'));
+  } finally { window.alert=A; }
+})()`;
+
+/* The admin half stops at dragover ON PURPOSE. dragover and drop read the same
+ * predicate on this branch, so an unblocked dragover is the gate opening;
+ * dispatching the drop would reopen a real completed task to learn nothing the
+ * predicate has not already said. */
+const RC_BOARD_DRAG_ADMIN = `(function(){
+  var B='[data-target="cm-board"] ';
+  var card=document.querySelector(B+'.board-card[data-status="completed"]');
+  var col=document.querySelector(B+'[data-drop-col="todo"]');
+  if(!card||!col) return 'missing:card='+!!card+',col='+!!col;
+  var dt=new DataTransfer();
+  card.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:dt}));
+  var ev=new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:dt});
+  col.dispatchEvent(ev);
+  return (ev.defaultPrevented?'allowed':'refused')+'|'
+       +(col.classList.contains('is-drop-blocked')?'blocked':'notblocked');
+})()`;
+
+/* The pair, run against ONE card in ONE page load. The va half must refuse and
+ * must not move the card; the admin half must open the gate on the same target.
+ * The role is restored afterwards so nothing later in the run inherits it. */
+const RC_BOARD_BOTH_ROLES = `(function(){
+  var prev=null; try{ prev=sessionStorage.getItem('rnr_app_role'); }catch(e){}
+  function as(r){ try{ sessionStorage.setItem('rnr_app_role', r); }catch(e){} }
+  try{
+    as('va');    var va    = ${RC_BOARD_DRAG};
+    as('admin'); var admin = ${RC_BOARD_DRAG_ADMIN};
+    return 'va='+va+' :: admin='+admin;
+  } finally {
+    try{ prev===null ? sessionStorage.removeItem('rnr_app_role')
+                     : sessionStorage.setItem('rnr_app_role', prev); }catch(e){}
+  }
+})()`;
+
 /* The boundary DIFFERS BY MODE. Printing the stubbed one during a real-session
    run is the same defect this file exists to catch: it understates what the run
    proved AND misdescribes what it did. */
@@ -1932,6 +1999,67 @@ const SPECS = [
    * Escrow # is therefore NOT harness-verified. It needs a human to open the
    * Loan Snapshot on a real lead — which is what this repo's own rule about
    * having a person confirm a frontend change already asks for. */
+
+  /* ═══ CRM task board — the Complete → To Do refusal, both roles ═══
+   *
+   * WHY THESE ARE tokenOnly, and it is not a convenience.
+   * The board's rows come from admin-api-v2.js, which imports its client from
+   * api/supabase-client.js — and that module calls createClient() on its own
+   * import from esm.sh. It is NOT window.supabase, so the document-start stub
+   * never sees it and spec.tables cannot feed this board. Without a token the
+   * board renders zero cards and both specs below would pass vacuously against
+   * an empty board, which is the exact failure this pairing exists to prevent.
+   * (That bypass is a harness gap in its own right — see the note after these.)
+   *
+   * WHY THE PAIR. A spec that only asserts "the va is refused" passes just as
+   * well when the board never mounted, when the card selector is wrong, or when
+   * nothing is draggable — every one of which yields no movement and no write.
+   * The admin spec drags the SAME card onto the SAME column and asserts it is
+   * NOT refused, so the selectors are proven live by a run that must come back
+   * the other way.
+   *
+   * NEITHER SPEC WRITES. The va side is refused before the write by
+   * construction. The admin side deliberately stops at dragover: the branch made
+   * dragover and drop read one predicate, so an unblocked dragover IS the gate
+   * opening, and dispatching the drop would reopen a real completed task to
+   * prove something the predicate already said. */
+  {
+    name: 'board refuses Complete → To Do for a va, and writes nothing',
+    url: '/dashboard/admin',
+    role: 'va',
+    tokenOnly: true,
+    width: 1440,
+    steps: [
+      { click: '[data-crm-nav="tasks"]', waitMs: 1500 },
+      { click: '[data-subpanel="crm"] [data-task-filter="all"]', waitMs: 2000 },
+      { click: '[data-subpanel="crm"] .view-btn[data-view="board"]', waitMs: 2000 },
+    ],
+    present: ['[data-target="cm-board"] [data-drop-col="done"]',
+              '[data-target="cm-board"] [data-drop-col="todo"]'],
+    evals: [
+      /* BOTH ROLES, ONE PAGE LOAD, ONE CARD — and spec.role is NOT what supplies
+         them. Measured: under --token, auth-guard recomputes the real role from
+         current_app_role() and OVERWRITES rnr_app_role, so a token run always
+         reports the token's own role and `role: 'va'` above is inert here. It is
+         kept only so a future stub-mode run is labelled correctly.
+
+         So the role is injected around each drag instead. That is not a
+         weakening: crmDropRefusal READS sessionStorage at drag time and calls
+         nothing, so this is the predicate's real input arriving by its real
+         route. What it buys is that both verdicts come from the SAME card in the
+         SAME column milliseconds apart — no second page load, no second card, no
+         way for one side to be testing a different board than the other. */
+      [RC_BOARD_BOTH_ROLES, 'va=refused|blocked|stayed :: admin=allowed|notblocked'],
+    ],
+  },
+  /* HARNESS GAP, recorded because a green run here says less than it looks like.
+   * api/supabase-client.js builds its own client from esm.sh, so every page whose
+   * data arrives through admin-api-v2.js is UNSTUBBED under render-check — it
+   * reaches real PostgREST, as anon when no token is supplied. spec.tables,
+   * spec.rpc and spec.stubRow are all inert for those pages. Closing it means
+   * intercepting the module (CDP Fetch) rather than owning a global. Until then,
+   * treat any dashboard/admin assertion without --token as untested rather than
+   * passing. */
 ];
 
 /* BREAK TEST for the two Send specs above. tools/fixtures/dead-send.html is a
