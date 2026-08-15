@@ -355,7 +355,7 @@
     function mountTaskCapture() {
       if (document.querySelector('script[src*="/admin/js/task-capture.js"]')) return;
       const tc = document.createElement('script');
-      tc.src = '/admin/js/task-capture.js?v=71125cf719';
+      tc.src = '/admin/js/task-capture.js?v=1d09ed5f8d';
       document.head.appendChild(tc);
     }
     /* One FAB in the bottom-right corner, replacing the two independent floating
