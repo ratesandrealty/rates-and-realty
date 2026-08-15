@@ -75,10 +75,15 @@ person the page is for. It is still a second source of truth, and
 `ADMIN_USER_IDS` is still dead, but nobody is locked out of a page they are
 supposed to have.
 
-**Two live defects it does expose:** `admin/va-help.html:62` and
-`admin/va-training.html:76` render an ungated "← Dashboard" link to
-`/dashboard/admin`, and neither page is in `PAGE_ACCESS`. A VA can open both and
-click a link that bounces her. Not fixed.
+**Two live defects it exposed — FIXED 2026-08-15.** `admin/va-help.html` and
+`admin/va-training.html` rendered an ungated "← Dashboard" link to
+`/dashboard/admin`, and neither page is in `PAGE_ACCESS`, so a VA could open
+both and click a link that bounced her. Both now default to
+`/admin/va-dashboard.html` (gated `['va','admin']`, correct for either role) and
+upgrade to `/dashboard/admin` only when the resolved role is admin. Verified in
+a browser for both roles on both pages — the VA case by intercepting
+`current_app_role` to return `'va'`, so the role arrived by its normal route
+rather than being faked into storage.
 
 ## 2. `ADMIN_USER_IDS` has always been dead
 

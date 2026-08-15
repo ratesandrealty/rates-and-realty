@@ -679,11 +679,22 @@ Measured, not inferred:
 Her real workspace is `/admin/va-dashboard.html` + `/admin/va-tasks.html`, both
 gated `['va','admin']` in `PAGE_ACCESS`.
 
-**Two live defects follow from this and are NOT fixed:** `admin/va-help.html:62`
-and `admin/va-training.html:76` both render an ungated "← Dashboard" link to
-`/dashboard/admin`, and neither page is in `PAGE_ACCESS`, so a VA can open them
-and click a link that bounces her to `/admin/people.html`. That is exactly the
-"nav button leading nowhere" defect this section names.
+**Both pages linked her into that wall until 2026-08-15 — now fixed.**
+`admin/va-help.html` and `admin/va-training.html` rendered an ungated
+"← Dashboard" link straight to `/dashboard/admin`, and neither page is in
+`PAGE_ACCESS`, so a VA could open them and click a link that bounced her to
+`/admin/people.html` — the exact "nav button leading nowhere" defect this
+section names.
+
+Both now DEFAULT the href to `/admin/va-dashboard.html`, which is gated
+`['va','admin']` and therefore correct for **both** roles, and upgrade to
+`/dashboard/admin` only when the resolved role is admin. The upgrade runs after
+`_rrGateReady` settles, because `auth-guard` writes `rnr_app_role`
+asynchronously and reading it at parse time gets an empty string. **If the gate
+never settles the link simply stays at the safe default** — the failure mode is
+one extra click, never a dead end. That direction is deliberate: defaulting to
+the admin page and downgrading would reinstate the original bug for anyone whose
+role resolves late.
 
 The pattern itself, on its own merits:
 
