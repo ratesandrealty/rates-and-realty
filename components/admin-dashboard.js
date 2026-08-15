@@ -354,39 +354,25 @@ async function renderOverview() {
   // Charts + recent-leads table — a bad row/data shape here must not abort the whole
   // overview render (other widgets mount after this block), so guard + continue.
   try {
-    // Bar chart — leads by status
+    // Bar chart — leads by status. No stage list: the stages come from the data.
     const barRoot = document.getElementById("overview-bar-root");
     if (barRoot) {
-      barRoot.innerHTML = renderInlineBarChart(data.byStage, ["new","contacted","prequalified","preapproved","in_process","closed"]);
+      barRoot.innerHTML = renderInlineBarChart(data.byStageChart);
     }
 
-    // Pie chart — leads by source
+    // Pie chart — leads by source, already folded and capped by the API.
     const pieRoot = document.getElementById("overview-pie-root");
     if (pieRoot) {
-      pieRoot.innerHTML = renderInlinePieChart(data.bySource);
+      pieRoot.innerHTML = renderInlinePieChart(data.bySourceChart);
     }
 
-    // Recent leads table
-    const tbody = document.getElementById("overview-lead-tbody");
-    if (tbody) {
-      tbody.innerHTML = leads.slice(0, 8).map((lead) => {
-        const c = lead.contacts || {};
-        const name = `${c.first_name || ""} ${c.last_name || ""}`.trim() || "Unknown";
-        const detailHref = lead.contact_id ? `../admin/lead-detail.html?contact_id=${lead.contact_id}` : `../admin/lead-detail.html?lead_id=${lead.id}`;
-        const calcScore = lead.score || calculateLeadScore(lead, c).score;
-        const calcTier = lead.score_tier || calculateLeadScore(lead, c).tier;
-        return `
-          <tr class="lead-row" style="cursor:pointer;" data-lead-id="${lead.id}" data-detail-href="${detailHref}" onclick="window.location.href='${detailHref}'">
-            <td class="lead-name-cell"><span class="lead-name-link" style="cursor:pointer;">${name}</span><span>${c.email || ""}</span></td>
-            <td>${lead.loan_type || "—"}</td>
-            <td>${scoreBadge(calcScore, calcTier)}</td>
-            <td><span class="status-pill ${statusPillClass(lead.status)}">${lead.status || "new"}</span></td>
-            <td>${formatDate(lead.created_at)}</td>
-          </tr>
-        `;
-      }).join("") || `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--muted);">No leads yet.</td></tr>`;
-      bindLeadRowClicks("#overview-lead-tbody");
-    }
+    /* THE RECENT-LEADS TABLE IS GONE, not broken. Its markup was removed from
+       dashboard/admin.html in 5817dea ("fix: remove Recent Leads table from
+       dashboard overview", 2026-03-30) and the code that filled it was left
+       behind. #overview-lead-tbody occurs ZERO times in the repo, so `if (tbody)`
+       has been false ever since: it never rendered and never errored, which is
+       why nobody noticed. Deleted rather than revived - bringing the table back
+       is markup plus code, and a decision rather than a repair. */
   } catch (e) {
     console.error("[renderOverview] charts/leads-table render failed; continuing:", e);
   }
@@ -5923,6 +5909,115 @@ function bindAIChat() {
 }
 
 // ── UTILITY ───────────────────────────────────────────────────────────────────
+/* ═══ OVERVIEW CHARTS ═══════════════════════════════════════════════════════
+   Inline SVG, no library. dashboard/admin.html:1157 already styles
+   `#overview-bar-root svg`, so SVG is what the page was built to receive.
+
+   Both take data the API has already shaped — the bar takes an ORDERED array so
+   the funnel sequence is decided once, next to the data, and the pie takes an
+   already-folded top-N list. Neither renderer decides what a bucket means.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Stage colours mirror PIPELINE_STAGES in dashboard/admin.html so a stage is the
+   same colour here as on the Pipeline Board. Unlisted stages fall back to gold
+   rather than throwing or rendering invisibly. */
+const STAGE_COLORS = {
+  "New Lead": "#6B6B7A", "Contacted": "#5AA0E0", "Follow Up": "#4FB3B3",
+  "Pre-Approved": "#C9A84C", "Under Contract": "#AB7FE0", "Processing": "#E07F50",
+  "Clear to Close": "#52C87A", "Closed": "#3AB06A", "Lost": "#E05252",
+};
+const SOURCE_COLORS = ["#C9A84C","#5AA0E0","#52C87A","#E07F50","#AB7FE0",
+                       "#4FB3B3","#E0A852","#6B8BE0","#8A8A99"];
+
+function renderInlineBarChart(rows) {
+  const data = (rows || []).filter((r) => r && r.stage != null);
+  if (!data.length) return '<div style="padding:18px;color:var(--muted);font-size:12px;">No leads to chart.</div>';
+
+  const LABEL_W = 118, VALUE_W = 46, TRACK = 250, ROW_H = 26, PAD = 6;
+  const W = LABEL_W + TRACK + VALUE_W;
+  const H = data.length * ROW_H + PAD * 2;
+  const max = Math.max(1, ...data.map((r) => Number(r.n) || 0));
+  const total = data.reduce((s, r) => s + (Number(r.n) || 0), 0);
+
+  const bars = data.map((r, i) => {
+    const n = Number(r.n) || 0;
+    const y = PAD + i * ROW_H;
+    const color = STAGE_COLORS[r.stage] || "#C9A84C";
+    /* A ZERO STAGE DRAWS NO BAR BUT KEEPS ITS ROW AND ITS "0" — it must read as
+       "this stage is empty", never as a missing row. And a NON-ZERO stage gets a
+       minimum 3px so 1 lead out of 1012 is still visible: at true scale that bar
+       is 0.25px and would be indistinguishable from zero, which is the more
+       misleading of the two errors. */
+    const w = n === 0 ? 0 : Math.max(3, Math.round((n / max) * TRACK));
+    const pct = total ? Math.round((n / total) * 1000) / 10 : 0;
+    return `
+      <g>
+        <title>${escapeHtml(r.stage)}: ${n} (${pct}%)</title>
+        <text x="${LABEL_W - 8}" y="${y + 17}" text-anchor="end" font-size="11.5"
+              fill="rgba(255,255,255,.62)">${escapeHtml(String(r.stage))}</text>
+        <rect x="${LABEL_W}" y="${y + 6}" width="${TRACK}" height="13" rx="3" fill="rgba(255,255,255,.045)"></rect>
+        ${w ? `<rect x="${LABEL_W}" y="${y + 6}" width="${w}" height="13" rx="3" fill="${color}"></rect>` : ""}
+        <text x="${LABEL_W + TRACK + 8}" y="${y + 17}" font-size="11.5" font-weight="700"
+              fill="${n === 0 ? "rgba(255,255,255,.35)" : "#e8e8e8"}">${n}</text>
+      </g>`;
+  }).join("");
+
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img"
+       aria-label="Leads by status" style="display:block;font-family:inherit;">${bars}</svg>`;
+}
+
+function renderInlinePieChart(rows) {
+  const data = (rows || []).filter((r) => r && (Number(r.n) || 0) > 0);
+  const total = data.reduce((s, r) => s + Number(r.n), 0);
+  if (!total) return '<div style="padding:18px;color:var(--muted);font-size:12px;">No leads to chart.</div>';
+
+  /* A DONUT DRAWN WITH stroke-dasharray, not arc paths: no angle arithmetic to
+     get wrong, and a slice at 99.9% still renders correctly where a naive
+     large-arc-flag path flips inside out.
+
+     NOTHING IS LABELLED ON THE SLICES. One source is 83% of the book, so slice
+     labels would pile on top of each other in the remaining 17% — the legend
+     carries every label instead and cannot collide. */
+  const R = 52, SW = 22, C = 2 * Math.PI * R, BOX = 132;
+  let acc = 0;
+  const arcs = data.map((r, i) => {
+    const n = Number(r.n);
+    const len = (n / total) * C;
+    const seg = `<circle cx="${BOX / 2}" cy="${BOX / 2}" r="${R}" fill="none"
+        stroke="${SOURCE_COLORS[i % SOURCE_COLORS.length]}" stroke-width="${SW}"
+        stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}"
+        stroke-dashoffset="${(-acc).toFixed(2)}"
+        transform="rotate(-90 ${BOX / 2} ${BOX / 2})"
+      ><title>${escapeHtml(String(r.label))}: ${n} (${Math.round((n / total) * 1000) / 10}%)</title></circle>`;
+    acc += len;
+    return seg;
+  }).join("");
+
+  const legend = data.map((r, i) => {
+    const n = Number(r.n);
+    const pct = Math.round((n / total) * 1000) / 10;
+    return `<div style="display:flex;align-items:center;gap:7px;font-size:11.5px;line-height:1.7;">
+      <span style="flex:0 0 9px;height:9px;border-radius:2px;background:${SOURCE_COLORS[i % SOURCE_COLORS.length]};"></span>
+      <span style="flex:1;min-width:0;color:rgba(255,255,255,.72);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+            title="${escapeHtml(String(r.label))}">${escapeHtml(String(r.label))}</span>
+      <span style="color:#e8e8e8;font-weight:700;">${n}</span>
+      <span style="color:rgba(255,255,255,.4);flex:0 0 42px;text-align:right;">${pct}%</span>
+    </div>`;
+  }).join("");
+
+  return `<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+    <svg viewBox="0 0 ${BOX} ${BOX}" width="${BOX}" height="${BOX}" role="img"
+         aria-label="Leads by source" style="flex:0 0 auto;display:block;">
+      ${arcs}
+      <text x="${BOX / 2}" y="${BOX / 2 - 2}" text-anchor="middle" font-size="17" font-weight="700"
+            fill="#e8e8e8" font-family="inherit">${total}</text>
+      <text x="${BOX / 2}" y="${BOX / 2 + 13}" text-anchor="middle" font-size="9.5"
+            fill="rgba(255,255,255,.45)" font-family="inherit">leads</text>
+    </svg>
+    <div style="flex:1 1 190px;min-width:170px;">${legend}</div>
+  </div>`;
+}
+
 function bindLeadRowClicks(selector) {
   const container = typeof selector === "string" ? document.querySelector(selector) : selector;
   if (!container) return;
