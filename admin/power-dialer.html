@@ -839,7 +839,32 @@
     var ok=await rpcLog(lead,'call','outbound',text,dur); if(!ok) return;
     _pendingDur=0; endBridgeBar();
     if(/wrong number/i.test(text)){ // wrong numbers shouldn't be redialed
-      try{ await _authClient().rpc('contact_set_dnc',{p_contact_id:lead.contact_id,p_value:true,p_reason:'wrong number'}); }catch(e){}
+      /* THIS IS A COMPLIANCE WRITE, NOT A UI NICETY, so it may not fail quietly.
+         It used to be `try{ … }catch(e){}` — and that catch could never fire:
+         supabase-js RESOLVES with { error } for a database failure rather than
+         throwing, so the failure arrived as a value nobody read. Execution then
+         fell through to showToast('Logged: '+text) and advance(true), so a Do
+         Not Call request that was NEVER RECORDED looked exactly like one that
+         was, and the number stayed callable and in the queue.
+
+         markDNC() above already does this correctly — check r.error, report the
+         message, do not advance. This path was the outlier in its own file.
+
+         Deliberately does NOT advance on failure: leaving the lead on screen is
+         the only thing that makes the failure actionable. The call log itself
+         already succeeded (rpcLog returned true above), so the counters still
+         move — what is withheld is the claim that the disposition was applied. */
+      var _dnc = null;
+      try{
+        _dnc = await _authClient().rpc('contact_set_dnc',{p_contact_id:lead.contact_id,p_value:true,p_reason:'wrong number'});
+      }catch(e){ _dnc = { error: { message: (e && e.message) || 'network error' } }; }
+      if(!_dnc || _dnc.error){
+        _sCalls++; updateSession(); loadCounts();
+        showToast('⚠ Call logged, but DO NOT CALL was NOT saved: '
+                  + (((_dnc||{}).error||{}).message || 'unknown error')
+                  + ' — this number is still callable. Try Mark DNC again.');
+        return;
+      }
     }
     _sCalls++; if(/connected/i.test(text)) _sConnects++;
     updateSession(); showToast('Logged: '+text);
