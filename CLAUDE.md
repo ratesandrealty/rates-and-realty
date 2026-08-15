@@ -930,6 +930,30 @@ Get this backwards and it costs a day: flip the flag, a drop fails, and the day
 goes on debugging a guard that was working, on a feature that never did. The
 steps look identical for both paths and are not.
 
+### SEVEN functions never reach `quietHours()` at all
+
+Logged 2026-08-15, not fixed — `docs/SMS-BYPASSES-QUIET-HOURS-2026-08-15.md`.
+
+`quietHours()` lives in `sms-service`. Seven other edge functions call
+`api.twilio.com/…/Messages.json` **directly**, so they do not bypass the flag —
+they never evaluate the check, and write no `SMS_WOULD_BLOCK` row either:
+
+    proactive-followups   job 21, EVERY 6 HOURS -> fires at 06:00Z = 10pm/11pm PT
+    send-scheduled-sms    job 39, EVERY MINUTE
+    loan-date-nudges      job 38, 15:00Z  (the one that texted Rene's real phone)
+    sms-inbound-reconcile · sms-assistant · twilio-inbound · ocr-mms-upload
+
+**This makes the staging data misleading in the reassuring direction.** The
+whole reason `SMS_QUIET_HOURS` defaults OFF while still writing its verdict to
+`audit_log` is so the decisions it WOULD make can be reviewed before it starts
+making them. Those seven contribute nothing to that record, so the audit trail
+under-reports what the guard would catch — and reads as "quiet hours would have
+blocked almost nothing".
+
+**Anything new that sends must route through `sms-service`** and declare a
+bypass from the closed set. Do not copy `loan-date-nudges` as a model; it is on
+this list.
+
 ### The consequence, which is the part that will bite
 
 **Every new `sms-service` caller must now choose its bypass by hand**, and a
