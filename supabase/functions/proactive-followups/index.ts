@@ -241,7 +241,10 @@ async function runDigest(sb: SbClient, twilio: { sid: string; token: string; fro
   const body = composeDigest(stale, preapp, credit, lock)
   if (!body) return { sent: false, reason: 'Nothing to alert about.', counts }
   const send = await sendSmsToLO(body, twilio.sid, twilio.token, twilio.from, twilio.to, dryRun)
-  await logAlert(sb, {
+  /* A rehearsal writes no proactive_alerts_sent row. Otherwise the next REAL
+     run sees "already sent digest today" and stays silent — a test that
+     suppresses the thing it was testing. */
+  if (!dryRun) await logAlert(sb, {
     alert_type: 'digest', mode: 'digest', alert_payload: body, recipient_phone: twilio.to,
     twilio_message_sid: send.sid || null, delivery_ok: send.ok, delivery_error: send.error || null,
   })
