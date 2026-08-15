@@ -979,6 +979,30 @@ anything that looks wrong.
 **Write cron schedules in prose inside SQL comments** ("a five-minute cron"), or
 put them in a `--` line comment where `*/` is inert.
 
+### A network-stack error is NOT a `console.error()` call
+
+DevTools' red error badge counts both. `Runtime.consoleAPICalled` over CDP sees
+only the second. So a console-only capture reports **0 errors on a page showing
+5**, and reads as a clean bill of health.
+
+Measured on `admin/lead-detail.html` with a real session:
+
+```
+Runtime.consoleAPICalled  type=error ......  0
+Network.responseReceived  status>=400 .....  2   <- 403 x2, the actual defect
+Log.entryAdded            source=network ...  2
+```
+
+Those two 403s were the only difference between a fixture lead and a real one,
+and the only thing on the page with a user-visible cost. A capture that watched
+the console alone would have missed the finding entirely and reported the page
+as error-free.
+
+**Capture `Network.responseReceived` (status >= 400), `Network.loadingFailed`
+and `Log.entryAdded` alongside the console**, or do not claim an error count.
+Same family as the trap below: the harness reports fewer problems than exist,
+which is why nobody questions it.
+
 ### A DevTools "Issues" capture without a forced layout under-reports by 30×
 
 Counting `Audits.issueAdded` over CDP looks like a complete measurement and is

@@ -128,6 +128,113 @@ session, and it deserves its own pass with a token in hand.
 
 ---
 
+---
+
+# Authenticated run — the 403 settled (added later the same day)
+
+A token arrived. Two captures, same instrumentation, forced layout both times.
+
+| | ZZ-TEST fixture | Shelley Hurle (real lead) |
+|---|---|---|
+| `console.error` calls | 0 | **0** |
+| Uncaught exceptions / rejections | 0 | **0** |
+| **Network 4xx** | **0** | **2 × 403** |
+| Log errors (network stack) | 0 | **2** |
+| Warnings | 8 | 7 |
+| Issues | 302 | 302 (300 form-label) |
+
+**The entire delta is two 403s**, identical URL, twice per load:
+
+```
+403  /rest/v1/mortgage_applications?select=borrower_type&id=eq.6b4db8f1-…
+     at 2108ms and 2343ms
+```
+
+It is data-dependent: the fixture has no `mortgage_applications` row, so the
+caller never runs. Any lead with an application fires it.
+
+## Root cause — not a race, and not RLS
+
+**Caller:** `admin/lead-detail.html:10859`, in `lpLoadAppLoanDetails`:
+
+```js
+var _r = await _bc.from('mortgage_applications').select('borrower_type').eq('id',appId).maybeSingle();
+```
+
+RLS filtering returns *zero rows*, never a 403. A 403 is a privilege error. The
+grants, measured:
+
+| grantee | on `mortgage_applications` |
+|---|---|
+| `service_role` | table-level SELECT |
+| `authenticated` | column-level SELECT on ~230 columns **including `id`** — but **not `borrower_type`** |
+| `authenticated` on `borrower_type` | **INSERT, UPDATE, REFERENCES — no SELECT** |
+| `mortgage_applications_secure` | readable by authenticated, but **does not expose `borrower_type`** |
+
+The one column requested is the one column that cannot be read.
+
+## The cost is asymmetric, and that is why it reads as something else
+
+`borrower_type` is the **Status** field in Loan Details (`#f-borrower-type`; see
+the comment at :10797).
+
+`authenticated` has **UPDATE but not SELECT** on it. So Status *saves* — and
+every read comes back empty, because the read is refused. On reload the field is
+blank.
+
+**It presents as "the field doesn't save." It does save; it cannot be read
+back.** Fires on every lead with an application. The surrounding `catch(_){}` is
+why nothing else breaks — genuinely non-fatal and correctly guarded. Only that
+one field is affected.
+
+## Wrong comment #11 — lead-detail.html:10859
+
+> *"Fetch borrower_type straight from the base mortgage_applications table by
+> the active app id (**admin RLS allows it**)."*
+>
+> *"Await the session-attached client so the JWT is present — otherwise this
+> base-table read races auth-guard and hits RLS anonymously (the
+> mortgage_applications 403). Fully guarded either way…"*
+
+Someone diagnosed this as a **timing race**, shipped `_waitForAuthClient` as the
+fix, and left the comment asserting it. The 403 was never about timing, so the
+fix could not have worked — and the comment now actively misdirects the next
+reader into re-investigating auth timing. Both claims in it are false: admin RLS
+does not allow it, and it is not a race.
+
+## Decision on the fix — NOT a base-table grant
+
+**Add `borrower_type` to `mortgage_applications_secure`, not
+`GRANT SELECT (borrower_type)` on the base table.**
+
+The view exists to be the read path for `authenticated`; widening the base table
+would route one field around it and leave two doors onto borrower data with
+different rules. `remaining_loan_balance` is already read through the view — the
+same caller does so three lines earlier.
+
+**First establish whether the omission was deliberate.** The view exposes ~230
+columns and skips this one; that is either an oversight or a decision nobody
+wrote down. If it was deliberate, the field should stop being editable rather
+than become readable. Do not add it to the view until that is answered.
+
+Not fixed. Logged only.
+
+## Google Maps deprecations — needs its own pass
+
+Real-lead run only (the fixture never reaches the Places code):
+
+```
+Google Maps JavaScript API has been loaded directly without loading=async.
+6×  As of March 1st, 2025, google.maps.places.Autocomplete is not available
+    to new customers. Please use google.maps.places.PlaceAutocompleteElement.
+```
+
+Not breaking today. But `google.maps.places.Autocomplete` is the API the Places
+consolidation standardised on this morning — `RRPlaces.autocompleteOn()` builds
+exactly that object, in the one shared module three surfaces now delegate to. An
+announced end-of-life on a path just made canonical deserves its own
+investigation rather than a line in a console audit.
+
 ## Reproducing this
 
 Scripts are in the session scratchpad: `console-audit.mjs` (console + network +
