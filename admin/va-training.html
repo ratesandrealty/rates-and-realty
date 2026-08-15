@@ -73,7 +73,7 @@ mark{background:rgba(201,168,76,.32);color:#fff;border-radius:3px;padding:0 2px}
 <div class="tb">
   <h1>📘 VA Training <span class="sub" id="tbSub"></span></h1>
   <div class="tb-act">
-    <a class="btn" href="/dashboard/admin"><i class="fas fa-arrow-left"></i> Dashboard</a>
+    <a class="btn" href="/admin/va-dashboard.html" id="backDash"><i class="fas fa-arrow-left"></i> Dashboard</a>
     <button class="btn gold" id="addBtn" hidden onclick="addSection()">＋ Add section</button>
   </div>
 </div>
@@ -350,6 +350,38 @@ window.addEventListener('scroll', spy, { passive:true });
   document.getElementById('addBtn').hidden = !_isAdmin;
   await load();
   spy();
+})();
+</script>
+
+<script>
+/* The "← Dashboard" link used to point at /dashboard/admin unconditionally.
+   That page calls requireAdmin(), which checks a HARDCODED ADMIN_EMAILS
+   allowlist rather than auth_user_roles, so a va clicking it was redirected to
+   /admin/people.html — a nav button that bounced her. This page is not in
+   PAGE_ACCESS, so she can reach it and could reach that link.
+
+   It now DEFAULTS to /admin/va-dashboard.html, which is gated ['va','admin'],
+   so the default is correct for BOTH roles and nobody is bounced. Only an admin
+   is upgraded to /dashboard/admin.
+
+   Resolved after the gate settles rather than at parse time: auth-guard writes
+   rnr_app_role asynchronously, so reading it inline gets an empty string on a
+   cold load. If the gate never settles the link simply stays at the safe
+   default — the failure mode is one extra click, not a dead end. */
+(function () {
+  var a = document.getElementById('backDash');
+  if (!a) return;
+  function apply() {
+    try {
+      if ((sessionStorage.getItem('rnr_app_role') || '').toLowerCase() === 'admin') {
+        a.setAttribute('href', '/dashboard/admin');
+      }
+    } catch (_) {}
+  }
+  apply();   // sessionStorage survives navigation, so a warm tab is already right
+  if (window._rrGateReady && typeof window._rrGateReady.then === 'function') {
+    window._rrGateReady.then(apply, apply);
+  }
 })();
 </script>
 </body>
