@@ -350,8 +350,8 @@ serve(async (req) => {
 
   let result
   try {
-    if (mode === 'urgent') result = await runUrgent(sb, twilio)
-    else result = await runDigest(sb, twilio, force)
+    if (mode === 'urgent') result = await runUrgent(sb, twilio, dryRunSend)
+    else result = await runDigest(sb, twilio, force || dryRunSend, dryRunSend)
   } catch (err) {
     return new Response(JSON.stringify({ mode, error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }
