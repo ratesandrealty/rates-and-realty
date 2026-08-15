@@ -87,7 +87,31 @@ const T: Record<string,(p:any)=>string> = {
   reminder: p => `Reminder: Your home tour is TOMORROW ${p.date} at ${p.time}! ${p.homeCount} home${p.homeCount!==1?'s':''} lined up. Reply CONFIRM or call (714) 472-8508. - Rene | Reply STOP to opt out.`,
   custom: p => p.message,
   manual: p => p.message,
+
+  /* PASSTHROUGH TRIGGERS — routed senders that compose their own body.
+   *
+   * Seven functions used to call the Twilio API directly and so never reached
+   * quietHours() at all (docs/SMS-BYPASSES-QUIET-HOURS-2026-08-15.md). Routing
+   * them through here is the fix, but sending them as `custom` would collapse
+   * every one into the existing 407-row custom bucket — and
+   * admin/lead-detail.html renders trigger_type as a label EXCEPT for
+   * custom/manual, so "loan date nudge" and "inbound reply" would vanish from
+   * the message timeline. A one-line passthrough per trigger keeps the name,
+   * the history and the label. */
+  loan_date_nudge:      p => p.message,
+  proactive_alert:      p => p.message,
+  scheduled_send:       p => p.message,
+  inbound_reply:        p => p.message,
+  inbound_reconcile:    p => p.message,
+  assistant_reply:      p => p.message,
+  mms_upload_ack:       p => p.message,
 };
+
+/* The passthrough set, named once. Used for validation AND for the from_phone
+   allowance below, so the two can never disagree about which triggers they
+   cover. */
+const PASSTHROUGH_TRIGGERS = ['loan_date_nudge','proactive_alert','scheduled_send',
+  'inbound_reply','inbound_reconcile','assistant_reply','mms_upload_ack'];
 /* ── QUIET HOURS (TCPA) — STAGED, OFF UNTIL PROVEN ───────────────────────────
  *
  * TCPA covers texts the same as calls, and until now NOTHING stopped an
@@ -205,9 +229,10 @@ async function isOptedOut(to_phone:string, contact_id?:string): Promise<boolean>
 /* Explicit return type: the refusal branches below carry fields the send path
    does not (blocked, blocked_quiet_hours, local_time), and callers read .sid off
    the result. Without this the union hides sid and the call sites stop compiling. */
-type SendOutcome = { sent:boolean; sid?:string; error?:string; blocked?:boolean; blocked_quiet_hours?:boolean; local_time?:string|null };
+type SendOutcome = { sent:boolean; sid?:string; error?:string; blocked?:boolean; blocked_quiet_hours?:boolean; local_time?:string|null;
+  dry_run?:boolean; would_send?:boolean; trigger_type?:string; from?:string; body?:string; opted_out?:boolean };
 
-async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{contact_id?:string;portal_user_id?:string;borrower_id?:string;trigger_id?:string},mediaUrl?:string,fromOverride?:string,bypass?:string): Promise<SendOutcome> {
+async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{contact_id?:string;portal_user_id?:string;borrower_id?:string;trigger_id?:string},mediaUrl?:string,fromOverride?:string,bypass?:string,dryRun?:boolean): Promise<SendOutcome> {
   const effectiveTrigger = trigger === 'manual' ? 'custom' : trigger;
   const msg = T[effectiveTrigger](params);
 
@@ -239,8 +264,9 @@ async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{co
         });
       } catch (_) { /* never let the logbook stop the decision */ }
       if (QUIET_HOURS_ENFORCED) {
-        await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:qh.reason,media_url:mediaUrl});
-        return { sent:false, error:qh.reason, blocked:true, blocked_quiet_hours:true, local_time:qh.localTime };
+        if (!dryRun) await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:qh.reason,media_url:mediaUrl});
+        return { sent:false, error:qh.reason, blocked:true, blocked_quiet_hours:true, local_time:qh.localTime,
+                 dry_run:dryRun||undefined, would_send:false, trigger_type:effectiveTrigger };
       }
     } else {
       try {
@@ -255,10 +281,24 @@ async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{co
   }
 
   if (await isOptedOut(to_phone, ids.contact_id)) {
+    if (dryRun) return { sent:false, dry_run:true, would_send:false, opted_out:true,
+                         error:'recipient has opted out of SMS', blocked:true, trigger_type:effectiveTrigger };
     // Logged, not silently dropped: a suppressed message must still be visible.
     await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:'recipient has opted out of SMS',media_url:mediaUrl});
     return { sent:false, error:'recipient has opted out of SMS', blocked:true };
   }
+  /* DRY RUN — every check above has already run, so the verdict is real; what
+     is skipped is Twilio and every write. Deliberately placed AFTER the bypass
+     validation, the quiet-hours evaluation and the opt-out check, so a dry run
+     answers "what would happen", not "what would happen if nothing were
+     checked". It writes no sms_log, no activity and no audit row: a rehearsal
+     must not pollute the trail that the SMS_QUIET_HOURS decision is judged on. */
+  if (dryRun) {
+    return { sent:false, dry_run:true, would_send:true, trigger_type:effectiveTrigger,
+             from: (fromOverride||'').trim() || TWILIO_FROM, body: msg,
+             local_time: qh.localTime ?? null };
+  }
+
   const result = await sendTwilioSMS(to_phone, msg, mediaUrl, fromOverride);
   await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,twilio_sid:result.sid,status:result.sent?'sent':'failed',error_message:result.error,media_url:mediaUrl});
   await logActivity({contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,crm_id:ids.borrower_id,title:`SMS: ${effectiveTrigger.replace(/_/g,' ')} to ${to_phone}`,description:msg.substring(0,120),status:result.sent?'sent':'failed',sms_body:msg,sms_to:to_phone,metadata:{trigger:effectiveTrigger,sid:result.sid,error:result.error,has_media:!!mediaUrl}});
@@ -358,18 +398,30 @@ Deno.serve(async (req:Request) => {
 
     // ── SINGLE TRIGGERS (including manual alias) ───────────────────────────────
     if (!to_phone) return err('to_phone required');
-    const validTriggers = ['portal_signup','showing_request','showing_confirm','listing_alert_created','alert_match','reminder','custom','manual'];
+    const validTriggers = ['portal_signup','showing_request','showing_confirm','listing_alert_created','alert_match','reminder','custom','manual', ...PASSTHROUGH_TRIGGERS];
     if (validTriggers.includes(trigger)) {
       const effectiveTrigger = trigger === 'manual' ? 'custom' : trigger;
-      if (effectiveTrigger === 'custom' && !params.message) return err('params.message required for custom trigger');
-      /* from_phone is opt-in and only honoured for 'custom'/'manual' — the
-       * templated borrower-facing triggers must keep the business line, or a
-       * caller could quietly send borrower mail from an internal number. */
-      const fromOverride = (effectiveTrigger === 'custom' && typeof body.from_phone === 'string') ? body.from_phone : undefined;
-      const result = await handleSingleSMS(trigger, to_phone, params, {contact_id, portal_user_id, borrower_id, trigger_id}, media_url, fromOverride, quiet_hours_bypass);
-      if (trigger === 'portal_signup') await sendTwilioSMS(RENE_PHONE, `New portal signup: ${params.firstName} ${params.lastName||''} (${params.email||to_phone}). ID: ${params.borrowerId||'—'}. Check CRM.`);
-      if (trigger === 'showing_request') await sendTwilioSMS(RENE_PHONE, `New showing request from ${params.firstName}: ${params.homeCount} home${params.homeCount!==1?'s':''} on ${params.date||'TBD'}. Check CRM showings.`);
-      return ok({success:true, sent:result.sent, sid:result.sid, error:result.error});
+      if ((effectiveTrigger === 'custom' || PASSTHROUGH_TRIGGERS.includes(effectiveTrigger)) && !params.message)
+        return err(`params.message required for '${effectiveTrigger}'`);
+      /* from_phone is opt-in and honoured for 'custom'/'manual' and the
+       * passthrough triggers — the TEMPLATED borrower-facing triggers must keep
+       * the business line, or a caller could quietly send borrower mail from an
+       * internal number.
+       *
+       * The passthrough set is included because loan-date-nudges sends from the
+       * assistant line (TWILIO_ASSISTANT_NUMBER, +1 888 688 1231) and has done
+       * for its whole life. Routing it must not silently change the number that
+       * appears on the recipient's phone — that is a product decision, not a
+       * side effect of a compliance refactor. */
+      const fromAllowed = effectiveTrigger === 'custom' || PASSTHROUGH_TRIGGERS.includes(effectiveTrigger);
+      const fromOverride = (fromAllowed && typeof body.from_phone === 'string') ? body.from_phone : undefined;
+      const result = await handleSingleSMS(trigger, to_phone, params, {contact_id, portal_user_id, borrower_id, trigger_id}, media_url, fromOverride, quiet_hours_bypass, body.dry_run === true);
+      if (!body.dry_run && trigger === 'portal_signup') await sendTwilioSMS(RENE_PHONE, `New portal signup: ${params.firstName} ${params.lastName||''} (${params.email||to_phone}). ID: ${params.borrowerId||'—'}. Check CRM.`);
+      if (!body.dry_run && trigger === 'showing_request') await sendTwilioSMS(RENE_PHONE, `New showing request from ${params.firstName}: ${params.homeCount} home${params.homeCount!==1?'s':''} on ${params.date||'TBD'}. Check CRM showings.`);
+      return ok({success:true, sent:result.sent, sid:result.sid, error:result.error,
+                 ...(result.dry_run ? { dry_run:true, would_send:result.would_send, trigger_type:result.trigger_type,
+                                        from:result.from, body:result.body, blocked_quiet_hours:result.blocked_quiet_hours,
+                                        opted_out:result.opted_out, local_time:result.local_time } : {})});
     }
 
     // ── GET SMS LOG ───────────────────────────────────────────────────────────
