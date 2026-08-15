@@ -2739,17 +2739,40 @@ async function savePerson() {
     var _taskEl = document.getElementById('nf_task_title');
     var _taskTitle = _taskEl ? _taskEl.value.trim() : '';
     if (newId && _taskTitle) {
-      try {
-        await _authClient().from('tasks').insert({
-          title: _taskTitle,
-          due_date: (document.getElementById('nf_task_due') || {}).value || null,
-          priority: (document.getElementById('nf_task_priority') || {}).value || 'normal',
-          status: 'open',
-          contact_id: newId,
-          related_table: 'leads',
-          related_id: newId
-        });
-      } catch (e) { /* non-fatal: contact was still created */ }
+      /* task_upsert, not a direct insert — the one write path, so status
+         validation, assigned_by stamping and the ClickUp sync seam happen
+         server-side rather than being this page's problem.
+
+         related_table='leads' / related_id ARE DELIBERATELY GONE, and dropping
+         them is the point rather than a side effect. task_list and
+         va_daily_tasks both read `related_table is not null` as evidence a
+         MACHINE made the task:
+
+             case when t.related_table is not null … then 'auto' else 'human'
+
+         So every task ever typed into this form was filed as automation output.
+         Measured: 5 such rows, 2 still open, and they are plainly a person's
+         words — "look into Teacher Next door program", "Call from the Camp
+         phone to do verbal verification". contact_id already links the task to
+         the lead and is what the Loan Processing card and partner reporting
+         read, so related_id carried nothing contact_id did not. */
+      var _tr = await _authClient().rpc('task_upsert', {
+        p_title: _taskTitle,
+        p_due_date: (document.getElementById('nf_task_due') || {}).value || null,
+        p_priority: (document.getElementById('nf_task_priority') || {}).value || 'normal',
+        p_status: 'open',
+        p_contact_id: newId
+      });
+      /* THE try/catch THIS REPLACES NEVER FIRED. supabase-js RESOLVES with
+         { error } for a database failure; it does not throw. So a task that
+         failed to save produced no exception, no log and no message — the lead
+         saved and the task silently did not exist. Still non-blocking, because
+         the contact is already created and must not be lost to a task error —
+         but it now says so instead of vanishing. */
+      if (_tr && _tr.error) {
+        console.error('[people] task_upsert failed:', _tr.error.message || _tr.error);
+        showToast('Lead saved — but the task was NOT created: ' + (_tr.error.message || 'unknown error'));
+      }
     }
 
     // Connected people (co-borrowers / family) — create each contact and link both ways
