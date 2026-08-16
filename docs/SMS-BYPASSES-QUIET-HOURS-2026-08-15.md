@@ -106,6 +106,32 @@ caller, confirm it still sends, and only then rely on the guard.
 `SMS_QUIET_HOURS` remains **OFF**. Routing and enabling are separate decisions;
 the flag is not flipped until the audit trail covers all seven.
 
+### The bypasses, and why four of the doc's original guesses were wrong
+
+| function | bypass | doc originally said |
+|---|---|---|
+| `proactive-followups` | `staff_alert` | no bypass (borrower traffic) |
+| `sms-assistant` | `staff_alert` | `user_initiated` |
+| `ocr-mms-upload` | `staff_alert` | `user_initiated` |
+| `twilio-inbound` | `staff_alert` | `user_initiated` |
+| `send-scheduled-sms` | **none** | no bypass ✓ |
+| `loan-date-nudges` | `staff_alert` | no bypass (borrower traffic) |
+
+The pattern in the misses: this document classified by the SHAPE of the message
+— a reply must be `user_initiated`, a scheduled outbound must be borrower
+traffic. Reading each function shows five of the six never text a borrower at
+all. Recipients are `AUTHORIZED_PHONES[0]`, a hardcoded constant,
+`app_config.owner_cell_phone`, or `sms_authorized_phones` filtered to staff
+roles. Every one of those is staff by construction, checked in source rather
+than inferred.
+
+`twilio-inbound` had the direction backwards, which is the instructive one:
+`user_initiated` would have claimed an exemption on behalf of the borrower who
+sent the text, while the person RECEIVING the message is Rene.
+
+Only `send-scheduled-sms` is genuinely borrower-facing, and it correctly carries
+no bypass at all.
+
 ### What routing one function actually required
 
 Three rehearsal defects surfaced, all the same shape — *a test that writes*:
@@ -141,5 +167,27 @@ Proven with `+1 714 555 0142`, both directions, nothing sent and nothing written
 The middle row is the one that matters for this function: `proactive-followups`
 alerts Rene, not a borrower, and must still reach him at 2am — muting a monitor
 overnight is how the 32-hour masking window happened.
+
+### The proof cost one real send, which is worth recording
+
+The deferral branch in `send-scheduled-sms` only runs when quiet hours refuses,
+so it could not be exercised with the flag off. The first attempt rehearsed
+against "whatever is due" — and lost a race with job 39, which runs EVERY
+MINUTE. The cron picked up the fixture row and really sent it: a live Twilio
+call, SID `SM2def48f8…`, to `+17145550143`. That is a NANPA-reserved fictional
+number so it reached no handset, but it was a real send during a session whose
+instruction was that there be none.
+
+The cause was resetting a fixture row to `status='scheduled'` with a past
+`scheduled_at` while a one-minute cron was live. `rehearse_quiet_hours` now
+requires an explicit `row_id` and refuses to operate on the due queue, so the
+fixture can sit at a FUTURE `scheduled_at` where the drain's own query will never
+see it.
+
+Two things fell out of it. The accident proved the routed real path end to end —
+one `sms_log` row rather than two, `scheduled` → `sent`, `trigger_type`
+preserved, real SID. And the send went out at **9:02 PM local, two minutes past
+the window**, so with the flag on it would have been blocked. That is the first
+concrete example of this queue doing the thing the guard exists to stop.
 
 Nothing else here is fixed. Nothing else here is scheduled.
