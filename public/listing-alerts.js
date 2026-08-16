@@ -2,7 +2,7 @@
 const LA = window.ListingAlerts = {
   SB: 'https://ljywhvbmsibwnssxpesh.supabase.co',
   FN: 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/listing-alert-actions',
-  SK: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4',
+  SK: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw',
   COUNTIES: {'Orange County':['Westminster','Garden Grove','Huntington Beach','Anaheim','Santa Ana','Irvine','Fountain Valley','Costa Mesa','Fullerton','Buena Park','Cypress','La Habra','Placentia','Brea','Yorba Linda','Orange','Tustin','Lake Forest','Mission Viejo','Laguna Niguel','Newport Beach','Dana Point','Aliso Viejo'],'Los Angeles County':['Long Beach','Los Angeles','Torrance','Compton','Inglewood','Hawthorne','Carson','El Monte','West Covina','Pomona','Norwalk','Burbank','Pasadena','Whittier','Downey','Glendale','Alhambra','Cerritos','Bellflower'],'Riverside County':['Riverside','Moreno Valley','Corona','Temecula','Murrieta','Hemet','Perris','Indio','Palm Springs','Menifee','Beaumont','Lake Elsinore'],'San Bernardino County':['San Bernardino','Fontana','Rancho Cucamonga','Ontario','Victorville','Rialto','Colton','Chino','Redlands','Highland','Chino Hills','Upland']},
 
   async _call(payload) {

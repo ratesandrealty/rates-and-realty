@@ -2,7 +2,7 @@
   'use strict';
 
   const _SB = 'https://ljywhvbmsibwnssxpesh.supabase.co';
-  const _SK = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM2MjgzNDIsImV4cCI6MjA1OTIwNDM0Mn0.JEMDMlSo1OSmOLJnnqP3wZq0GFjDfMqcHEHGY-rVfI4';
+  const _SK = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw';
   const _AUTH_URL = _SB + '/functions/v1/portal-auth';
 
   let _callback = null;
