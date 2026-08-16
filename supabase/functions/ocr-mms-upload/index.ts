@@ -9,10 +9,6 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff } from '../_shared/require-staff.ts'
 
-/* LEGACY, being retired. Step 1 of 3 in the rotation: this deploy accepts both
-   the old literal and the real guard, so no caller is refused while the callers
-   are moved. Deleted in the final step — do not add a new caller to it. */
-const LEGACY_SHARED_SECRET = 'rr-cron-2026-x7k3m9pq2r5tw8z4y6h8b3n1'
 const STORAGE_BUCKET = 'borrower-documents'
 const SMS_MAX = 1500
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'
@@ -127,7 +123,7 @@ serve(async (req) => {
 
      Note `url` is no longer read here; it was only ever parsed to reach the
      query string. */
-  /* ROTATION, step 1 of 3 (2026-08-15). DUAL-ACCEPT.
+  /* ROTATION COMPLETE (2026-08-15). The legacy x-cron-secret is GONE.
 
      The secret this used to compare against was a literal committed in three
      files — here, sms-assistant, and the DB trigger — so it sits in git history
@@ -142,19 +138,23 @@ serve(async (req) => {
      That also collapses one more of this project's competing cron-secret
      conventions, which is how the CRON_KEY rotation missed three workflows.
 
-     Both are accepted for now because a function deploy and a DB trigger change
-     cannot land atomically. Guarding first would refuse the trigger until the
-     trigger is changed; changing the trigger first would refuse it until this
-     deploys. */
+     Shipped in three steps, because a function deploy and a DB trigger change
+     cannot land atomically — guarding first refuses the trigger until the
+     trigger changes, changing the trigger first refuses it until this deploys.
+     An intermediate dual-accept deploy removed the window:
+
+       1. dual-accept legacy + requireStaff   proven: both 400, garbage 403
+       2. trigger -> internal_call_headers()  proven: net._http_response 400,
+          and sms-assistant -> its service key   deployed source literal-free
+       3. delete the legacy branch            this deploy
+
+     The old value stays compromised whatever the working tree says — it is in
+     git history on every branch. What retires it is that nothing accepts it. */
   const auth = await requireStaff(req, { allowInternal: true, what: 'OCR of an MMS upload' })
-  const legacy = (req.headers.get('x-cron-secret') || '').trim()
-  /* Non-empty check first: an absent header must never equal an absent secret. */
-  const legacyOk = legacy !== '' && legacy === LEGACY_SHARED_SECRET
-  if (!auth.ok && !legacyOk) {
+  if (!auth.ok) {
     console.error('[ocr-mms-upload] REJECTED:', auth.status, auth.msg)
     return new Response('Forbidden', { status: 403 })
   }
-  if (legacyOk && !auth.ok) console.warn('[ocr-mms-upload] LEGACY SECRET USED — caller still needs migrating')
 
   let body: any = {}
   try { body = await req.json() } catch { /* ok */ }
