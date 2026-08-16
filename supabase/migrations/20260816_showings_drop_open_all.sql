@@ -1,0 +1,59 @@
+-- showings: drop the blanket ALL policy
+--
+-- BEFORE (captured 2026-08-16, all PERMISSIVE so they OR together):
+--
+--   open_showings          ALL     {anon,authenticated}  USING (true)  WITH CHECK (true)
+--   public_insert_showings INSERT  {public}              -             WITH CHECK (true)
+--   public_read_showings   SELECT  {public}              USING ((COALESCE(current_app_role(), ''::text) <> 'va'::text)
+--                                                                OR is_admin() OR is_lead_shared_with_me(contact_id))
+--   public_update_showings UPDATE  {public}              USING (true)  WITH CHECK (true)
+--
+-- REVERT: recreate exactly what this drops.
+--
+--   CREATE POLICY open_showings ON public.showings
+--     AS PERMISSIVE FOR ALL TO anon, authenticated
+--     USING (true) WITH CHECK (true);
+--
+-- WHAT THIS CLOSES
+-- `open_showings` is the only policy on this table granting DELETE. Nothing
+-- anywhere issues a hard delete against showings — every caller soft-deletes by
+-- PATCHing `deleted_at`, verified across the frontend and all edge functions —
+-- so today any holder of the anon key, which is printed in every page's source,
+-- could hard-delete all 41 rows and no feature depends on that being possible.
+-- Dropping it removes anon and authenticated DELETE with zero callers affected.
+--
+-- WHAT THIS DOES **NOT** CLOSE, AND WHY IT IS NOT AN OVERSIGHT
+-- Anonymous SELECT and UPDATE remain open, because they are the borrower
+-- portal's only access path and there is no borrower scoping on this table to
+-- replace them with. Measured, not assumed:
+--
+--   * SELECT survives via `public_read_showings`, whose role is {public} and
+--     whose first clause is `COALESCE(current_app_role(),'') <> 'va'` — true for
+--     an anonymous caller. Dropping `open_showings` alone therefore changes
+--     nothing about reads.
+--   * UPDATE survives via `public_update_showings`, USING (true) for {public}.
+--   * public/unified-portal.html PATCHes this table at six call sites with the
+--     ANON key (_shHdrs) to remove a home, reschedule, cancel and restore a
+--     tour; public/portal.html:606 and public/search-homes.html:878 read it the
+--     same way. Borrowers hold no Supabase session, so they ARE the anonymous
+--     role — closing anon here removes the feature, it does not secure it.
+--   * There is no `is_borrower()` clause on showings. contacts,
+--     mortgage_applications and uploaded_documents each have one; this table has
+--     none. That scoping does not exist yet and is not invented here.
+--
+-- So the read exposure closes in two steps, in this order, per the rule that a
+-- guard on a function with a browser caller ships frontend-first:
+--   1. move those eight call sites onto portal-data (service role, already has
+--      get_showings and update_showing_status), confirm the portal works;
+--   2. then drop public_update_showings and rewrite public_read_showings to
+--      require is_admin() / is_lead_shared_with_me() / a borrower predicate.
+--
+-- SEPARATE AND WORSE, found while confirming the callers:
+-- public/portal-auth-modal.js:241 PATCHes /rest/v1/showings with NO FILTER,
+-- setting contact_id on EVERY ROW, fire-and-forget behind a swallowing .catch().
+-- Evidence it has fired: 41 rows carry 3 distinct emails and exactly 1 distinct
+-- contact_id, last updated 2026-06-13 — the day before the last portal login.
+-- Dropping public_update_showings in step 2 also disarms that; until then it is
+-- a live data-corruption path and is logged in the reassessment note.
+
+DROP POLICY IF EXISTS open_showings ON public.showings;
