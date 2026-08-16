@@ -104,13 +104,24 @@ serve(async (req) => {
   /* Two different rehearsals, deliberately not the same switch: `dry_run` lists
      what is due and returns before the loop; `rehearse` runs the loop and asks
      sms-service for the verdict it would give under enforcement. */
-  const rehearse = body?.rehearse_quiet_hours === true ? { at: body?.at } : undefined
+  const rehearse = body?.rehearse_quiet_hours === true ? { at: body?.at, rowId: body?.row_id } : undefined
+  /* A rehearsal targets ONE row BY ID, and does not use the due-row query.
+     Learned the hard way: rehearsing against 'whatever is due' means racing job
+     39, which runs every minute. It won that race — the row under test was
+     picked up and really sent before the rehearsal could look at it. Addressing
+     a specific row lets the fixture sit at a FUTURE scheduled_at, where the
+     cron will never touch it, while the rehearsal examines it anyway. */
+  if (rehearse && !rehearse.rowId) {
+    return new Response(JSON.stringify({ ok: false, error: 'rehearse_quiet_hours requires row_id — rehearsing the live due queue races the every-minute cron' }), { status: 400, headers: J })
+  }
   const summary: any = { ok: true, dry_run: dryRun, due: 0, sent: 0, failed: 0, errors: [] }
 
   try {
     // Find due scheduled texts
     const nowIso = new Date().toISOString()
-    const url = rest(`sms_log?select=id,to_phone,body,media_url,contact_id&status=eq.scheduled&scheduled_at=lte.${encodeURIComponent(nowIso)}&order=scheduled_at.asc&limit=25`)
+    const url = rehearse
+      ? rest(`sms_log?select=id,to_phone,body,media_url,contact_id&id=eq.${rehearse.rowId}`)
+      : rest(`sms_log?select=id,to_phone,body,media_url,contact_id&status=eq.scheduled&scheduled_at=lte.${encodeURIComponent(nowIso)}&order=scheduled_at.asc&limit=25`)
     const r = await fetch(url, { headers: svc() })
     const rows = r.ok ? await r.json() : []
     summary.due = rows.length
