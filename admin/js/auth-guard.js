@@ -337,7 +337,7 @@
     function mountStaffChat() {
       if (document.querySelector('script[src*="/admin/js/staff-chat.js"]')) return;
       const sc = document.createElement('script');
-      sc.src = '/admin/js/staff-chat.js?v=2a8cfafc29';
+      sc.src = '/admin/js/staff-chat.js?v=f33376a178';
       document.head.appendChild(sc);
     }
     // Universal help-video ⓘ buttons (window.HelpTopic). Same app-wide, idempotent
@@ -384,7 +384,7 @@
     function mountFnCall() {
       if (window.fnFetch || document.querySelector('script[src*="/admin/js/fn-call.js"]')) return;
       const fc = document.createElement('script');
-      fc.src = '/admin/js/fn-call.js?v=85d03d2a98';
+      fc.src = '/admin/js/fn-call.js?v=d86ebce3f7';
       document.head.appendChild(fc);
     }
     /* attachment-viewer.js — mounted app-wide, EAGERLY, not lazily.
@@ -409,7 +409,7 @@
     function mountAttachmentViewer() {
       if (window.AttachmentViewer || document.querySelector('script[src*="/admin/js/attachment-viewer.js"]')) return;
       const av = document.createElement('script');
-      av.src = '/admin/js/attachment-viewer.js?v=e8f2b14c9f';
+      av.src = '/admin/js/attachment-viewer.js?v=3621b4d231';
       document.head.appendChild(av);
     }
     /* One clock, app-wide: window.RRTime renders every business timestamp in
@@ -432,7 +432,7 @@
     function mountRRPhone() {
       if (window.RRPhone || document.querySelector('script[src*="/admin/js/rr-phone.js"]')) return;
       const rp = document.createElement('script');
-      rp.src = '/admin/js/rr-phone.js?v=044d32fd52';
+      rp.src = '/admin/js/rr-phone.js?v=6e1859ee09';
       document.head.appendChild(rp);
     }
     /* The dialer — modal + Twilio.Device — app-wide, so the FAB's Call row has
