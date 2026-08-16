@@ -1,0 +1,76 @@
+# `ocr-mms-upload`'s shared secret is a literal in three files
+
+**Found while removing the `?secret=` query parameter, 2026-08-15. The query
+parameter is fixed. This is not.**
+
+## What is exposed
+
+```
+rr-cron-2026-x7k3m9pq2r5tw8z4y6h8b3n1
+```
+
+| where | line |
+|---|---|
+| `supabase/functions/ocr-mms-upload/index.ts` | 11, `const SHARED_SECRET = '…'` |
+| `supabase/functions/sms-assistant/index.ts` | 51, `const OCR_CRON_SECRET = "…"` |
+| `supabase/sql/db-functions/trigger_ocr_on_uploaded_document.sql` | 33, inside `jsonb_build_object` |
+
+All three are **committed**, so the value is in git history on every branch and in
+every checkout, and no amount of editing the working tree removes it. There is no
+`OCR_CRON_SECRET` in the Supabase secret store — checked, it is not among the 45
+secrets set on this project.
+
+## Why it matters more than the query parameter did
+
+The query parameter leaked the credential into logs. This publishes it in the
+source. And the endpoint it guards is not a trivial one: `ocr-mms-upload` runs
+with the service role, reads from the `borrower-documents` bucket, writes
+`uploaded_documents` and `contact_notes` rows, and **sends an SMS**. Anyone
+holding this string can invoke all of that.
+
+Note also `verify_jwt = false` on this function — correct, since its callers hold
+no session — which means the shared secret is the *only* control. There is no
+second gate behind it.
+
+## Rotation is the only fix, and it needs a staged order
+
+Editing the literal in place breaks the callers, because a function deploy and a
+DB trigger change cannot happen atomically — the same constraint
+`proactive-followups` documented when it migrated off `x-cron-secret`. Steps:
+
+1. `npx supabase secrets set OCR_CRON_SECRET=<new value>`
+2. Deploy `ocr-mms-upload` accepting **either** the env value or the old literal
+   (dual-accept). Behaviour-neutral; no caller is refused at any point.
+3. Deploy `sms-assistant` reading `OCR_CRON_SECRET` from env.
+4. `CREATE OR REPLACE` `trigger_ocr_on_uploaded_document` sending the new value.
+   Prove it with a real upload through the fixture contact, and read the result
+   from `net._http_response` — `cron.job_run_details` and pg_net's returned id
+   both say only that the request was queued.
+5. Deploy `ocr-mms-upload` again, env only, literal deleted.
+
+**Do not skip step 2.** Guarding first refuses the DB trigger until step 4 lands;
+changing the trigger first refuses it until step 5 does. The dual-accept deploy is
+what removes the window.
+
+**The old value stays compromised regardless of what the working tree says.**
+Rotation is what retires it; deleting the literal is only bookkeeping.
+
+## Proving a change here
+
+The guard returns 403 when it refuses and 400 when it accepts and then fails on
+the missing `uploaded_document_id`. That difference is what makes a probe
+meaningful:
+
+```
+POST …/ocr-mms-upload            no credential      -> 403
+POST …/ocr-mms-upload            x-cron-secret: …   -> 400   (accepted)
+POST …/ocr-mms-upload?secret=…   no header          -> 403   (since 2026-08-15)
+```
+
+Run the probe against the LIVE build before deploying a change, so you know it
+distinguishes the two paths at all. That is how the query-parameter removal was
+verified: `?secret=` returned 400 beforehand, 403 after.
+
+Do not prove this by inserting a real `uploaded_documents` row. On success the
+function sends an SMS, and a fabricated document row on a real contact is the
+exact failure "probes never touch a borrower's things" exists to prevent.
