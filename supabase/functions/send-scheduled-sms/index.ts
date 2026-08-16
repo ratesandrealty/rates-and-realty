@@ -40,7 +40,12 @@ function formatPhone(phone: string) {
  * in place instead of inserting a second row. Without it every scheduled text
  * would appear twice in the composer history.
  */
-async function sendSMS(to: string, body: string, mediaUrl: string | null | undefined, logId: string) {
+/* `rehearse` asks sms-service to evaluate this send as if SMS_QUIET_HOURS were
+   on and report the verdict WITHOUT sending — the only way to exercise the
+   deferral branch below before the flag is flipped. It implies dry_run, so no
+   Twilio call can happen on this path whatever the verdict. A branch that has
+   never executed is not shipped, it is merely present. */
+async function sendSMS(to: string, body: string, mediaUrl: string | null | undefined, logId: string, rehearse?: { at?: string }) {
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/sms-service`, {
       method: 'POST', headers: svc(),
@@ -51,9 +56,13 @@ async function sendSMS(to: string, body: string, mediaUrl: string | null | undef
         from_phone: FROM_NUMBER,
         media_url: mediaUrl || undefined,
         existing_log_id: logId,
+        ...(rehearse ? { dry_run: true, dry_run_enforce_quiet_hours: true,
+                         ...(rehearse.at ? { dry_run_at: rehearse.at } : {}) } : {}),
       }),
     })
     const data = await res.json().catch(() => ({}))
+    if (rehearse) return { sent: false, rehearsal: true, wouldSend: data?.would_send === true,
+                           error: data?.error, quietHours: data?.blocked_quiet_hours === true }
     if (data?.sent) return { sent: true, sid: data.sid }
     return { sent: false, error: data?.error || `sms-service ${res.status}`,
              quietHours: data?.blocked_quiet_hours === true }
@@ -92,6 +101,10 @@ serve(async (req) => {
   let body: any = {}
   try { body = await req.json() } catch {}
   const dryRun = !!body.dry_run
+  /* Two different rehearsals, deliberately not the same switch: `dry_run` lists
+     what is due and returns before the loop; `rehearse` runs the loop and asks
+     sms-service for the verdict it would give under enforcement. */
+  const rehearse = body?.rehearse_quiet_hours === true ? { at: body?.at } : undefined
   const summary: any = { ok: true, dry_run: dryRun, due: 0, sent: 0, failed: 0, errors: [] }
 
   try {
@@ -145,7 +158,7 @@ serve(async (req) => {
         summary.blocked = (summary.blocked || 0) + 1
         continue
       }
-      const result = await sendSMS(row.to_phone, row.body, row.media_url, row.id)
+      const result = await sendSMS(row.to_phone, row.body, row.media_url, row.id, rehearse)
       /* A message quiet hours refuses is DEFERRED, not dropped. It stays at
          status='scheduled' so the next tick after the window opens sends it —
          a text somebody scheduled for 3am arriving at 8am is the intended
@@ -174,6 +187,10 @@ serve(async (req) => {
       const patch = result.sent
         ? null
         : { status: 'failed', error_message: (result.error || 'unknown').slice(0, 300) }
+      /* In a rehearsal a non-deferred row is simply reported. Marking it
+         'failed' because a DRY RUN did not send would destroy a pending
+         message to prove a guard works. */
+      if (result.rehearsal) { summary.would_send = (summary.would_send || 0) + 1; continue }
       if (patch) await fetch(rest(`sms_log?id=eq.${row.id}`), {
         method: 'PATCH', headers: { ...svc(), Prefer: 'return=minimal' }, body: JSON.stringify(patch)
       })
