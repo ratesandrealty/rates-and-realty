@@ -107,8 +107,23 @@ async function runOcr(b64: string, docTypeKey: string, anthropicKey: string): Pr
 
 serve(async (req) => {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 })
-  const url = new URL(req.url)
-  const secret = req.headers.get('x-cron-secret') || url.searchParams.get('secret') || ''
+  /* HEADER ONLY. The `?secret=` query-parameter path was removed 2026-08-15.
+
+     A credential in a URL is written down everywhere the URL is: edge request
+     logs, pg_net's net._http_request_queue and net._http_response rows, browser
+     history, any proxy in between. A header is not. proactive-followups carried
+     exactly this defect and had it removed for exactly this reason — the same
+     mistake in two functions is a pattern, not an oversight.
+
+     Removing it needed no migration: both callers already send the header, and
+     both were checked rather than assumed — sms-assistant (index.ts:1082) and
+     the trigger_ocr_on_uploaded_document DB trigger, whose DEPLOYED source was
+     read from pg_proc, not just the repo copy. No pg_cron job and no n8n
+     workflow invokes this function at all.
+
+     Note `url` is no longer read here; it was only ever parsed to reach the
+     query string. */
+  const secret = req.headers.get('x-cron-secret') || ''
   if (secret !== SHARED_SECRET) return new Response('Forbidden', { status: 403 })
 
   let body: any = {}
