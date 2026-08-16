@@ -224,20 +224,63 @@ async function sendSms(to: string, body: string, testMode = false): Promise<{ si
       return { error: msg };
     }
     const preview = (body || "").substring(0, SMS_MAX_LENGTH);
-    console.log("[sms-assistant] TEST MODE — not dispatched to Twilio:", JSON.stringify({ to, body: preview }));
+    /* A test turn REHEARSES the real route rather than skipping it. It used to
+       return a fabricated sid without touching the network at all, which meant
+       a completely broken send path passed every test-mode turn — the stub
+       under-delivered and so could only ever report success. It now calls
+       sms-service in ITS dry-run mode: trigger, bypass, from-number and quiet
+       hours are all evaluated for real, Twilio is not called and nothing is
+       written on either side. Still never dispatched. */
+    const rehearsal = await routeToSmsService(to, preview, true);
+    console.log("[sms-assistant] TEST MODE — not dispatched to Twilio:", JSON.stringify({ to, body: preview, rehearsal }));
+    if (rehearsal.error) return { error: `test-mode rehearsal failed: ${rehearsal.error}` };
     return { sid: "TESTSID_" + Date.now().toString(36) };
   }
   if (isTestPhone(to)) { return { error: `BLOCKED: real-mode send to reserved test number ${to}` }; }
-  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) return { error: "Twilio not configured" };
-  const auth = btoa(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`);
-  const params = new URLSearchParams({ To: to, From: SMS_ASSISTANT_FROM_NUMBER, Body: (body || "").substring(0, SMS_MAX_LENGTH) });
+  /* ROUTED THROUGH sms-service (2026-08-15). Was a direct Twilio POST, so
+   * quietHours() was never evaluated for it — see
+   * docs/SMS-BYPASSES-QUIET-HOURS-2026-08-15.md.
+   *
+   * bypass = 'staff_message', and this is a CORRECTION to that doc, which
+   * listed sms-assistant under 'user_initiated' on the strength of its shape:
+   * it is a reply, so the recipient must have just texted us. True, but the
+   * weaker claim. `to` here is always `fromPhone`, and the turn cannot reach
+   * this line unless that number passed the sms_authorized_phones gate — an
+   * unauthorized sender is rejected silently with no reply at all. So the
+   * recipient is not merely someone who acted a moment ago, it is verified
+   * STAFF, and TCPA does not reach it. That property is enforced by the
+   * function rather than assumed from the message shape.
+   *
+   * The 888 assistant line is passed through as from_phone. Without it these
+   * replies would arrive from the 866 lead lane, which is a different
+   * conversation thread on the recipient's handset.
+   *
+   * Test mode is handled ABOVE and returns before this point, so a test turn
+   * never reaches sms-service either. */
+  return await routeToSmsService(to, (body || "").substring(0, SMS_MAX_LENGTH), false);
+}
+
+/* One send path for both the real turn and the rehearsal. Two copies would
+   drift, and the copy nobody exercises is the one that breaks. */
+async function routeToSmsService(to: string, message: string, dryRun: boolean): Promise<{ sid?: string; error?: string }> {
   try {
-    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
-      method: "POST", headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/x-www-form-urlencoded" }, body: params,
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/sms-service`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "apikey": SERVICE_KEY, "Authorization": `Bearer ${SERVICE_KEY}` },
+      body: JSON.stringify({
+        trigger: "assistant_reply",
+        to_phone: to,
+        params: { message },
+        from_phone: SMS_ASSISTANT_FROM_NUMBER,
+        quiet_hours_bypass: "staff_message",
+        ...(dryRun ? { dry_run: true } : {}),
+      }),
     });
     const data = await res.json().catch(() => ({} as any));
-    if (res.ok && data.sid) return { sid: data.sid };
-    return { error: data.message || data.code || `Twilio ${res.status}` };
+    if (!res.ok) return { error: data.error || data.message || `sms-service ${res.status}` };
+    if (dryRun) return data.would_send ? { sid: "DRYRUN" } : { error: data.error || "would not send" };
+    if (data.sent && data.sid) return { sid: data.sid };
+    return { error: data.error || data.message || "not sent" };
   } catch (e: any) { return { error: e?.message || String(e) }; }
 }
 async function fetchTwilioMedia(url: string): Promise<{ bytes: Uint8Array; contentType: string }> {
