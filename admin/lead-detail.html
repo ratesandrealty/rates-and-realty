@@ -6694,16 +6694,38 @@ async function populateUI() {
         var patch = { property_city: p.city || null, property_state: p.state || null,
                       property_zip: p.zip || null, updated_at: new Date().toISOString() };
         if (p.county) patch.county = p.county;
+        /* These two writes had `.then(function(){}, function(){})` — an
+           explicitly empty rejection handler, so a failure produced nothing
+           anywhere, and the outer try/catch could never help because neither
+           call is awaited. Nothing on screen acknowledged the save in EITHER
+           direction, which is why this one gets a success signal too: a pick
+           silently writes the borrower's city, state, ZIP and county, and
+           contacts.county is what the fee sheet reads. A stale county there is
+           a wrong loan limit on a document sent to a borrower. */
+        var _addrFail = function (label) {
+          return function (res) {
+            var msg = (res && res.error && res.error.message) || (res && res.message) || res;
+            console.error('[places-sync] ' + label + ':', msg);
+            toast('Address details NOT saved (' + label + '): ' + msg, true);
+          };
+        };
         try {
-          _authClient().from('contacts').update(patch).eq('id', cid).then(function(){}, function(){});
+          _authClient().from('contacts').update(patch).eq('id', cid).then(function (res) {
+            if (res && res.error) return _addrFail('contacts')(res);
+            toast('✓ Address details saved');
+          }, _addrFail('contacts'));
           if (p.county || p.zip) {
             _authClient().from('mortgage_applications').update({
               property_address_county: p.county || null, property_address_zip: p.zip || null,
               property_address_city: p.city || null, property_address_state: p.state || null,
               updated_at: new Date().toISOString(),
-            }).eq('contact_id', cid).then(function(){}, function(){});
+            }).eq('contact_id', cid).then(function (res) {
+              /* Failure only: a second success toast for one pick would read as
+                 two saves. */
+              if (res && res.error) _addrFail('1003 columns')(res);
+            }, _addrFail('1003 columns'));
           }
-        } catch (_) {}
+        } catch (e) { _addrFail('places sync')(e); }
       },
       onUnresolved: function (why) {
         /* Loud, not silent. The old behaviour was a bare `return` that left
@@ -10447,12 +10469,20 @@ async function addLiability() {
   const entry = { creditor, type, balance, monthly_payment: payment, payoff_required: payoff };
   // Persist to Supabase if we have a contact
   if (contactId) {
+    /* The write happens BEFORE the row is rendered, so a failure needs no
+       rollback — it just must not fall through. It used to: the error was
+       tested only to decide whether to update the cache, then the row was
+       pushed and '✓ Liability added' toasted regardless. A liability that is
+       not in the database is worse than a slow table, because calcDTI() sums
+       it and the DTI ratio a borrower is qualified on moves. */
+    let saveErr = null;
     try {
       const existing = contactData.liabilities || [];
       const updated = [...existing, entry];
       const { error } = await _authClient().from('contacts').update({ liabilities: updated }).eq('id', contactId);
-      if (!error) contactData.liabilities = updated;
-    } catch (_) {}
+      if (error) saveErr = error; else contactData.liabilities = updated;
+    } catch (e) { saveErr = e; }
+    if (saveErr) { toast('Liability NOT saved: ' + (saveErr.message || saveErr), true); return; }
   }
   liabilitiesData.push(entry);
   renderLiabilities();
@@ -10462,13 +10492,26 @@ async function addLiability() {
   toast('✓ Liability added');
 }
 
+/* Removal IS optimistic — the splice happens before the write — so this one
+   genuinely has to reverse itself. Without that, a failed delete removed the
+   row from the table and from the DTI sum while it stayed in the database, and
+   said 'Liability removed'. The row reappeared on the next page load, which is
+   how a borrower's DTI silently disagrees with their file. */
 async function removeLiability(idx) {
+  const removed = liabilitiesData[idx];
   liabilitiesData.splice(idx, 1);
   if (contactId) {
+    let saveErr = null;
     try {
-      await _authClient().from('contacts').update({ liabilities: liabilitiesData }).eq('id', contactId);
-      contactData.liabilities = [...liabilitiesData];
-    } catch (_) {}
+      const { error } = await _authClient().from('contacts').update({ liabilities: liabilitiesData }).eq('id', contactId);
+      if (error) saveErr = error; else contactData.liabilities = [...liabilitiesData];
+    } catch (e) { saveErr = e; }
+    if (saveErr) {
+      liabilitiesData.splice(idx, 0, removed);   // put it back where it was
+      renderLiabilities();
+      toast('Liability NOT removed: ' + (saveErr.message || saveErr), true);
+      return;
+    }
   }
   renderLiabilities();
   toast('Liability removed');
@@ -10497,13 +10540,14 @@ function calcDTI() {
 async function logActivity(type, description) {
   if (!leadId) return;
   try {
-    await _authClient().from('activity_events').insert({
+    const { error } = await _authClient().from('activity_events').insert({
       lead_id: leadId,
       type,
       description,
       created_at: new Date().toISOString()
     });
-  } catch (_) {}
+    if (error) console.error('[logActivity] not written:', error.message);
+  } catch (e) { console.error('[logActivity] threw:', e && e.message || e); }
 }
 
 /* ── TAB SWITCHING ── */
@@ -19463,16 +19507,31 @@ function lpSnapEdit(key, ev){
       const patch={ property_address: addr||null, updated_at:new Date().toISOString() };
       if(p){ patch.property_city=p.city||null; patch.property_state=p.state||null; patch.property_zip=p.zip||null;
              if(p.county) patch.county=p.county; }
-      try{
-        await _authClient().from('contacts').update(patch).eq('id',cid);
+      /* THROWS ON FAILURE, deliberately. The Save button already had
+         `catch(e){ alert('Could not save.'); }` around this commit — and the
+         `catch(_){}` that used to be here swallowed the error first, so that
+         alert was unreachable code. Worse, supabase-js RESOLVES with { error }
+         rather than throwing, so even without the empty catch a database
+         refusal would never have reached it. Both halves had to change: read
+         the error, then throw it.
+
+         The DOM propagation stays INSIDE the success path. It used to run
+         regardless, pushing the unsaved address into #lp-prop-addr and
+         #f-property as well, so three widgets agreed on a value no row held. */
+      {
+        const { error } = await _authClient().from('contacts').update(patch).eq('id',cid);
+        if(error) throw new Error(error.message || 'contacts update failed');
         if(c){ c.property_address=addr||null; if(p){ c.property_city=p.city||null; c.property_state=p.state||null; c.property_zip=p.zip||null; } }
         if(typeof leadData!=='undefined' && leadData) leadData.property_address=addr||null;
         const _lpAddr=document.getElementById('lp-prop-addr'); if(_lpAddr) _lpAddr.value=addr||'';
         const _fProp=document.getElementById('f-property');   if(_fProp)  _fProp.value=addr||'';
-      }catch(_){}
+      }
       // On a Places pick, keep the structured mortgage_applications columns (+ 1003 form inputs) in sync.
       if(p){
-        try{ await _authClient().from('mortgage_applications').update({ property_address_street:p.street||null, property_address_city:p.city||null, property_address_state:p.state||null, property_address_zip:p.zip||null, property_address_county:p.county||null, updated_at:new Date().toISOString() }).eq('contact_id',cid); }catch(_){}
+        {
+          const { error:_maErr } = await _authClient().from('mortgage_applications').update({ property_address_street:p.street||null, property_address_city:p.city||null, property_address_state:p.state||null, property_address_zip:p.zip||null, property_address_county:p.county||null, updated_at:new Date().toISOString() }).eq('contact_id',cid);
+          if(_maErr) throw new Error('1003 address columns: ' + (_maErr.message || 'update failed'));
+        }
         const sync=(id,v)=>{ const e=document.getElementById(id); if(e){ e.value=(v==null?'':v); e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true})); } };
         sync('f_prop_street',p.street); sync('f_prop_city',p.city); sync('f_prop_state',p.state); sync('f_prop_zip',p.zip); sync('f_prop_county',p.county);
       }
@@ -19504,7 +19563,16 @@ function lpSnapEdit(key, ev){
   document.body.appendChild(panel);
   const close=()=>panel.remove();
   document.getElementById('lpSnapCancel').onclick=close;
-  document.getElementById('lpSnapSave').onclick=async ()=>{ try{ await commit(); }catch(e){ alert('Could not save.'); } close(); };
+  /* close() used to run unconditionally, so a refused save dismissed the editor
+     and the typed value was gone with nothing to retry. On failure the panel now
+     stays open with the text still in it. The success toast is new: committing
+     used to just close the panel, which is indistinguishable from cancelling. */
+  document.getElementById('lpSnapSave').onclick=async ()=>{
+    try{ await commit(); }
+    catch(e){ alert('Could not save.' + String.fromCharCode(10,10) + (e && e.message ? e.message : e)); return; }
+    if(typeof toast==='function') toast('✓ Saved');
+    close();
+  };
   const first=panel.querySelector('input,select'); if(first) setTimeout(()=>first.focus(),30);
   panel.addEventListener('keydown',function(e){ if(e.key==='Enter' && e.target.tagName!=='SELECT'){ var _pac=document.querySelector('.pac-container'); var _pacOpen=_pac && _pac.offsetParent!==null && _pac.querySelector('.pac-item'); if(!_pacOpen) document.getElementById('lpSnapSave').click(); } if(e.key==='Escape') close(); });
   setTimeout(()=>{ const off=(e)=>{ if(!panel.contains(e.target) && !(e.target.closest && e.target.closest('.pac-container'))){ close(); document.removeEventListener('mousedown',off); } }; document.addEventListener('mousedown',off); },0);
@@ -25142,11 +25210,14 @@ function saveEarnings() {
       patch.closed_date  = closedDate;
     }
 
+    /* One failure flag for BOTH writes in this function, so the indicator
+       reflects whichever refused rather than only the last one attempted. */
+    let _earnFail = null;
     // Nothing real to persist (no earnings entered, no outcome selected) — skip the write.
     if (Object.keys(patch).length > 0) {
       patch.updated_at = new Date().toISOString();
       const { error } = await _authClient().from('contacts').update(patch).eq('id', targetId);
-      if (error) console.error('[saveEarnings] error:', error.message);
+      if (error) { console.error('[saveEarnings] contacts:', error.message); _earnFail = error.message; }
     }
 
     // Also keep closed_deals in sync
@@ -25165,17 +25236,29 @@ function saveEarnings() {
       // Same blank-skip: only write commission when a real actual-earnings number
       // was entered, so closing a deal can't blank out earnings never entered.
       if (actVal !== undefined) dealPatch.commission_earned = actVal;
+      /* This upsert swallowed its failure in a bare catch marked best-effort,
+         while the contacts.update eight lines above already console.errored —
+         one function, two answers to the same question. Both now report, and
+         both feed the indicator. */
       try {
-        await _authClient().from('closed_deals').upsert(dealPatch, { onConflict: 'contact_id' });
-      } catch (e) { /* silent: closed_deals autosave is best-effort */ }
+        const { error:_cdErr } = await _authClient().from('closed_deals').upsert(dealPatch, { onConflict: 'contact_id' });
+        if (_cdErr) { console.error('[saveEarnings] closed_deals:', _cdErr.message); _earnFail = _cdErr.message; }
+      } catch (e) { console.error('[saveEarnings] closed_deals threw:', e && e.message || e); _earnFail = (e && e.message) || String(e); }
     }
 
+    /* The indicator said '✓ Saved' whatever happened. An autosave that claims
+       success on a refused write is worse than one that says nothing: it is the
+       only feedback this panel gives, and earnings are what commission is
+       reconciled from. It now reports the failure and stays up long enough to
+       be read. */
     const ind = document.getElementById('autoSaveIndicator');
     if (ind) {
-      ind.textContent = '✓ Saved';
+      const failed = !!_earnFail;
+      ind.textContent = failed ? '⚠ NOT saved' : '✓ Saved';
       ind.style.opacity = '1';
-      ind.style.color = 'rgba(80,200,120,0.8)';
-      setTimeout(() => ind.style.opacity = '0', 1500);
+      ind.style.color = failed ? 'rgba(248,113,113,0.95)' : 'rgba(80,200,120,0.8)';
+      ind.title = failed ? _earnFail : '';
+      setTimeout(() => ind.style.opacity = '0', failed ? 6000 : 1500);
     }
   }, 800);
 }
