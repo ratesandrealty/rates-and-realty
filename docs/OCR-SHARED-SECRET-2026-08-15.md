@@ -1,7 +1,10 @@
-# `ocr-mms-upload`'s shared secret is a literal in three files
+# `ocr-mms-upload`'s shared secret — RETIRED 2026-08-15
 
-**Found while removing the `?secret=` query parameter, 2026-08-15. The query
-parameter is fixed. This is not.**
+**DONE. The secret is accepted nowhere and was not replaced by another one.**
+The record below is kept because the value remains in git history on every
+branch, so anyone who finds it there needs to know it is dead.
+
+**Found while removing the `?secret=` query parameter, 2026-08-15.**
 
 ## What is exposed
 
@@ -32,7 +35,43 @@ Note also `verify_jwt = false` on this function — correct, since its callers h
 no session — which means the shared secret is the *only* control. There is no
 second gate behind it.
 
-## Rotation is the only fix, and it needs a staged order
+## What was actually done — retired, not rotated
+
+The plan below said "rotate to a new value". **That was wrong, and following it
+would have re-created the defect with a different string**: the DB trigger
+cannot read an edge-function env var, so a new secret would have had to be
+written into `trigger_ocr_on_uploaded_document` as a literal and committed
+again.
+
+Instead the bespoke secret was removed entirely. It was never needed:
+
+| caller | now authenticates with |
+|---|---|
+| `trigger_ocr_on_uploaded_document` | `internal_call_headers()` — the secret is read from the **vault** at call time and confirmed by `verify_cron_secret()`, which returns only a boolean. The credential never exists outside the database. |
+| `sms-assistant` | the **service key it already held**. `requireStaff` accepts it in either header. |
+
+That also collapses one of this project's competing cron-secret conventions —
+`x-cron-secret`, `x-cron-key`, `x-internal-secret` — which is how the CRON_KEY
+rotation missed three workflows.
+
+### The three steps, and why there had to be three
+
+A function deploy and a DB trigger change cannot land atomically. Guarding first
+refuses the trigger until the trigger changes; changing the trigger first refuses
+it until the function deploys. A dual-accept deploy removed the window.
+
+| step | change | proof |
+|---|---|---|
+| 1 | `ocr-mms-upload` accepts legacy **or** `requireStaff` | legacy 400, `x-internal-secret` 400, no credential 403, wrong values 403 |
+| 2 | trigger → `internal_call_headers()`; `sms-assistant` → service key | `net._http_response` 400 `uploaded_document_id required`; deployed `pg_proc` source contains no literal |
+| 3 | legacy branch deleted | legacy secret **403**, `?secret=` **403**, trigger path still **400** |
+
+Step 3's probe is the one that matters: the retired value is now refused by the
+live function, and the real caller's path still works — read out of
+`net._http_response`, not inferred from a queued request id.
+
+### The original plan, kept for the reasoning about ordering
+
 
 Editing the literal in place breaks the callers, because a function deploy and a
 DB trigger change cannot happen atomically — the same constraint
