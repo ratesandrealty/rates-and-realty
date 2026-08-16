@@ -39,23 +39,46 @@ function classifyIntent(body: string): { intent: string; confidence: string } {
   return { intent: "general", confidence: "low" };
 }
 
+/* ROUTED THROUGH sms-service (2026-08-15). Was a direct Twilio POST, so
+ * quietHours() was never evaluated for it — see
+ * docs/SMS-BYPASSES-QUIET-HOURS-2026-08-15.md.
+ *
+ * bypass = 'staff_alert'. This function never texts a borrower. It forwards
+ * an INBOUND borrower text to staff, and both recipients are staff by
+ * construction: RENE_FORWARD_PHONE is a hardcoded constant, and owner_cell
+ * comes from app_config.owner_cell_phone inside notify_inbound_reply — read
+ * from configuration, never from the contact row. Checked in the function
+ * source rather than inferred from the parameter name.
+ *
+ * The doc listed twilio-inbound under 'user_initiated'. That reading has the
+ * direction backwards: the person who acted is the BORROWER, and the person
+ * receiving this message is Rene. 'user_initiated' would be claiming an
+ * exemption on behalf of someone who is not the recipient.
+ *
+ * The 866 lead-lane number is passed through unchanged.
+ *
+ * A forward that quiet hours refused must not read as a Twilio outage, so the
+ * refusal is logged distinctly rather than folded into the bare `false`.
+ */
 async function sendForwardSMS(to: string, body: string) {
   try {
-    const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
-    const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
-    const TWILIO_FROM = Deno.env.get("TWILIO_PHONE_NUMBER") || "+18668919394";
-    if (!TWILIO_SID || !TWILIO_TOKEN) return false;
-    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`, {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/sms-service`, {
       method: "POST",
-      headers: {
-        "Authorization": "Basic " + btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`),
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({ To: to, From: TWILIO_FROM, Body: body }),
+      headers: { "Content-Type": "application/json", "apikey": SERVICE_KEY, "Authorization": `Bearer ${SERVICE_KEY}` },
+      body: JSON.stringify({
+        trigger: "inbound_reply",
+        to_phone: to,
+        params: { message: body },
+        from_phone: Deno.env.get("TWILIO_PHONE_NUMBER") || "+18668919394",
+        quiet_hours_bypass: "staff_alert",
+      }),
     });
-    return res.ok;
+    const data = await res.json().catch(() => ({} as any));
+    if (data?.blocked_quiet_hours) console.error("[twilio-inbound] forward refused by quiet hours:", data.error);
+    return res.ok && data?.sent === true;
   } catch { return false; }
 }
+
 
 async function fireAiBot(payload: any) {
   try {
