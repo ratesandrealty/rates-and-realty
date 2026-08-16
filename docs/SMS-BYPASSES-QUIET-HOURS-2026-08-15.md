@@ -23,7 +23,7 @@ endpoint and cross-referencing `quietHours` / `quiet_hours_bypass`:
 
 | function | direct Twilio calls | mentions quiet hours | on cron |
 |---|---|---|---|
-| **`proactive-followups`** | 1 | no | **job 20 daily 15:00Z, job 21 every 6h** |
+| ~~`proactive-followups`~~ | **0 — ROUTED 2026-08-15** | via sms-service | job 20 daily 15:00Z, job 21 every 6h |
 | **`loan-date-nudges`** | 1 | no | **job 38 daily 15:00Z** |
 | **`send-scheduled-sms`** | 1 | no | **job 39 EVERY MINUTE** |
 | `sms-inbound-reconcile` | 2 | no | job 40 daily 13:20Z |
@@ -97,4 +97,49 @@ caller, confirm it still sends, and only then rely on the guard.
    changes what its history looks like, and the old rows will not match the new
    ones.
 
-Nothing here is fixed. Nothing here is scheduled.
+## Routing progress
+
+**1 of 7 routed.** Order is by simplicity, agreed 2026-08-15:
+`proactive-followups` ✅ → `sms-assistant` → `ocr-mms-upload` → `twilio-inbound` →
+`send-scheduled-sms` → `loan-date-nudges` → `sms-inbound-reconcile`.
+
+`SMS_QUIET_HOURS` remains **OFF**. Routing and enabling are separate decisions;
+the flag is not flipped until the audit trail covers all seven.
+
+### What routing one function actually required
+
+Three rehearsal defects surfaced, all the same shape — *a test that writes*:
+
+1. `sms-service`'s dry run inserted the `audit_log` `SMS_WOULD_BLOCK` row while
+   its own comment claimed it wrote nothing. That table is the evidence the
+   `SMS_QUIET_HOURS` flip will be judged on, so a rehearsal inflates the count
+   somebody will read as real traffic the guard would have caught.
+2. `proactive-followups`' pre-existing `?dry_run=true` returns BEFORE the send
+   helper, so it could not exercise the routed path at all. `?dry_run=send` runs
+   the real digest through `sms-service`'s dry run instead.
+3. The digest rehearsal wrote its `proactive_alerts_sent` row, which would make
+   the next REAL run see "already sent digest today" and stay silent — a test
+   that suppresses the thing it is testing. Two rows were written this way
+   before it was caught, and deleted.
+
+### The guard could not be proven at 4pm, so the clock is injectable
+
+`dry_run_at` and `dry_run_enforce_quiet_hours` are honoured **only inside a dry
+run**. At 16:53 Pacific every US area code is inside the 8am–9pm window, so the
+refusal branch is untestable for most of the working day — and CLAUDE.md already
+records the social failure that follows: somebody runs the suite at the wrong
+hour, sees the "wrong" answer, and repairs a working guard into uselessness.
+
+Proven with `+1 714 555 0142`, both directions, nothing sent and nothing written:
+
+| probe | simulated local time | bypass | verdict |
+|---|---|---|---|
+| borrower-facing | 2:00 AM | none | **blocked** — "Texts are limited to 8:00 AM–9:00 PM" |
+| staff alert | 2:00 AM | `staff_alert` | **through** |
+| borrower-facing | 2:00 PM | none | **through** |
+
+The middle row is the one that matters for this function: `proactive-followups`
+alerts Rene, not a borrower, and must still reach him at 2am — muting a monitor
+overnight is how the 32-hour masking window happened.
+
+Nothing else here is fixed. Nothing else here is scheduled.
