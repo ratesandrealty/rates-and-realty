@@ -32,32 +32,40 @@ function formatPhone(phone: string) {
   return phone.startsWith('+') ? phone : `+${d}`
 }
 
+/* ROUTED THROUGH sms-service (2026-08-15). Was a direct Twilio POST, so
+ * quietHours() was never evaluated for it. This is the function that texted
+ * Rene's real phone during an unauthenticated probe, which is why "do not
+ * live-probe" is written into every nudge instruction in this project.
+ *
+ * bypass = 'staff_alert'. Recipients come from sms_authorized_phones filtered
+ * to staff roles (line ~145) — a borrower cannot appear in that list.
+ *
+ * NUDGE_FROM is passed through unchanged, per the explicit decision to keep it:
+ * these nudges go from the 888 assistant line so they thread with the
+ * assistant, not from the 866 lead lane.
+ */
 async function sendSMS(to: string, body: string): Promise<{ sent: boolean; sid?: string; error?: string }> {
-  if (!TWILIO_SID || !TWILIO_TOKEN) return { sent: false, error: 'Twilio not configured' }
   try {
-    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`, {
-      method: 'POST',
-      headers: { 'Authorization': 'Basic ' + btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`), 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ To: formatPhone(to), From: NUDGE_FROM, Body: body })
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/sms-service`, {
+      method: 'POST', headers: svc(),
+      body: JSON.stringify({
+        trigger: 'loan_date_nudge',
+        to_phone: formatPhone(to),
+        params: { message: body },
+        from_phone: NUDGE_FROM,
+        quiet_hours_bypass: 'staff_alert',
+      })
     })
-    const data = await res.json()
-    return res.ok && data.sid ? { sent: true, sid: data.sid } : { sent: false, error: data.message || data.code || 'Twilio error' }
+    const data = await res.json().catch(() => ({}))
+    return data?.sent ? { sent: true, sid: data.sid }
+                      : { sent: false, error: data?.error || `sms-service ${res.status}` }
   } catch (e: any) { return { sent: false, error: e.message } }
 }
 
-async function logSMS(p: { to_phone: string; body: string; twilio_sid?: string; status: string; error_message?: string }) {
-  try {
-    await fetch(rest('sms_log'), {
-      method: 'POST', headers: svc(),
-      body: JSON.stringify({
-        to_phone: p.to_phone, body: p.body, trigger_type: 'loan_date_nudge',
-        from_phone: NUDGE_FROM, direction: 'outbound',
-        twilio_sid: p.twilio_sid || null, status: p.status, error_message: p.error_message || null,
-        created_at: new Date().toISOString()
-      })
-    })
-  } catch (_e) { /* non-fatal */ }
-}
+
+/* logSMS deleted 2026-08-15. sms-service writes the sms_log row now, with the
+   same trigger_type and from_phone. A dead writer left next to a live one is
+   how a message ends up logged twice the next time somebody wires it back in. */
 
 function fmtDate(d: string) {
   try { return new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) } catch { return d }
@@ -150,7 +158,9 @@ serve(async (req) => {
 
     for (const r of recips) {
       const result = await sendSMS(r.phone, digest)
-      await logSMS({ to_phone: r.phone, body: digest, twilio_sid: result.sid, status: result.sent ? 'sent' : 'failed', error_message: result.error })
+      /* No logSMS here any more: sms-service writes the row, with the same
+         trigger_type 'loan_date_nudge' and the same from_phone. Keeping this
+         call would log every nudge twice. */
       if (result.sent) summary.sent++; else summary.errors.push(`send ${r.phone}: ${result.error || 'unknown'}`)
     }
 

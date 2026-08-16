@@ -72,7 +72,7 @@ async function callerUid(req:Request): Promise<string|null> {
 
    The update deliberately does NOT touch trigger_type or created_at: the row
    was authored when it was composed, and a drain is not a re-authoring. */
-async function logSMS(p:{to_phone:string;to_name?:string;body:string;trigger_type:string;trigger_id?:string;contact_id?:string;portal_user_id?:string;borrower_id?:string;twilio_sid?:string;status:string;error_message?:string;media_url?:string}, existingLogId?:string) {
+async function logSMS(p:{to_phone:string;to_name?:string;body:string;trigger_type:string;trigger_id?:string;contact_id?:string;portal_user_id?:string;borrower_id?:string;twilio_sid?:string;status:string;error_message?:string;media_url?:string}, existingLogId?:string, fromNumber?:string) {
   try {
     if (existingLogId) {
       await sb.from('sms_log').update({ status:p.status, twilio_sid:p.twilio_sid ?? null,
@@ -80,7 +80,11 @@ async function logSMS(p:{to_phone:string;to_name?:string;body:string;trigger_typ
         .eq('id', existingLogId);
       return;
     }
-    await sb.from('sms_log').insert({...p,actor_user_id:_actorUid,created_at:new Date().toISOString()});
+    /* from_phone and direction are recorded because callers now pass their own
+       sending number — the 888 assistant line, the 866 lead lane — and a log
+       that omits it cannot answer "which number did the borrower see". Callers
+       being routed in used to write these themselves. */
+    await sb.from('sms_log').insert({...p,from_phone:(fromNumber||'').trim()||TWILIO_FROM,direction:'outbound',actor_user_id:_actorUid,created_at:new Date().toISOString()});
   } catch(e){console.error('logSMS:',e);}
 }
 
@@ -279,7 +283,7 @@ async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{co
        row in sms_log — measured, not theorised. The refusal itself still
        happens either way; what a rehearsal must not do is leave evidence of a
        message nobody tried to send. */
-    if (!dryRun) await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:why,media_url:mediaUrl}, existingLogId);
+    if (!dryRun) await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:why,media_url:mediaUrl}, existingLogId, fromOverride);
     return { sent:false, error:why, blocked:true, dry_run:dryRun||undefined, would_send:false };
   }
 
@@ -315,7 +319,7 @@ async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{co
         });
       } catch (_) { /* never let the logbook stop the decision */ }
       if (enforcing) {
-        if (!dryRun) await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:qh.reason,media_url:mediaUrl}, existingLogId);
+        if (!dryRun) await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:qh.reason,media_url:mediaUrl}, existingLogId, fromOverride);
         return { sent:false, error:qh.reason, blocked:true, blocked_quiet_hours:true, local_time:qh.localTime,
                  dry_run:dryRun||undefined, would_send:false, trigger_type:effectiveTrigger,
                  ...(dryRun && !QUIET_HOURS_ENFORCED ? { enforcement_simulated:true } : {}) };
@@ -336,7 +340,7 @@ async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{co
     if (dryRun) return { sent:false, dry_run:true, would_send:false, opted_out:true,
                          error:'recipient has opted out of SMS', blocked:true, trigger_type:effectiveTrigger };
     // Logged, not silently dropped: a suppressed message must still be visible.
-    await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:'recipient has opted out of SMS',media_url:mediaUrl}, existingLogId);
+    await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,status:'blocked',error_message:'recipient has opted out of SMS',media_url:mediaUrl}, existingLogId, fromOverride);
     return { sent:false, error:'recipient has opted out of SMS', blocked:true };
   }
   /* DRY RUN — every check above has already run, so the verdict is real; what
@@ -363,7 +367,7 @@ async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{co
   }
 
   const result = await sendTwilioSMS(to_phone, msg, mediaUrl, fromOverride);
-  await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,twilio_sid:result.sid,status:result.sent?'sent':'failed',error_message:result.error,media_url:mediaUrl}, existingLogId);
+  await logSMS({to_phone,to_name:params.firstName,body:msg,trigger_type:effectiveTrigger,trigger_id:ids.trigger_id,contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,borrower_id:ids.borrower_id,twilio_sid:result.sid,status:result.sent?'sent':'failed',error_message:result.error,media_url:mediaUrl}, existingLogId, fromOverride);
   await logActivity({contact_id:ids.contact_id,portal_user_id:ids.portal_user_id,crm_id:ids.borrower_id,title:`SMS: ${effectiveTrigger.replace(/_/g,' ')} to ${to_phone}`,description:msg.substring(0,120),status:result.sent?'sent':'failed',sms_body:msg,sms_to:to_phone,metadata:{trigger:effectiveTrigger,sid:result.sid,error:result.error,has_media:!!mediaUrl}});
   return result;
 }
