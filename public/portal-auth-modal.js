@@ -218,7 +218,21 @@
     localStorage.setItem('borrower_first_name', user.first_name || '');
     localStorage.setItem('user_email', user.email || '');
     localStorage.setItem('user_name', ((user.first_name || '') + ' ' + (user.last_name || '')).trim());
-    syncShowingCart(user);
+    /* syncShowingCart() used to run here and has been REMOVED, not repaired.
+       It PATCHed /rest/v1/showings with NO FILTER — every row in the table —
+       setting contact_id to user.id, where `user` is a portal_users row, so the
+       value was a portal_user id being written into a contacts foreign key. It
+       was fire-and-forget behind a swallowing .catch(), so it could never have
+       reported either mistake.
+
+       Not repaired, because there is nothing for it to do. Every path that
+       creates a showing already sets ownership at insert time: submit-showing
+       resolves or creates the contact before inserting, and
+       search-homes.html addToExistingBatch copies portal_user_id and contact_id
+       from the batch it is adding to. Nothing produces an unowned showing for a
+       later login to adopt, so a "correct" version of this would be a filtered
+       UPDATE that always matches zero rows. See
+       supabase/migrations/20260816_showings_drop_open_all.sql. */
     if (isSignup) {
       _formSignup.classList.add('pa-hidden');
       _formLogin.classList.add('pa-hidden');
@@ -232,24 +246,6 @@
       _callback = null;
       cb(user);
     }
-  }
-
-  function syncShowingCart(user) {
-    try {
-      var cart = JSON.parse(localStorage.getItem('showingCart') || '[]');
-      if (cart.length > 0 && user && user.id) {
-        fetch(_SB + '/rest/v1/showings', {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': _SK,
-            'Authorization': 'Bearer ' + _SK,
-            'Prefer': 'return=minimal'
-          },
-          body: JSON.stringify({ contact_id: user.id })
-        }).catch(function () { /* fire and forget */ });
-      }
-    } catch (e) { /* ignore */ }
   }
 
   async function apiCall(body) {
