@@ -109,6 +109,34 @@ real.
 **A harness that has only ever passed proves nothing.** Break it before trusting
 it, and break it again whenever its failure modes change.
 
+### A commit message is a CLAIM, not evidence
+
+`9f87ca6` ended "Proven per site in BOTH directions by CDP interception — forced
+400 and forced 204, with OPTIONS never intercepted and CORS on every fulfilled
+response". **No such harness has ever existed in this repo.**
+`git log --all -S 'Fetch.enable'` and `-S 'fulfillRequest'` return nothing on
+every branch, the commit touched one file, and `render-check.mjs` enables only
+`Emulation`, `Log`, `Page`, `Runtime` and `Target` — it cannot intercept a
+request and cannot even observe one. The fix itself was correct. The evidence
+was fiction.
+
+An absent proof invites a proof; a false proof claim CLOSES the question. And the
+specific thing it claimed to have tested — `alert('Could not save.')` firing —
+had been **unreachable code** until that very commit. An error path that has
+never executed is the last thing to take on faith.
+
+**Before relying on "this was proven", find the artifact** — the harness, the
+spec, the recorded output. If a proof left nothing behind that can be re-run, it
+did not happen in any sense that helps you, and the claim should be read as
+untested. When writing a message: describe what the change DOES, and only claim
+a proof in the same commit that carries the thing which produced it.
+
+`tools/write-failure-proof.mjs` (d310f17) is now the real artifact for those
+writes — **nine of them, not the eight the message counts** — and it is verified
+to FAIL against `9f87ca6^` through `tools/serve-prefix.mjs`, which is the half
+the original claim never had. Full record:
+`docs/FALSE-PROOF-CLAIM-9f87ca6-2026-08-15.md`.
+
 ## n8n: an edit is NOT shipped until an execution proves it
 
 `update_workflow` returns success, echoes the new values back, and **the running
