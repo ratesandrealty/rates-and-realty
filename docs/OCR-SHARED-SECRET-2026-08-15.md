@@ -66,6 +66,37 @@ it until the function deploys. A dual-accept deploy removed the window.
 | 2 | trigger → `internal_call_headers()`; `sms-assistant` → service key | `net._http_response` 400 `uploaded_document_id required`; deployed `pg_proc` source contains no literal |
 | 3 | legacy branch deleted | legacy secret **403**, `?secret=` **403**, trigger path still **400** |
 
+### A FOURTH file, found by grepping for the string afterwards
+
+`drive-folder-migrator` guarded itself with the same literal — and also accepted
+it as a `?secret=` query parameter. Retiring the value in the function that
+surfaced the problem would have left it opening this one, so the credential
+would not have been retired at all, only relocated out of sight.
+
+It matters more than its "v1 (one-off)" header suggests: it walks every
+`contacts.gdrive_folder_id` and MOVES the folder, so the string in git history
+could re-parent every borrower's Drive folder. No caller exists — repo,
+`pg_proc`, `cron.job` and n8n all checked — so no dual-accept window was needed.
+It is now `requireStaff(allowInternal)` and pinned in `config.toml`, which it
+had never been.
+
+**The lesson is the grep.** Three files was what the first search found because
+it searched for callers of one function. The credential's blast radius is
+defined by the STRING, not by the function you happened to be looking at.
+
+Final state, measured on the live functions:
+
+| | retired secret (header) | `?secret=` | anon key | vault `x-internal-secret` |
+|---|---|---|---|---|
+| `ocr-mms-upload` | 403 | 403 | 403 | 400 (accepted) |
+| `drive-folder-migrator` | 403 | 403 | 403 | 200 (accepted, dry run) |
+
+Live references to the string in `*.ts` / `*.sql`: **0**.
+
+Still worth considering: `drive-folder-migrator` is a completed one-off with no
+callers. Deleting it outright would be better than guarding it — but that is a
+deployment decision, not a security fix, so it was not done unilaterally.
+
 Step 3's probe is the one that matters: the retired value is now refused by the
 live function, and the real caller's path still works — read out of
 `net._http_response`, not inferred from a queued request id.
