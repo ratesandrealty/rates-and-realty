@@ -7,8 +7,12 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireStaff } from '../_shared/require-staff.ts'
 
-const SHARED_SECRET = 'rr-cron-2026-x7k3m9pq2r5tw8z4y6h8b3n1'
+/* LEGACY, being retired. Step 1 of 3 in the rotation: this deploy accepts both
+   the old literal and the real guard, so no caller is refused while the callers
+   are moved. Deleted in the final step — do not add a new caller to it. */
+const LEGACY_SHARED_SECRET = 'rr-cron-2026-x7k3m9pq2r5tw8z4y6h8b3n1'
 const STORAGE_BUCKET = 'borrower-documents'
 const SMS_MAX = 1500
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'
@@ -123,8 +127,34 @@ serve(async (req) => {
 
      Note `url` is no longer read here; it was only ever parsed to reach the
      query string. */
-  const secret = req.headers.get('x-cron-secret') || ''
-  if (secret !== SHARED_SECRET) return new Response('Forbidden', { status: 403 })
+  /* ROTATION, step 1 of 3 (2026-08-15). DUAL-ACCEPT.
+
+     The secret this used to compare against was a literal committed in three
+     files — here, sms-assistant, and the DB trigger — so it sits in git history
+     on every branch and cannot be un-published. See
+     docs/OCR-SHARED-SECRET-2026-08-15.md.
+
+     Rotating it to a NEW literal would have re-created the same defect with a
+     different string. Instead the secret is being RETIRED: requireStaff already
+     accepts the service key (sms-assistant holds one) and, with allowInternal,
+     an x-internal-secret that Postgres reads from the VAULT at call time via
+     verify_cron_secret — a credential that never exists outside the database.
+     That also collapses one more of this project's competing cron-secret
+     conventions, which is how the CRON_KEY rotation missed three workflows.
+
+     Both are accepted for now because a function deploy and a DB trigger change
+     cannot land atomically. Guarding first would refuse the trigger until the
+     trigger is changed; changing the trigger first would refuse it until this
+     deploys. */
+  const auth = await requireStaff(req, { allowInternal: true, what: 'OCR of an MMS upload' })
+  const legacy = (req.headers.get('x-cron-secret') || '').trim()
+  /* Non-empty check first: an absent header must never equal an absent secret. */
+  const legacyOk = legacy !== '' && legacy === LEGACY_SHARED_SECRET
+  if (!auth.ok && !legacyOk) {
+    console.error('[ocr-mms-upload] REJECTED:', auth.status, auth.msg)
+    return new Response('Forbidden', { status: 403 })
+  }
+  if (legacyOk && !auth.ok) console.warn('[ocr-mms-upload] LEGACY SECRET USED — caller still needs migrating')
 
   let body: any = {}
   try { body = await req.json() } catch { /* ok */ }
