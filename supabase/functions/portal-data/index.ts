@@ -16,6 +16,45 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
  *   longer accepted as identity; see the block comment on the action)
  */
 
+/* ── CALLER SCOPING FOR THE SHOWINGS ACTIONS ───────────────────────────────
+ *
+ * SAY IT PLAINLY: this is NARROWING, not authentication. The portal issues no
+ * session, so nothing in this function can tell a signed-in borrower from
+ * anyone who knows the right uuid or email address. Only the Supabase Auth
+ * migration fixes that — docs/PORTAL-IDENTITY-2026-08-12.md.
+ *
+ * What it DOES buy, today: the write actions below can only touch rows that
+ * match the caller's own portal_user_id or email. The path they replace —
+ * unified-portal.html PATCHing /rest/v1/showings directly with the public anon
+ * key — could touch ANY row, with no identity supplied at all. That is the
+ * difference this makes, and it is worth having on its own.
+ *
+ * IT MATCHES ON EITHER portal_user_id OR email, deliberately. Only 16 of 41
+ * showings carry a portal_user_id; all 41 carry an email. Scoping on
+ * portal_user_id alone would silently make 25 rows unmanageable from the portal,
+ * which is how a security change turns into a support ticket nobody connects
+ * back to it. get_showings already ORs the same two fields.
+ *
+ * BOTH INPUTS ARE VALIDATED BEFORE THEY REACH A FILTER STRING. PostgREST's
+ * `or=` takes a comma-separated expression, so an unvalidated email containing
+ * a comma or a quote would let the caller rewrite the predicate and widen their
+ * own scope. Anything not matching these shapes is refused rather than escaped. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const EMAIL_RE = /^[^\s,"'()]+@[^\s,"'()]+\.[^\s,"'()]+$/;
+
+/* Returns the query narrowed to the caller, or null when no usable identity was
+   supplied — the caller must treat null as a refusal, never as "no filter". */
+function scopeToCaller(q: any, body: any): any | null {
+  const pid = String(body?.portal_user_id || '').trim();
+  const em = String(body?.email || '').toLowerCase().trim();
+  const okPid = pid && UUID_RE.test(pid);
+  const okEm = em && EMAIL_RE.test(em);
+  if (okPid && okEm) return q.or(`portal_user_id.eq.${pid},email.eq."${em}"`);
+  if (okPid) return q.eq('portal_user_id', pid);
+  if (okEm) return q.eq('email', em);
+  return null;
+}
+
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
@@ -446,6 +485,108 @@ Deno.serve(async (req: Request) => {
     }
 
     // ─── GET ANNOTATIONS ─────────────────────────────────────────────────
+    /* ── SHOWING MANAGEMENT FOR THE BORROWER PORTAL ──────────────────────
+     *
+     * These five replace six direct PATCH/GET calls that
+     * public/unified-portal.html made against /rest/v1/showings with the public
+     * anon key. Those calls are why `showings` still grants anon SELECT and
+     * UPDATE: the borrower holds no session, so the borrower IS the anonymous
+     * role, and locking the table while the portal read it directly would have
+     * removed the feature rather than secured it.
+     *
+     * Moving them here is step 1 of two, and the order is the rule this repo
+     * already learned the hard way with email-service: ship the caller, have it
+     * CONFIRMED working, and only then tighten the guard. Step 2 drops
+     * public_update_showings and rewrites public_read_showings.
+     *
+     * EVERY ONE RETURNS THE ROW COUNT IT AFFECTED. A PostgREST write that
+     * matches nothing answers 204, exactly as a successful one does, so a caller
+     * reading only the status cannot tell a refusal from a save — the same trap
+     * that made the anon DELETE probe look like it still worked after the policy
+     * closed it. `updated: 0` is the portal's signal that it changed nothing. */
+
+    // Rows in one batch that the caller owns — replaces the "how many are left"
+    // read at unified-portal.html:2028.
+    if (action === 'get_batch_showings') {
+      const { batch_id } = body;
+      if (!batch_id || !UUID_RE.test(String(batch_id))) return err('valid batch_id required');
+      let q = sb.from('showings').select('id, status, deleted_at, preferred_date, preferred_time')
+        .eq('batch_id', batch_id);
+      const scoped = scopeToCaller(q, body);
+      if (!scoped) return err('portal_user_id or email required');
+      const { data, error } = await scoped;
+      if (error) return err(error.message, 500);
+      const rows = data || [];
+      return ok({ showings: rows, count: rows.length, active: rows.filter((r: any) => !r.deleted_at).length });
+    }
+
+    // Soft-delete ONE showing — unified-portal.html:2022.
+    if (action === 'remove_showing') {
+      const { showing_id } = body;
+      if (!showing_id || !UUID_RE.test(String(showing_id))) return err('valid showing_id required');
+      const now = new Date().toISOString();
+      let q = sb.from('showings').update({ deleted_at: now, updated_at: now }).eq('id', showing_id);
+      const scoped = scopeToCaller(q, body);
+      if (!scoped) return err('portal_user_id or email required');
+      const { data, error } = await scoped.select('id');
+      if (error) return err(error.message, 500);
+      return ok({ success: true, updated: (data || []).length });
+    }
+
+    // Cancel a whole batch — unified-portal.html:2031 and :2084.
+    if (action === 'cancel_batch') {
+      const { batch_id, soft_delete } = body;
+      if (!batch_id || !UUID_RE.test(String(batch_id))) return err('valid batch_id required');
+      const now = new Date().toISOString();
+      const patch: Record<string, unknown> = { status: 'cancelled', updated_at: now };
+      /* :2031 cancels the batch when its last home is removed and leaves the
+         rows visible; :2084 is the borrower cancelling outright and also stamps
+         deleted_at. One action, one explicit flag, rather than two that differ
+         by a field nobody would notice. */
+      if (soft_delete) patch.deleted_at = now;
+      let q = sb.from('showings').update(patch).eq('batch_id', batch_id);
+      const scoped = scopeToCaller(q, body);
+      if (!scoped) return err('portal_user_id or email required');
+      const { data, error } = await scoped.select('id');
+      if (error) return err(error.message, 500);
+      return ok({ success: true, updated: (data || []).length });
+    }
+
+    // Restore a cancelled batch — unified-portal.html:2112.
+    if (action === 'restore_batch') {
+      const { batch_id } = body;
+      if (!batch_id || !UUID_RE.test(String(batch_id))) return err('valid batch_id required');
+      let q = sb.from('showings')
+        .update({ status: 'pending', deleted_at: null, updated_at: new Date().toISOString() })
+        .eq('batch_id', batch_id);
+      const scoped = scopeToCaller(q, body);
+      if (!scoped) return err('portal_user_id or email required');
+      const { data, error } = await scoped.select('id');
+      if (error) return err(error.message, 500);
+      return ok({ success: true, updated: (data || []).length });
+    }
+
+    // Reschedule the live rows in a batch — unified-portal.html:2053.
+    if (action === 'reschedule_batch') {
+      const { batch_id, preferred_date, preferred_time } = body;
+      if (!batch_id || !UUID_RE.test(String(batch_id))) return err('valid batch_id required');
+      if (!preferred_date) return err('preferred_date required');
+      let q = sb.from('showings')
+        .update({
+          preferred_date,
+          preferred_time: preferred_time || null,
+          status: 'pending',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('batch_id', batch_id)
+        .is('deleted_at', null);      // a removed home does not come back by rescheduling
+      const scoped = scopeToCaller(q, body);
+      if (!scoped) return err('portal_user_id or email required');
+      const { data, error } = await scoped.select('id');
+      if (error) return err(error.message, 500);
+      return ok({ success: true, updated: (data || []).length });
+    }
+
     if (action === 'get_annotations') {
       const { document_id } = body;
       if (!document_id) return err('document_id required');

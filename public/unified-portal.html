@@ -2016,22 +2016,51 @@ function _shSb() { return window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsi
 function _shAnon() { return (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || ''; }
 function _shHdrs() { var k = _shAnon(); return {'Content-Type':'application/json','Authorization':'Bearer '+k,'apikey':k}; }
 
+/* THESE ACTIONS GO THROUGH portal-data, NOT /rest/v1/showings.
+   They used to PATCH and GET the table directly with the public anon key, which
+   is the only reason `showings` still grants anon SELECT and UPDATE: a borrower
+   holds no Supabase session, so the borrower IS the anonymous role, and locking
+   the table while this file read it directly would have removed the feature
+   rather than secured it. Step 2 tightens the policy once this is confirmed
+   working — frontend first, the order email-service got wrong.
+
+   portal-data scopes every one of these to the caller's own portal_user_id or
+   email. That is NARROWING, not authentication — nothing can authenticate a
+   portal that issues no session — but the path it replaces supplied no identity
+   at all and could touch any row in the table. */
+function _shIdent() {
+  var u = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : {};
+  return { portal_user_id: u.id || null, email: u.email || null };
+}
+async function _shCall(action, extra) {
+  var body = _shIdent();
+  body.action = action;
+  for (var k in extra) if (Object.prototype.hasOwnProperty.call(extra, k)) body[k] = extra[k];
+  var r = await fetch(_shSb() + '/functions/v1/portal-data', {
+    method: 'POST', headers: _shHdrs(), body: JSON.stringify(body)
+  });
+  var data = null;
+  try { data = await r.json(); } catch (_) { data = null; }
+  if (!r.ok || (data && data.error)) throw new Error((data && data.error) || ('HTTP ' + r.status));
+  return data || {};
+}
+/* A write that matched no row is NOT a success. PostgREST answered 204 whether
+   it changed something or nothing, so the old code could not tell the two apart
+   and always reported success; portal-data returns the affected count instead,
+   and this is where that count gets read. */
+function _shChanged(res, what) {
+  if (!res || !res.updated) throw new Error('Nothing was ' + what + ' — the tour may already have changed. Refresh and try again.');
+  return res.updated;
+}
+
 async function removeShowingProperty(showingId, batchId) {
   if (!confirm('Remove this home from your tour?')) return;
   try {
-    var r = await fetch(_shSb() + '/rest/v1/showings?id=eq.' + showingId, {
-      method:'PATCH', headers: _shHdrs(),
-      body: JSON.stringify({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    // Check remaining
-    var chk = await fetch(_shSb() + '/rest/v1/showings?batch_id=eq.' + batchId + '&deleted_at=is.null&select=id', { headers: _shHdrs() });
-    var remaining = await chk.json();
-    if (!remaining || remaining.length === 0) {
-      await fetch(_shSb() + '/rest/v1/showings?batch_id=eq.' + batchId, {
-        method:'PATCH', headers: _shHdrs(),
-        body: JSON.stringify({ status:'cancelled', updated_at: new Date().toISOString() })
-      });
+    _shChanged(await _shCall('remove_showing', { showing_id: showingId }), 'removed');
+    // Check remaining \u2014 `active` counts only rows still not soft-deleted.
+    var chk = await _shCall('get_batch_showings', { batch_id: batchId });
+    if (!chk.active) {
+      await _shCall('cancel_batch', { batch_id: batchId });
       showToast('Last home removed \u2014 tour cancelled');
     } else {
       showToast('Home removed from your tour');
@@ -2050,11 +2079,9 @@ async function saveEditDate(batchId) {
   var newTime = document.getElementById('newTime-' + batchId).value;
   if (!newDate) { showToast('Please pick a date'); return; }
   try {
-    var r = await fetch(_shSb() + '/rest/v1/showings?batch_id=eq.' + batchId + '&deleted_at=is.null', {
-      method:'PATCH', headers: _shHdrs(),
-      body: JSON.stringify({ preferred_date:newDate, preferred_time:newTime, status:'pending', updated_at: new Date().toISOString() })
-    });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    _shChanged(await _shCall('reschedule_batch', {
+      batch_id: batchId, preferred_date: newDate, preferred_time: newTime
+    }), 'rescheduled');
     // Notify Rene via SMS
     var first = (currentUser && currentUser.first_name) || 'Borrower';
     fetch(_shSb() + '/functions/v1/sms-service', {
@@ -2081,11 +2108,7 @@ async function cancelBatch(batchId) {
   var msg = isConfirmed ? '\u26a0 This tour is confirmed. Cancel anyway? Rene will be notified.' : 'Cancel this showing request?';
   if (!confirm(msg)) return;
   try {
-    var r = await fetch(_shSb() + '/rest/v1/showings?batch_id=eq.' + batchId, {
-      method:'PATCH', headers: _shHdrs(),
-      body: JSON.stringify({ status:'cancelled', deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    _shChanged(await _shCall('cancel_batch', { batch_id: batchId, soft_delete: true }), 'cancelled');
     if (isConfirmed) {
       var first = (currentUser && currentUser.first_name) || 'Borrower';
       fetch(_shSb() + '/functions/v1/sms-service', {
@@ -2109,11 +2132,7 @@ async function cancelBatch(batchId) {
 
 async function restoreBatch(batchId) {
   try {
-    var r = await fetch(_shSb() + '/rest/v1/showings?batch_id=eq.' + batchId, {
-      method:'PATCH', headers: _shHdrs(),
-      body: JSON.stringify({ status:'pending', deleted_at: null, updated_at: new Date().toISOString() })
-    });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    _shChanged(await _shCall('restore_batch', { batch_id: batchId }), 'restored');
     showToast('Tour restored');
     loadShowings();
   } catch(e) { showToast('Error: ' + e.message); }
