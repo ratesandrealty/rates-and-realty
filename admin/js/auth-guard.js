@@ -337,7 +337,7 @@
     function mountStaffChat() {
       if (document.querySelector('script[src*="/admin/js/staff-chat.js"]')) return;
       const sc = document.createElement('script');
-      sc.src = '/admin/js/staff-chat.js?v=f33376a178';
+      sc.src = '/admin/js/staff-chat.js?v=2a8cfafc29';
       document.head.appendChild(sc);
     }
     // Universal help-video ⓘ buttons (window.HelpTopic). Same app-wide, idempotent
@@ -345,7 +345,7 @@
     function mountHelpButton() {
       if (document.querySelector('script[src*="/admin/js/help-button.js"]')) return;
       const hb = document.createElement('script');
-      hb.src = '/admin/js/help-button.js?v=d508339ecc';
+      hb.src = '/admin/js/help-button.js?v=8d39f2c87b';
       document.head.appendChild(hb);
     }
     // Universal task capture (📌 + Ctrl+Shift+K). Same reasoning as the two
@@ -355,7 +355,7 @@
     function mountTaskCapture() {
       if (document.querySelector('script[src*="/admin/js/task-capture.js"]')) return;
       const tc = document.createElement('script');
-      tc.src = '/admin/js/task-capture.js?v=1d09ed5f8d';
+      tc.src = '/admin/js/task-capture.js?v=c1f474defe';
       document.head.appendChild(tc);
     }
     /* One FAB in the bottom-right corner, replacing the two independent floating
@@ -384,7 +384,7 @@
     function mountFnCall() {
       if (window.fnFetch || document.querySelector('script[src*="/admin/js/fn-call.js"]')) return;
       const fc = document.createElement('script');
-      fc.src = '/admin/js/fn-call.js?v=d86ebce3f7';
+      fc.src = '/admin/js/fn-call.js?v=85d03d2a98';
       document.head.appendChild(fc);
     }
     /* attachment-viewer.js — mounted app-wide, EAGERLY, not lazily.
@@ -409,7 +409,7 @@
     function mountAttachmentViewer() {
       if (window.AttachmentViewer || document.querySelector('script[src*="/admin/js/attachment-viewer.js"]')) return;
       const av = document.createElement('script');
-      av.src = '/admin/js/attachment-viewer.js?v=3621b4d231';
+      av.src = '/admin/js/attachment-viewer.js?v=e8f2b14c9f';
       document.head.appendChild(av);
     }
     /* One clock, app-wide: window.RRTime renders every business timestamp in
@@ -420,7 +420,7 @@
     function mountRRTime() {
       if (window.RRTime || document.querySelector('script[src*="/admin/js/rr-time.js"]')) return;
       const rt = document.createElement('script');
-      rt.src = '/admin/js/rr-time.js?v=99a4c33576';
+      rt.src = '/admin/js/rr-time.js?v=7f96fd2d69';
       document.head.appendChild(rt);
     }
     /* One phone helper, app-wide, for the same reason as RRTime: four separate
@@ -432,7 +432,7 @@
     function mountRRPhone() {
       if (window.RRPhone || document.querySelector('script[src*="/admin/js/rr-phone.js"]')) return;
       const rp = document.createElement('script');
-      rp.src = '/admin/js/rr-phone.js?v=6e1859ee09';
+      rp.src = '/admin/js/rr-phone.js?v=044d32fd52';
       document.head.appendChild(rp);
     }
     /* The dialer — modal + Twilio.Device — app-wide, so the FAB's Call row has
@@ -441,13 +441,13 @@
     function mountDialer() {
       if (window._rrDialerLoaded || document.querySelector('script[src*="/admin/js/dialer.js"]')) return;
       const dl = document.createElement('script');
-      dl.src = '/admin/js/dialer.js?v=cf4b1032f5';
+      dl.src = '/admin/js/dialer.js?v=0cefcb0375';
       document.head.appendChild(dl);
     }
     function mountActionFab() {
       if (document.querySelector('script[src*="/admin/js/action-fab.js"]')) return;
       const af = document.createElement('script');
-      af.src = '/admin/js/action-fab.js?v=2d1b99b251';
+      af.src = '/admin/js/action-fab.js?v=29b3a995e5';
       document.head.appendChild(af);
     }
     if (document.readyState === 'loading') {
