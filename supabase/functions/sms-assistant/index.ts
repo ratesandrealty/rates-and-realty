@@ -48,7 +48,11 @@ const GOOGLE_TOKEN_ROW_ID = "rene";
  * (2026-07-09) opened a page with no contact. beta is fine — it 302s to the
  * admin host preserving the query — the parameter name was the whole bug. */
 const ADMIN_LEAD_URL_BASE = "https://beta.ratesandrealty.com/admin/lead-detail.html?contact_id=";
-const OCR_CRON_SECRET = "rr-cron-2026-x7k3m9pq2r5tw8z4y6h8b3n1";
+/* OCR_CRON_SECRET deleted 2026-08-15. It was a literal committed here, in
+   ocr-mms-upload and in the DB trigger. This caller does not need a bespoke
+   secret at all: it already holds SERVICE_KEY, and requireStaff accepts the
+   service key in either header. One fewer credential, and nothing new to
+   rotate. docs/OCR-SHARED-SECRET-2026-08-15.md */
 /* KEYS, not labels. See DOC_TYPES below for why this changed. */
 const OCR_DOC_TYPES = ["pay_stubs", "w2", "bank_statements", "tax_returns"]; // only these trigger ocr-mms-upload
 const CLICKUP_TODO_LIST_ID = Deno.env.get("CLICKUP_LIST_ID_TODO") || "901708416155";
@@ -1079,7 +1083,7 @@ async function saveBorrowerDocument(
       if (error) throw new Error("doc insert: " + error.message);
       let ocr = false;
       if (OCR_DOC_TYPES.includes(typeLabel)) {
-        try { await fetch(`${SUPABASE_URL}/functions/v1/ocr-mms-upload`, { method: "POST", headers: { "Content-Type": "application/json", "x-cron-secret": OCR_CRON_SECRET }, body: JSON.stringify({ uploaded_document_id: ins.id }) }); ocr = true; }
+        try { await fetch(`${SUPABASE_URL}/functions/v1/ocr-mms-upload`, { method: "POST", headers: { "Content-Type": "application/json", "apikey": SERVICE_KEY, "Authorization": `Bearer ${SERVICE_KEY}` }, body: JSON.stringify({ uploaded_document_id: ins.id }) }); ocr = true; }
         catch (e) { console.error("[doc] ocr trigger failed", e); }
       }
       files.push({ uploaded_id: ins.id, file_name: safe, document_type: typeLabel, loan_stage: loanStage, ocr, pages: g.pages });
