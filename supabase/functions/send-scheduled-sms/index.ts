@@ -24,20 +24,42 @@ function formatPhone(phone: string) {
   return phone && phone.startsWith('+') ? phone : `+${d}`
 }
 
-async function sendSMS(to: string, body: string, mediaUrl?: string | null) {
-  if (!TWILIO_SID || !TWILIO_TOKEN) return { sent: false, error: 'Twilio not configured' }
+/* ROUTED THROUGH sms-service (2026-08-15). Was a direct Twilio POST, so
+ * quietHours() was never evaluated for it — see
+ * docs/SMS-BYPASSES-QUIET-HOURS-2026-08-15.md. This is the highest-exposure of
+ * the seven: job 39 runs EVERY MINUTE and the whole point of the feature is
+ * sending at a time somebody chose earlier, with nothing stopping that being
+ * 3am.
+ *
+ * NO BYPASS, deliberately. These are staff-composed outbound messages to
+ * borrowers — precisely the traffic the rule exists for. If a send from here
+ * ever needs a bypass, the right response is to question the send.
+ *
+ * existing_log_id is what keeps the "no duplicate log" property: the row being
+ * drained is ALREADY in sms_log at status=scheduled, so sms-service updates it
+ * in place instead of inserting a second row. Without it every scheduled text
+ * would appear twice in the composer history.
+ */
+async function sendSMS(to: string, body: string, mediaUrl: string | null | undefined, logId: string) {
   try {
-    const form: Record<string, string> = { To: formatPhone(to), From: FROM_NUMBER, Body: body }
-    if (mediaUrl) form.MediaUrl = mediaUrl
-    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`, {
-      method: 'POST',
-      headers: { 'Authorization': 'Basic ' + btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`), 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(form)
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/sms-service`, {
+      method: 'POST', headers: svc(),
+      body: JSON.stringify({
+        trigger: 'scheduled_send',
+        to_phone: formatPhone(to),
+        params: { message: body },
+        from_phone: FROM_NUMBER,
+        media_url: mediaUrl || undefined,
+        existing_log_id: logId,
+      }),
     })
-    const data = await res.json()
-    return res.ok && data.sid ? { sent: true, sid: data.sid } : { sent: false, error: data.message || data.code || 'Twilio error' }
+    const data = await res.json().catch(() => ({}))
+    if (data?.sent) return { sent: true, sid: data.sid }
+    return { sent: false, error: data?.error || `sms-service ${res.status}`,
+             quietHours: data?.blocked_quiet_hours === true }
   } catch (e: any) { return { sent: false, error: e.message } }
 }
+
 
 serve(async (req) => {
   /* ── GUARD ────────────────────────────────────────────────────────────────
@@ -123,11 +145,36 @@ serve(async (req) => {
         summary.blocked = (summary.blocked || 0) + 1
         continue
       }
-      const result = await sendSMS(row.to_phone, row.body, row.media_url)
+      const result = await sendSMS(row.to_phone, row.body, row.media_url, row.id)
+      /* A message quiet hours refuses is DEFERRED, not dropped. It stays at
+         status='scheduled' so the next tick after the window opens sends it —
+         a text somebody scheduled for 3am arriving at 8am is the intended
+         meaning of the rule, whereas parking it at 'failed' would silently
+         throw away a message a human wrote and expected to go out. sms-service
+         has already updated the row's error_message with the reason, so the
+         wait is visible rather than looking like a stuck queue. */
+      if (result.quietHours) {
+        /* sms-service holds existing_log_id, so it has already stamped this row
+           'blocked' on its way out. Put it back to 'scheduled' — otherwise the
+           deferral is indistinguishable from a dropped message and the next
+           tick would never pick it up again. The reason stays in error_message
+           so the wait is visible rather than looking like a stuck queue. */
+        await fetch(rest(`sms_log?id=eq.${row.id}`), {
+          method: 'PATCH', headers: { ...svc(), Prefer: 'return=minimal' },
+          body: JSON.stringify({ status: 'scheduled',
+            error_message: `deferred by quiet hours: ${(result.error || '').slice(0, 200)}` })
+        })
+        summary.deferred = (summary.deferred || 0) + 1
+        continue
+      }
+      /* sms-service owns the row now (existing_log_id), so the drain patches
+         only what sms-service does not: nothing on success. The patch below
+         remains for transport failures it cannot see, e.g. the fetch itself
+         throwing before sms-service was reached. */
       const patch = result.sent
-        ? { status: 'sent', twilio_sid: result.sid, sent_at: new Date().toISOString() }
+        ? null
         : { status: 'failed', error_message: (result.error || 'unknown').slice(0, 300) }
-      await fetch(rest(`sms_log?id=eq.${row.id}`), {
+      if (patch) await fetch(rest(`sms_log?id=eq.${row.id}`), {
         method: 'PATCH', headers: { ...svc(), Prefer: 'return=minimal' }, body: JSON.stringify(patch)
       })
       if (result.sent) summary.sent++; else { summary.failed++; summary.errors.push(`${row.id}: ${result.error}`) }
