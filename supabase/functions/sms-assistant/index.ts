@@ -241,7 +241,7 @@ async function sendSms(to: string, body: string, testMode = false): Promise<{ si
    * quietHours() was never evaluated for it — see
    * docs/SMS-BYPASSES-QUIET-HOURS-2026-08-15.md.
    *
-   * bypass = 'staff_message', and this is a CORRECTION to that doc, which
+   * bypass = 'staff_alert', and this is a CORRECTION to that doc, which
    * listed sms-assistant under 'user_initiated' on the strength of its shape:
    * it is a reply, so the recipient must have just texted us. True, but the
    * weaker claim. `to` here is always `fromPhone`, and the turn cannot reach
@@ -250,6 +250,13 @@ async function sendSms(to: string, body: string, testMode = false): Promise<{ si
    * recipient is not merely someone who acted a moment ago, it is verified
    * STAFF, and TCPA does not reach it. That property is enforced by the
    * function rather than assumed from the message shape.
+   *
+   * NOT 'staff_message': that reason is defined as staff-to-STAFF — one human
+   * texting another through admin/js/staff-chat.js. This is a bot replying to a
+   * staff member. The property that actually carries the exemption is the same
+   * one gdrive-health-monitor relies on: the recipient is staff, so TCPA does
+   * not reach it. Picking the label by vibe rather than by its definition is
+   * how a closed set quietly stops meaning anything.
    *
    * The 888 assistant line is passed through as from_phone. Without it these
    * replies would arrive from the 866 lead lane, which is a different
@@ -272,7 +279,7 @@ async function routeToSmsService(to: string, message: string, dryRun: boolean): 
         to_phone: to,
         params: { message },
         from_phone: SMS_ASSISTANT_FROM_NUMBER,
-        quiet_hours_bypass: "staff_message",
+        quiet_hours_bypass: "staff_alert",
         ...(dryRun ? { dry_run: true } : {}),
       }),
     });

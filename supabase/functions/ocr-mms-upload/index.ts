@@ -195,23 +195,40 @@ serve(async (req) => {
   let twilioSent = false
   let twilioError: string | null = null
   if (summary) {
-    const twilioSid = Deno.env.get('TWILIO_ACCOUNT_SID') || ''
-    const twilioToken = Deno.env.get('TWILIO_AUTH_TOKEN') || ''
     const fromNumber = Deno.env.get('SMS_ASSISTANT_FROM_NUMBER') || Deno.env.get('TWILIO_PHONE_NUMBER') || ''
     const toPhone = (Deno.env.get('AUTHORIZED_PHONES') || '').split(',').map(s => s.trim()).filter(Boolean)[0]
-    if (twilioSid && twilioToken && fromNumber && toPhone) {
+    /* Twilio credentials are no longer read here; sms-service holds them. Left
+       in the condition they would have gated a routed send on an env var this
+       path no longer touches, and reported 'twilio_creds_missing' for a send
+       that was fine. */
+    if (fromNumber && toPhone) {
       try {
-        const params = new URLSearchParams()
-        params.set('To', toPhone); params.set('From', fromNumber); params.set('Body', summary.slice(0, SMS_MAX))
-        const auth = btoa(`${twilioSid}:${twilioToken}`)
-        const twResp = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`, {
-          method: 'POST', headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: params.toString(),
+        /* ROUTED THROUGH sms-service (2026-08-15). Was a direct Twilio POST,
+           so quietHours() was never evaluated for it — see
+           docs/SMS-BYPASSES-QUIET-HOURS-2026-08-15.md.
+
+           bypass = 'staff_alert'. `toPhone` is AUTHORIZED_PHONES[0], i.e. Rene:
+           this is the summary of a document HE just MMS'd in, sent back to him.
+           The doc listed this function under 'user_initiated' on the strength
+           of that reply shape, which is true but weaker — the recipient is read
+           from a staff env var and can never be a borrower.
+
+           SMS_ASSISTANT_FROM_NUMBER is passed through so the summary stays on
+           the same thread as the MMS it answers. */
+        const twResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/sms-service`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json',
+                     'apikey': Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '',
+                     'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''}` },
+          body: JSON.stringify({ trigger: 'mms_upload_ack', to_phone: toPhone,
+                                 params: { message: summary.slice(0, SMS_MAX) },
+                                 from_phone: fromNumber, quiet_hours_bypass: 'staff_alert' }),
         })
-        if (twResp.ok) twilioSent = true
-        else { twilioError = `twilio_${twResp.status}`; console.error('[ocr] twilio:', twResp.status) }
+        const twData = await twResp.json().catch(() => ({}))
+        if (twResp.ok && (twData as { sent?: boolean }).sent) twilioSent = true
+        else { twilioError = (twData as { error?: string }).error || `sms_service_${twResp.status}`; console.error('[ocr] sms-service:', twilioError) }
       } catch (err) { twilioError = (err as Error).message }
-    } else twilioError = 'twilio_creds_missing'
+    } else twilioError = 'sms_from_or_to_missing'
   }
 
   return new Response(JSON.stringify({

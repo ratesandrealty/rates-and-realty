@@ -335,7 +335,11 @@ async function handleSingleSMS(trigger:string,to_phone:string,params:any,ids:{co
                 and "allowed only because a bypass carried it" are different
                 facts and a rehearsal that shows only the first hides the one
                 worth checking. */
-             quiet_hours: { in_window: qh.allowed, bypass: bypass || null,
+             /* `known:false` means the area code is not in area_code_timezones,
+                so the send was ALLOWED WITHOUT BEING CHECKED — deliberately, but
+                a reader seeing in_window:true would otherwise conclude the
+                recipient's local time had been examined and found fine. */
+             quiet_hours: { in_window: qh.allowed, known: qh.known, bypass: bypass || null,
                             enforcing, area_code: qh.areaCode ?? null, tz: qh.tz ?? null,
                             evaluated_at: simulatedAt ? simulatedAt.toISOString() + ' (SIMULATED)' : 'now' } };
   }
