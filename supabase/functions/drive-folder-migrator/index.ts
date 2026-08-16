@@ -1,13 +1,13 @@
 // drive-folder-migrator v1 (one-off)
 // Moves every contacts.gdrive_folder_id into the Borrowers parent folder
 // (11OLUA6Fu3tNrzWP8O1v_pFjl-UGbzos6). Idempotent: skips folders already there.
-// Auth: x-cron-secret header (shared secret reused from proactive-followups cron).
+// Auth: requireStaff(allowInternal) since 2026-08-15. See the guard below.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireStaff } from '../_shared/require-staff.ts'
 
 const PARENT_ID = '11OLUA6Fu3tNrzWP8O1v_pFjl-UGbzos6'
-const SHARED_SECRET = 'rr-cron-2026-x7k3m9pq2r5tw8z4y6h8b3n1'
 const GOOGLE_TOKEN_ROW_ID = 'rene'
 
 async function getDriveAccessToken(sb: any): Promise<string | null> {
@@ -46,8 +46,26 @@ async function getDriveAccessToken(sb: any): Promise<string | null> {
 
 serve(async (req) => {
   const url = new URL(req.url)
-  const secret = req.headers.get('x-cron-secret') || url.searchParams.get('secret') || ''
-  if (secret !== SHARED_SECRET) return new Response('Forbidden', { status: 403 })
+  /* Was guarded by the SAME literal shared secret as ocr-mms-upload, and also
+     accepted it as a `?secret=` QUERY PARAMETER. Retired 2026-08-15 —
+     docs/OCR-SHARED-SECRET-2026-08-15.md.
+
+     This one was found only because the retirement ended with a repo-wide grep
+     for the string. Fixing the credential in the function that surfaced it
+     would have left the same value opening this one, so the value would not
+     have been retired at all — just relocated out of sight.
+
+     It matters more here than the 'one-off' header suggests: this walks every
+     contacts.gdrive_folder_id and MOVES the folder. Anybody holding a string
+     that is in git history could re-parent every borrower's Drive folder.
+
+     No caller exists — repo, pg_proc, cron.job and n8n all checked — so there
+     was nothing to migrate first. */
+  const auth = await requireStaff(req, { allowInternal: true, what: 'Migrating Drive folders' })
+  if (!auth.ok) {
+    console.error('[drive-folder-migrator] REJECTED:', auth.status, auth.msg)
+    return new Response('Forbidden', { status: 403 })
+  }
   const dryRun = url.searchParams.get('dry_run') === 'true'
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
