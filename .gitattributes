@@ -1,3 +1,31 @@
+# SERVED ASSETS ARE BYTE-SENSITIVE. Their `?v=` pin is a content hash of exactly
+# the bytes the Worker ships, and src/worker.js serves a pinned URL
+# `immutable` for a year. So the deployed bytes must not depend on WHO ran the
+# deploy — and without a rule here they do.
+#
+# core.autocrlf=true gives a Windows checkout a CRLF working tree. `wrangler
+# deploy` uploads the working tree, so the same commit ships CRLF from one
+# machine and LF from another. The content is identical either way; the HASH is
+# not. Measured on 2026-08-16: `stamp-assets --check` reported 100 stale pins on
+# a Windows checkout when every pin was correct for the bytes production was
+# actually serving, and restamping there rewrote all 100 to CRLF digests. A
+# deploy from an LF machine would have flipped all 100 straight back. That is a
+# churn loop with no fixed point, and it makes the pin check — the thing standing
+# between a changed file and a year of stale cache — untrustworthy in both
+# directions: it cries stale when nothing changed, so the next person learns to
+# restamp reflexively without reading what moved.
+#
+# Pinning these to LF makes the deployed bytes a property of the commit alone.
+# LF rather than CRLF because that is what the repo blobs already hold and what
+# production already serves for most of these files.
+*.html   text eol=lf
+*.js     text eol=lf
+*.mjs    text eol=lf
+*.css    text eol=lf
+*.svg    text eol=lf
+*.json   text eol=lf
+*.map    text eol=lf
+
 # Vendored third-party libraries are byte-pinned.
 #
 # These files are loaded in the browser with a Subresource Integrity (SRI) hash. Git's
@@ -5,4 +33,9 @@
 # SRI check — the browser would then refuse to execute the script. For DOMPurify that would
 # silently disable the inbox composer (sanitize() throws when it is missing), so keep these
 # byte-identical to what the SRI hash in the HTML was computed against.
+#
+# LAST ON PURPOSE: git applies the final matching rule, so this must sit below the
+# `*.js text eol=lf` line above or vendored bytes would be normalised along with
+# everything else and the SRI hashes would break — the exact failure this rule
+# was written to prevent.
 admin/js/vendor/** -text
