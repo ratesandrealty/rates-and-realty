@@ -13938,6 +13938,31 @@ async function _voeSendTestCopy(st){
   showToast('Test copy sent to ' + me + ' — HR was not contacted ✓');
 }
 
+/* The "send without a signed borrower authorization?" gate.
+ *
+ * EXTRACTED FROM _voeComposerSend SO IT CAN BE EXERCISED. It used to be a bare
+ * confirm() inlined in a 200-line function, and on 2026-08-17 a VOE send stopped
+ * there and left NO trace: no toast, no console line, no email_log row, no
+ * network call. It was only established afterwards, by reading edge logs and
+ * finding voe-form-fill 200 twice with no gmail-inbox POST after it, that this
+ * is where it went. A silent refusal and a broken feature look identical.
+ *
+ * DECLINING NOW SAYS SO ON SCREEN. Every other exit from the send path toasts;
+ * this one did not, and it is the one most likely to be hit by accident —
+ * because Chrome offers "prevent this page from creating additional dialogs"
+ * after repeated prompts, and a SUPPRESSED confirm() returns false with no
+ * dialog shown at all. The user declines something they were never asked.
+ *
+ * Returns true to proceed. See the render-check spec
+ * "VOE declining the no-auth prompt says so, VISIBLY" — it stubs confirm() to
+ * return false with the composer open and asserts the toast is both present and
+ * painted above the modal, because this page has already shipped a toast that
+ * fired correctly and rendered underneath an overlay. */
+function _voeConfirmNoAuth(){
+  if(confirm('No signed borrower authorization is on file for this borrower. Send the VOE request without it?')) return true;
+  showToast('VOE not sent — no signed borrower authorization on file, and you chose not to send without it.', true);
+  return false;
+}
 async function _voeComposerSend(st){
   const cid=st.cid, k=st.k;
   const to=(getChipEmails('toChips')[0]||'').trim();
@@ -13994,7 +14019,7 @@ async function _voeComposerSend(st){
       if(!attachments) attachments=[];
       attachments.push(await _lpAttachToStorage(_lpB64FromBuf(pbuf), 'Borrower_Authorization_signed.pdf', 'application/pdf'));
     } else if(auth && auth.found===false){
-      if(!confirm('No signed borrower authorization is on file for this borrower. Send the VOE request without it?')){ restore(); return; }
+      if(!_voeConfirmNoAuth()){ restore(); return; }
     }
   }catch(be){
     restore();

@@ -734,6 +734,73 @@ const SPECS = [
     ],
   },
   {
+    /* THE SILENT ABORT, AS A TEST.
+     *
+     * On 2026-08-17 a VOE send stopped at the "no signed borrower authorization"
+     * confirm() and left nothing behind — no toast, no console line, no
+     * email_log row, no network call. Where it stopped was established
+     * afterwards from edge logs (voe-form-fill 200 twice, no gmail-inbox POST),
+     * not from anything the page said.
+     *
+     * The decline now toasts. This asserts the toast is REACHED, POPULATED and
+     * PAINTED ON TOP, because this page has already shipped a toast that fired
+     * correctly and rendered underneath an overlay — see the LOE spec above.
+     *
+     * The composer is opened first ON PURPOSE. Without a modal present the
+     * stacking assertion passes trivially, and the real decline always happens
+     * with the composer open. Eval 2 asserts the modal is genuinely there and
+     * has size, so "toast on top" cannot pass vacuously. */
+    name: 'VOE declining the no-auth prompt says so, VISIBLY',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      // 1. Open the real composer, make confirm() DECLINE, run the real guard.
+      ['(async () => {'
+        + 'await openEmailComposer({to:"zz-test.fixture@example.invalid",subject:"ZZ-TEST VOE",bodyHtml:"<p>x</p>",title:"VOE"});'
+        + 'window.confirm = function(){ return false; };'
+        + 'return String(_voeConfirmNoAuth());})()',
+       'false'],
+      // 2. The modal really is open and has area — or eval 5 proves nothing.
+      ['(function(){var o=document.getElementById("ecOverlay");if(!o)return "composer missing";'
+        + 'var s=getComputedStyle(o),b=o.getBoundingClientRect();'
+        + 'return (s.display!=="none"&&b.width>0&&b.height>0)?"composer open":"composer not rendered";})()',
+       'composer open'],
+      // 3. The words.
+      ['document.getElementById("ld-toast").textContent',
+       'VOE not sent — no signed borrower authorization on file, and you chose not to send without it.'],
+      /* 4. SHOWN, not merely populated. .ld-toast is opacity:0 until .show is
+            added, so a textContent assertion alone passes on a toast nobody can
+            see — the exact defect this spec exists to catch. */
+      ['(function(){var t=document.getElementById("ld-toast"),s=getComputedStyle(t);'
+        + 'return (t.classList.contains("show")&&parseFloat(s.opacity)>0.9)'
+        + '?"visible":("show="+t.classList.contains("show")+" opacity="+s.opacity);})()',
+       'visible'],
+      // 5. Painted above the composer. Stacking, not hit-testing — see LOE spec.
+      ['(function(){'
+        + 'var t=document.getElementById("ld-toast"),r=t.getBoundingClientRect();'
+        + 'var cx=r.left+r.width/2,cy=r.top+r.height/2;'
+        + 'var tz=parseInt(getComputedStyle(t).zIndex,10)||0;'
+        + 'var bad=Array.prototype.slice.call(document.querySelectorAll("body > *")).filter(function(e){'
+        + 'if(e===t||t.contains(e))return false;var s=getComputedStyle(e);'
+        + 'if(s.display==="none"||s.visibility==="hidden"||s.position==="static")return false;'
+        + 'var b=e.getBoundingClientRect();'
+        + 'if(!(b.left<=cx&&b.right>=cx&&b.top<=cy&&b.bottom>=cy))return false;'
+        + 'return (parseInt(s.zIndex,10)||0)>=tz;'
+        + '}).map(function(e){return (e.id||e.tagName)+":"+getComputedStyle(e).zIndex;});'
+        + 'return bad.length?"COVERED BY "+bad.join(", "):"toast on top";})()',
+       'toast on top'],
+      /* 6-7. THE PAIRING. Everything above would also pass if the guard toasted
+         unconditionally — which would be a different bug, warning about a
+         missing authorization on every send. Clear the toast, ACCEPT the prompt,
+         and assert the guard returns true having said nothing. */
+      ['(function(){var t=document.getElementById("ld-toast");t.textContent="";'
+        + 't.className="ld-toast";window.confirm=function(){return true;};'
+        + 'return String(_voeConfirmNoAuth());})()',
+       'true'],
+      ['document.getElementById("ld-toast").textContent', ''],
+    ],
+  },
+  {
     /* The e-sign workspace's Send is legitimately disabled with no signer, and
      * that is fine — what was not fine is that it said nothing, so a refusal
      * and a dead button looked identical. Assert the reason is ON SCREEN and
