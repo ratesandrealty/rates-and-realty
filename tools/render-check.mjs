@@ -908,7 +908,7 @@ const SPECS = [
       [`(function(){
           if (typeof lpRenderOrders === 'function') { try { lpRenderOrders(); } catch (e) {} }
           if (!document.getElementById('lpHoiQuotes')) return 'HARNESS: #lpHoiQuotes never mounted';
-          if (typeof _lpHoiRepliesHtml !== 'function') return 'HARNESS: _lpHoiRepliesHtml missing';
+          if (typeof _lpHoiActivityHtml !== 'function') return 'HARNESS: _lpHoiActivityHtml missing';
 
           var A = 'aaaaaaaa-0000-0000-0000-000000000001';
           var B = 'bbbbbbbb-0000-0000-0000-000000000002';
