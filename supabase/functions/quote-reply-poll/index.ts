@@ -201,7 +201,16 @@ serve(async (req) => {
         continue
       }
 
-      const ins = await fetch(`${SUPABASE_URL}/rest/v1/quote_reply_log`, {
+      /* on_conflict=gmail_message_id is REQUIRED, not decoration. Without it
+         PostgREST applies resolution=ignore-duplicates to the PRIMARY KEY, and
+         id defaults to a fresh uuid every call — so there is never a PK conflict
+         to ignore, the insert proceeds, and it dies on the UNIQUE index instead.
+         Measured before the fix: a re-poll of five already-recorded messages
+         reported recorded:0 duplicate:0, because every one of them took the
+         error branch. The table stayed correct — the constraint held — but the
+         poller was erroring where it believed it was no-oping, which is the
+         worse failure of the two: idempotency that works by accident. */
+      const ins = await fetch(`${SUPABASE_URL}/rest/v1/quote_reply_log?on_conflict=gmail_message_id`, {
         method: 'POST',
         headers: { ...svcHeaders(), Prefer: 'resolution=ignore-duplicates,return=representation' },
         body: JSON.stringify(row),
