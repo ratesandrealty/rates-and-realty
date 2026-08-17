@@ -1019,6 +1019,49 @@ const SPECS = [
     ],
   },
   {
+    /* Follow up must SAY whether it replies or starts a new thread.
+     *
+     * Only 1 of 23 orders carries a gmail_thread_id, so for almost every order
+     * this button can only start a new email. Doing that silently is the
+     * failure: the vendor sees an unrelated message and their reply comes back
+     * uncorrelated, which is the thing the whole threading effort removes. */
+    name: 'VOE follow-up states whether it threads or starts new',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          if (typeof lpRenderOrders === 'function') { try { lpRenderOrders(); } catch (e) {} }
+          if (!document.getElementById('lpVoeCards')) return 'HARNESS: #lpVoeCards never mounted';
+          if (typeof lpVoeFollowUp !== 'function') return 'HARNESS: lpVoeFollowUp missing';
+          _lpVoes = [
+            { key: 't1', id: 'aaaaaaaa-0000-0000-0000-0000000000c1', status: 'ordered',
+              employer_name: 'Threaded', hr_contact_email: 'hr@example.invalid',
+              gmail_thread_id: '1a00e85953bfa75a', rfc_message_id: '<x@mail.gmail.com>' },
+            { key: 't2', id: 'bbbbbbbb-0000-0000-0000-0000000000c2', status: 'ordered',
+              employer_name: 'Unthreaded', hr_contact_email: 'hr2@example.invalid',
+              gmail_thread_id: null, rfc_message_id: null }
+          ];
+          _lpVoeOpen = { t1: true, t2: true };
+          lpRenderVoe();
+          var b1 = document.getElementById('lpVoeBody-t1');
+          var b2 = document.getElementById('lpVoeBody-t2');
+          if (!b1 || !b2) return 'HARNESS: fixture cards did not render';
+          var threadedSays = /replies in the original thread/.test(b1.innerText);
+          var newSays      = /starts a NEW email/.test(b2.innerText);
+          /* Neither card may claim the other's behaviour. textContent, so a
+             collapsed card cannot pass this vacuously. */
+          var crossed = /starts a NEW email/.test(b1.textContent)
+                     || /replies in the original thread/.test(b2.textContent);
+          // Both must still offer the action.
+          var buttons = b1.innerText.indexOf('Follow up by email') >= 0
+                     && b2.innerText.indexOf('Follow up by email') >= 0;
+          return 'threaded=' + threadedSays + ' new=' + newSays
+               + ' crossed=' + crossed + ' buttons=' + buttons;
+        })()`,
+       'threaded=true new=true crossed=false buttons=true'],
+    ],
+  },
+  {
     /* The e-sign workspace's Send is legitimately disabled with no signer, and
      * that is fine — what was not fine is that it said nothing, so a refusal
      * and a dead button looked identical. Assert the reason is ON SCREEN and

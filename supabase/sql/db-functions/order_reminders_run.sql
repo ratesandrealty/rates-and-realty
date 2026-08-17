@@ -10,29 +10,15 @@ CREATE OR REPLACE FUNCTION public.order_reminders_run(p_interval_days integer DE
 AS $function$
 declare
   r record; v_task uuid; v_title text; v_last timestamptz;
-  v_has_evidence boolean; v_note text; v_due timestamp; v_day date;
+  v_has_evidence boolean; v_note text; v_due timestamp; v_day date; v_doc text;
 begin
-  /* ── THE DUE DATE, AND WHY IT IS NOT TODAY ───────────────────────────────
-   * This was `(now() at time zone 'America/Los_Angeles')::date` — midnight
-   * TODAY — so every reminder raised here was past due the moment it existed.
-   * 22 of the 28 born-overdue rows in `tasks` came from this line, 9 still
-   * open. A nudge built on that data alerts on tasks that were never late.
-   *
-   * NEXT BUSINESS DAY at 17:00 UTC (10:00 Pacific):
-   *   - next business day, not same-day-EOB: this only fires once an order has
-   *     already sat >= p_interval_days, so a same-evening due date is red
-   *     within hours, which is how it became noise.
-   *   - weekends skipped. loan-date-nudges (pg_cron 38) runs daily including
-   *     Saturday, so "tomorrow" on a Friday lands on a day nobody works.
-   *   - 17:00 UTC, not Pacific-local. tasks.due_date is `timestamp WITHOUT
-   *     time zone` and every other producer writes UTC into it — 198 of the
-   *     228 dated rows sit at 17:00Z from clickup-auto-create via the bridge.
-   *     This function was the one writer using a different convention, which
-   *     is why the column looked mixed.
-   *   - uniform across order types on purpose. Urgency is already carried by
-   *     `priority` below (voe/payoff = high); encoding it twice is how two
-   *     places drift, and per-kind SLAs would mean inventing numbers nobody
-   *     has stated.
+  /* THE DUE DATE, AND WHY IT IS NOT TODAY.
+   * This was (now() at time zone 'America/Los_Angeles')::date - midnight TODAY -
+   * so every reminder raised here was past due the moment it existed. 22 of the
+   * 28 born-overdue rows in tasks came from this line, 9 still open.
+   * NEXT BUSINESS DAY at 17:00 UTC (10:00 Pacific); weekends skipped because
+   * loan-date-nudges runs Saturdays; 17:00 UTC because tasks.due_date is
+   * timestamp WITHOUT time zone and every other producer writes UTC into it.
    * isodow: Mon=1 .. Sat=6, Sun=7. */
   v_day := (now() at time zone 'UTC')::date + 1;
   v_day := v_day + case extract(isodow from v_day) when 6 then 2 when 7 then 1 else 0 end;
@@ -47,10 +33,8 @@ begin
     where coalesce(o.status,'') not in ('received','not_required','cancelled','complete','completed')
   loop
     /* EVIDENCE OF DELIVERY, before the duplicate check so the order is annotated
-       even when a reminder already exists.
-       Only for a VOE that CLAIMS to be placed — 'ordered' or 'acknowledged'. A
-       'not_ordered' row is not contradicting itself and needs no note.
-       NOT a hard block: phone, fax and portal deliveries are legitimate. */
+       even when a reminder already exists. Only for a VOE that CLAIMS to be
+       placed. NOT a hard block: phone, fax and portal deliveries are legitimate. */
     if r.order_type = 'voe' and coalesce(r.status,'') in ('ordered','acknowledged') then
       v_has_evidence :=
            exists (select 1 from email_log e
@@ -67,13 +51,6 @@ begin
                || coalesce(r.hr_contact_email,'the HR contact')
                || '. No successful send is recorded and nothing notes another channel. '
                || 'Re-send it, or add a note saying how it was delivered, and reminders resume.';
-        /* reminder_note, NOT revision_note. Its own column since 20260817l, so
-           the notice never competes with what a human wrote and is never
-           rendered into an editable box. The old guard — write only when the
-           field is empty or already a suppression notice — existed solely to
-           avoid clobbering a human note in a shared field; with a dedicated
-           column there is nothing to protect, so the notice is refreshed every
-           run and its date now means "last checked" rather than "first seen". */
         update loan_orders
            set reminder_note = v_note,
                updated_at = now()
@@ -83,6 +60,30 @@ begin
         return next;
         continue;
       end if;
+    end if;
+
+    /* WHAT THE REPLIES SAY - two conditions `status` cannot express.
+       order_document_status returns no_reply | document | no_document | unknown.
+
+       'document'    the thing we were chasing arrived, so STOP reminding. Our own
+                     form coming back on reply-all does NOT count as one - that is
+                     the case that would otherwise close a VOE nobody filled in.
+       'no_document' they replied and we DID capture the attachments and nothing
+                     qualifies. Worth a different nudge: chasing "no response" when
+                     they have in fact responded reads as not having looked.
+       'unknown'     a reply exists but its attachment metadata was never captured.
+                     Falls through to the ORDINARY reminder deliberately. The order
+                     is genuinely still outstanding, so a nudge is right - but it
+                     must not assert the vendor attached nothing, because we do not
+                     know that. Same discipline as the suppression notice.
+       'no_reply'    unchanged behaviour. */
+    v_doc := public.order_document_status(r.id);
+
+    if v_doc = 'document' then
+      order_id := r.id; order_type := r.order_type; task_id := null;
+      reason := 'SATISFIED - a reply carried a document, no reminder needed';
+      return next;
+      continue;
     end if;
 
     if exists (select 1 from tasks t
@@ -97,18 +98,26 @@ begin
       continue;
     end if;
 
-    v_title := upper(r.order_type) || ' still outstanding - ' || r.who
+    v_title := case when v_doc = 'no_document'
+                    then upper(r.order_type) || ' replied, no document - ' || r.who
+                    else upper(r.order_type) || ' still outstanding - ' || r.who end
                || coalesce(' (' || nullif(trim(coalesce(r.employer_name, r.label, '')),'') || ')', '');
     insert into tasks(contact_id, lead_id, title, description, due_date, status, priority,
                       related_table, related_id, created_at, updated_at)
     values (r.contact_id, r.contact_id, v_title,
-            'Status is "' || coalesce(r.status,'unknown') || '". Chase the vendor, or mark the order received or not required to stop these reminders.',
+            case when v_doc = 'no_document'
+                 then 'They replied, but nothing attached looks like the document we asked for. '
+                      || 'A copy of our own form coming back does not count. '
+                      || 'Ask for the ' || r.order_type || ', or mark the order received or not required to stop these reminders.'
+                 else 'Status is "' || coalesce(r.status,'unknown') || '". Chase the vendor, or mark the order received or not required to stop these reminders.'
+            end,
             v_due, 'open',
             case when r.order_type in ('voe','payoff') then 'high' else 'normal' end,
             'loan_orders', r.id, now(), now())
     returning id into v_task;
     order_id := r.id; order_type := r.order_type; task_id := v_task;
-    reason := case when v_last is null then 'first reminder' else 'due again' end;
+    reason := case when v_doc = 'no_document' then 'replied without a document'
+                   when v_last is null then 'first reminder' else 'due again' end;
     return next;
   end loop;
 end; $function$;

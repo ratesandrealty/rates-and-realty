@@ -13458,6 +13458,79 @@ function lpVoeMetaHtml(v){
   parts.push('Notes: '+(v.note_count||0));
   return parts.join(' &nbsp;·&nbsp; ');
 }
+/* FOLLOW UP BY EMAIL, replying into the thread the original request created.
+ *
+ * THE CARD SAYS WHICH IT WILL DO, and that is the requirement rather than a
+ * nicety. Only 1 of 23 orders currently carries a gmail_thread_id — everything
+ * placed before the Gmail rewire has none — so for most orders this can only
+ * start a NEW thread. A button that quietly opens a new thread when the user is
+ * expecting a reply is the wrong kind of quiet: the vendor sees an unrelated
+ * message and the reply comes back uncorrelated, which is the failure this whole
+ * threading effort exists to remove. */
+function _lpVoeThreadNote(v){
+  return (v && v.gmail_thread_id)
+    ? '<span style="color:#9fd0a8;">↩ replies in the original thread</span>'
+    : '<span style="color:#E0B84C;">⚠ no original thread stored — this starts a NEW email</span>';
+}
+async function lpVoeFollowUp(k){
+  const v=_lpVoeFind(k); if(!v){ showToast('No VOE selected', true); return; }
+  const to=String(v.hr_contact_email||'').trim();
+  if(!to){ showToast('No HR email on this VOE — add one before following up.', true); return; }
+  const threaded=!!v.gmail_thread_id;
+  const emp=String(v.employer_name||'').trim();
+  const base='Verification of Employment Request'+(emp?(' — '+emp):'');
+  await openEmailComposer({
+    to: to,
+    /* 'Re:' only when it really is a reply. Prefixing a new thread with Re:
+       makes it look like a continuation of something the recipient never saw. */
+    subject: threaded ? ('Re: '+base) : base,
+    bodyHtml: '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'
+      + 'Hello'+(v.hr_contact_name?(' '+lpEsc(String(v.hr_contact_name).split(/\s+/)[0])):'')+',<br><br>'
+      + 'Following up on the verification of employment request'
+      + (emp?(' for '+lpEsc(emp)):'')+'. Could you let me know where it stands?<br><br>'
+      + 'Thank you.</div>',
+    title: threaded ? '📨 Follow up — replies in the existing thread'
+                    : '📨 Follow up — ⚠ starts a NEW thread',
+    sendLabel: 'Send follow-up &#10148;',
+    hideDraftSchedule: true,
+    onSend: function(){ return _lpVoeFollowUpSend(v); }
+  });
+}
+async function _lpVoeFollowUpSend(v){
+  const to=(getChipEmails('toChips')[0]||'').trim();
+  if(!to){ showToast('HR email required', true); return; }
+  const subject=(document.getElementById('subjectInput')?.value||'').trim();
+  const editor=document.getElementById('emailEditor');
+  const bodyHtml='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'
+    + stripMarkdownFences(editor?.innerHTML?.trim()||'') + '</div>';
+  const btn=document.getElementById('ecSendBtn');
+  const restore=()=>{ if(btn){ btn.disabled=false; btn.innerHTML='Send follow-up &#10148;'; } };
+  if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
+  try{
+    const body={ action:'send', mailbox:'processing@ratesandrealty.com',
+      to:to, subject:subject, body_html:bodyHtml };
+    const cc=getChipEmails('ccChips');
+    if(cc && cc.length) body.cc=Array.isArray(cc)?cc.join(', '):cc;
+    /* Thread it when we can. threadId puts it in the same Gmail conversation;
+       in_reply_to/references are what make the RECIPIENT's client thread it and
+       what makes their reply carry a header we can correlate on. Both, or the
+       reply comes back looking like a fresh message. */
+    if(v.gmail_thread_id) body.threadId=v.gmail_thread_id;
+    if(v.rfc_message_id){ body.in_reply_to=v.rfc_message_id; body.references=v.rfc_message_id; }
+    /* No plus-token reply_to here on purpose. The original request already
+       emitted one, and a reply to THIS message threads on In-Reply-To, which is
+       the primary correlation rung anyway. Adding a second token would put two
+       different tokens on one conversation for no gain. */
+    const resp=await _authClient().functions.invoke('gmail-inbox',{ body:body });
+    const data=resp&&resp.data, error=resp&&resp.error;
+    if(error||!data||data.ok!==true) throw new Error(await _lpFnError(error, data, 'send failed'));
+    showToast('Follow-up sent to '+to+(v.gmail_thread_id?' (in the original thread) ✓':' (new thread) ✓'));
+    closeEmailComposer();
+    lpLoadVoes(lpCid());
+  }catch(e){
+    restore(); showToast('Follow-up failed: '+((e&&e.message)||e), true);
+  }
+}
 function lpVoeCardHtml(v){
   const k=v.key, st=v.status||'not_ordered';
   const inp='width:100%;box-sizing:border-box;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#ddd;font-size:11px;padding:5px 7px;font-family:inherit;';
@@ -13529,6 +13602,14 @@ function lpVoeCardHtml(v){
          + '<span style="font-weight:700;">⚠ Follow-up paused</span> '
          + lpEsc(String(v.reminder_note).trim()) + '</div>')
       : '')
+    /* Follow up, with the thread state stated NEXT TO the button rather than
+       discovered after sending. */
+    +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:7px;font-size:10px;">'
+      +'<button type="button" onclick="lpVoeFollowUp(\''+k+'\')" style="background:rgba(201,168,76,.12);'
+        +'border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;font-size:11px;'
+        +'font-weight:600;padding:3px 10px;cursor:pointer;">Follow up by email</button>'
+      +_lpVoeThreadNote(v)
+    +'</div>'
     +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">'
       +'<select id="lpVoeBor-'+k+'" onchange="lpVoeBorrowerChange(\''+k+'\',this.value)" style="'+sel+'flex:1;min-width:0;">'+bopts+'</select>'
       +'<select onchange="lpVoeStatusChange(\''+k+'\',this.value)" style="'+sel+'">'+stOpts+'</select>'
