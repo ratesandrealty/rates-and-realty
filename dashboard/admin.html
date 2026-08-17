@@ -3814,14 +3814,52 @@ async function loadShowingsWidget() {
     const SB_URL = window.APP_CONFIG?.SUPABASE_URL;
     const SB_KEY = window.APP_CONFIG?.SUPABASE_ANON_KEY;
     if (!SB_URL || !SB_KEY) return;
+
+    /* Authorization carries the SIGNED-IN USER, not SB_KEY — the same rule
+       already written out at the MISMO import above. SB_KEY is the anon key,
+       printed in this page's source, and it identifies nobody, so these two
+       reads used to run as the ANONYMOUS role however staff was signed in.
+       apikey stays anon: that is the project identifier the gateway routes on,
+       which is a different thing from the identity.
+
+       WAIT FOR THE GATE FIRST, then read the session. This widget runs on
+       DOMContentLoaded and auth-guard populates window._supabaseClient
+       asynchronously, so asking for the session immediately would sometimes
+       find nothing and report "not signed in" to a signed-in user. The wait is
+       BOUNDED — a guard that never settles must not hang the widget. */
+    try { await Promise.race([window._rrGateReady || Promise.resolve(), new Promise(r => setTimeout(r, 4000))]); } catch (_) {}
+
+    let _shTok = null;
+    try {
+      const _shSb = window._dashSupabase || window._pipelineSupabase || window._supabaseClient;
+      if (_shSb && _shSb.auth && _shSb.auth.getSession) {
+        const _shSs = await _shSb.auth.getSession();
+        _shTok = _shSs && _shSs.data && _shSs.data.session && _shSs.data.session.access_token;
+      }
+    } catch (_) {}
+
+    /* NO SILENT FALLBACK TO THE ANON KEY. Falling back would restore exactly the
+       behaviour being removed, and it would do it invisibly — the widget would
+       keep working right up until the showings policy closes, then show zero and
+       look like an empty week rather than a broken read. The catch on this
+       function is a console.warn, so a throw here would be silent too; the
+       refusal is written into the panel instead. */
+    if (!_shTok) {
+      const _le = document.getElementById('recent-showings-list');
+      if (_le) _le.innerHTML = '<div style="color:#e55;font-size:.82rem;padding:12px">Not signed in — reload the page to load showings.</div>';
+      console.warn('[showings widget] no session token; refusing to read as anon');
+      return;
+    }
+    const _shHdrs = { 'apikey': SB_KEY, 'Authorization': `Bearer ${_shTok}` };
+
     const res = await fetch(`${SB_URL}/rest/v1/showings?select=*&order=created_at.desc&limit=5`, {
-      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` }
+      headers: _shHdrs
     });
     const showings = await res.json();
     if (!Array.isArray(showings)) return;
 
     const countRes = await fetch(`${SB_URL}/rest/v1/showings?select=id,status`, {
-      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` }
+      headers: _shHdrs
     });
     const allShowings = await countRes.json();
     const rows = Array.isArray(allShowings) ? allShowings : [];

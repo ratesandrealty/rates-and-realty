@@ -21963,6 +21963,20 @@ async function loadContactShowings() {
        session: the anon key is printed in this page and identifies nobody, and
        tours-admin can text any borrower it is given a contact_id for. */
     var _tkS = await _getUserAccessToken();
+    /* REFUSE RATHER THAN FALL BACK. The stops read below now carries this same
+       token instead of SK_S, so without it there is nothing to send that names
+       the user — and sending the anon key anyway is exactly the behaviour being
+       removed. It would also stay invisible: the panel would keep rendering
+       until the showings policy closes, then show an empty tour list that looks
+       like a borrower with no tours rather than a broken read.
+       The tours-admin call above previously sent 'Bearer ' + (_tkS || ''), an
+       empty bearer, which 401s with no explanation on screen. One check now
+       covers both requests. */
+    if (!_tkS) {
+      container.innerHTML = '<div style="text-align:center;padding:40px;background:#1a1a1a;border:1px solid #222;border-radius:10px;color:#e55;font-size:.85rem">Not signed in — reload the page to load tours.</div>';
+      if (countEl) countEl.textContent = '';
+      return;
+    }
     var toursPromise = fetch(SB_S+'/functions/v1/tours-admin', {
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+(_tkS||'')},
@@ -21979,7 +21993,12 @@ async function loadContactShowings() {
       + '&contact_id=eq.'+encodeURIComponent(contactId)
       + '&deleted_at=is.null'
       + '&order=sort_order.asc.nullslast', {
-      headers:{'apikey':SK_S,'Authorization':'Bearer '+SK_S}
+      /* Session token, not SK_S. SK_S is the anon key: this read used to run as
+         the ANONYMOUS role however staff was signed in, and it returns
+         agent_notes_for_lead, lead_rating, lead_feedback and the listing
+         agent's contact details. apikey stays anon — project identifier, not
+         identity. Guarded above: _tkS is non-null by here. */
+      headers:{'apikey':SK_S,'Authorization':'Bearer '+_tkS}
     }).then(function(r){return r.json();});
 
     var results = await Promise.all([toursPromise, stopsPromise]);
