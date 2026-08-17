@@ -62,15 +62,30 @@ function validIdent(kind: 'uuid' | 'email' | 'borrower', v: unknown): string | n
   return BORROWER_RE.test(str) ? str.toUpperCase() : null;
 }
 
-/* Returns the query narrowed to the caller, or null when no usable identity was
-   supplied — the caller must treat null as a refusal, never as "no filter". */
-function scopeToCaller(q: any, body: any): any | null {
-  const pid = validIdent('uuid', body?.portal_user_id);
-  const em = validIdent('email', body?.email);
-  if (pid && em) return q.or(`portal_user_id.eq.${pid},email.eq."${em}"`);
-  if (pid) return q.eq('portal_user_id', pid);
-  if (em) return q.eq('email', em);
-  return null;
+/* Returns { q } narrowed to the caller, or { err } with the message to return.
+ *
+ * MALFORMED AND MISSING ARE DIFFERENT ANSWERS and this helper now says which.
+ * It used to return null for both, so every caller reported "portal_user_id or
+ * email required" — telling someone who sent a malformed email that they sent
+ * none. That is the same conflation that hid the 403 cross-user branch behind a
+ * 400 one pass earlier: two distinct refusals wearing one message, so the wrong
+ * one gets debugged.
+ *
+ * The err string is returned rather than thrown, and the caller must check it
+ * before touching .q — there is no query to fall back to, deliberately, so a
+ * caller that forgets the check gets undefined rather than an unfiltered query. */
+function scopeToCaller(q: any, body: any):
+  { q: any; err?: undefined } | { q?: undefined; err: string } {
+  const rawPid = body?.portal_user_id;
+  const rawEm = body?.email;
+  const pid = validIdent('uuid', rawPid);
+  const em = validIdent('email', rawEm);
+  if (rawPid && !pid) return { err: 'malformed portal_user_id' };
+  if (rawEm && !em) return { err: 'malformed email' };
+  if (pid && em) return { q: q.or(`portal_user_id.eq.${pid},email.eq."${em}"`) };
+  if (pid) return { q: q.eq('portal_user_id', pid) };
+  if (em) return { q: q.eq('email', em) };
+  return { err: 'portal_user_id or email required' };
 }
 
 const cors = {
@@ -420,8 +435,8 @@ Deno.serve(async (req: Request) => {
       if (!id || !UUID_RE.test(String(id))) return err('valid id required');
       let q = sb.from('saved_listings').delete().eq('id', id);
       const scoped = scopeToCaller(q, body);
-      if (!scoped) return err('portal_user_id or email required');
-      const { data, error } = await scoped.select('id');
+      if (scoped.err) return err(scoped.err);
+      const { data, error } = await scoped.q.select('id');
       if (error) return err(error.message, 500);
       /* The count is the answer. A delete that matched nothing is a REFUSAL, and
          it is indistinguishable from a success at the status code — the caller
@@ -550,8 +565,8 @@ Deno.serve(async (req: Request) => {
       } else return err('batch_id or showing_id required');
 
       const scoped = scopeToCaller(q, body);
-      if (!scoped) return err('portal_user_id or email required');
-      const { data, error } = await scoped.select('id');
+      if (scoped.err) return err(scoped.err);
+      const { data, error } = await scoped.q.select('id');
       if (error) return err(error.message, 500);
       return ok({ success: true, status, updated: (data || []).length });
     }
@@ -592,8 +607,8 @@ Deno.serve(async (req: Request) => {
         .select('id, batch_id, status, deleted_at, preferred_date, preferred_time, portal_user_id, contact_id')
         .eq('batch_id', batch_id);
       const scoped = scopeToCaller(q, body);
-      if (!scoped) return err('portal_user_id or email required');
-      const { data, error } = await scoped;
+      if (scoped.err) return err(scoped.err);
+      const { data, error } = await scoped.q;
       if (error) return err(error.message, 500);
       const rows = data || [];
       return ok({ showings: rows, count: rows.length, active: rows.filter((r: any) => !r.deleted_at).length });
@@ -606,8 +621,8 @@ Deno.serve(async (req: Request) => {
       const now = new Date().toISOString();
       let q = sb.from('showings').update({ deleted_at: now, updated_at: now }).eq('id', showing_id);
       const scoped = scopeToCaller(q, body);
-      if (!scoped) return err('portal_user_id or email required');
-      const { data, error } = await scoped.select('id');
+      if (scoped.err) return err(scoped.err);
+      const { data, error } = await scoped.q.select('id');
       if (error) return err(error.message, 500);
       return ok({ success: true, updated: (data || []).length });
     }
@@ -625,8 +640,8 @@ Deno.serve(async (req: Request) => {
       if (soft_delete) patch.deleted_at = now;
       let q = sb.from('showings').update(patch).eq('batch_id', batch_id);
       const scoped = scopeToCaller(q, body);
-      if (!scoped) return err('portal_user_id or email required');
-      const { data, error } = await scoped.select('id');
+      if (scoped.err) return err(scoped.err);
+      const { data, error } = await scoped.q.select('id');
       if (error) return err(error.message, 500);
       return ok({ success: true, updated: (data || []).length });
     }
@@ -639,8 +654,8 @@ Deno.serve(async (req: Request) => {
         .update({ status: 'pending', deleted_at: null, updated_at: new Date().toISOString() })
         .eq('batch_id', batch_id);
       const scoped = scopeToCaller(q, body);
-      if (!scoped) return err('portal_user_id or email required');
-      const { data, error } = await scoped.select('id');
+      if (scoped.err) return err(scoped.err);
+      const { data, error } = await scoped.q.select('id');
       if (error) return err(error.message, 500);
       return ok({ success: true, updated: (data || []).length });
     }
@@ -660,8 +675,8 @@ Deno.serve(async (req: Request) => {
         .eq('batch_id', batch_id)
         .is('deleted_at', null);      // a removed home does not come back by rescheduling
       const scoped = scopeToCaller(q, body);
-      if (!scoped) return err('portal_user_id or email required');
-      const { data, error } = await scoped.select('id');
+      if (scoped.err) return err(scoped.err);
+      const { data, error } = await scoped.q.select('id');
       if (error) return err(error.message, 500);
       return ok({ success: true, updated: (data || []).length });
     }
