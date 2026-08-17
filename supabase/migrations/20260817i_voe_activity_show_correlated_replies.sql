@@ -1,9 +1,33 @@
--- voe_activity(p_order_id uuid)
--- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-17. This layer had NO git history:
--- check-function-drift.mjs compares deployed EDGE functions and never
--- opens the database, so 5 of 307 were recorded and the rest existed only
--- in production. Re-capture after any change.
+-- voe_activity: render the replies the poller correlated.
+--
+-- REVERT: re-apply 20260817h.
+--
+-- ══ THE MISSING LINK ══
+--
+-- quote-reply-poll writes to quote_reply_log and touches nothing else — that was
+-- deliberate, so a poller could never mutate borrower records on a guess. But
+-- voe_activity reads email_log, so a reply could be correlated to an order and
+-- still be invisible on that order's panel. Verified before writing this:
+-- quote-reply-poll contains no reference to email_log at all.
+--
+-- The chain was send -> store ids -> reply -> poll -> correlate -> (nothing).
+-- This is the last hop.
+--
+-- ══ WHY UNION AND NOT A WRITE INTO email_log ══
+--
+-- Copying poller output into email_log would make the poller a writer of the
+-- table the CRM treats as its mail record, on the strength of a match. The match
+-- is good — In-Reply-To against an id we stored — but it is still an inference,
+-- and email_log is what the timeline, lead scoring, open counters and reminder
+-- evidence all read. quote_reply_log stays the poller's own record; this reads
+-- across at display time, where a wrong match costs a wrong row on a panel
+-- rather than a wrong row in the system of record.
+--
+-- Rows carry 'source' so the two origins stay distinguishable on screen instead
+-- of silently blending.
+--
+-- Scoped by row_id = p_order_id, which is the ORDER, not the contact — the same
+-- correction 20260817h made to the email_log side.
 
 CREATE OR REPLACE FUNCTION public.voe_activity(p_order_id uuid)
  RETURNS jsonb
@@ -13,21 +37,17 @@ CREATE OR REPLACE FUNCTION public.voe_activity(p_order_id uuid)
 AS $function$
 /* Order-scoped VOE activity, from two sources.
 
-   email_log        what we sent, and legacy correspondence, matched by the Gmail
-                    thread our request created or by this order's own HR
+   email_log        what we sent, and legacy correspondence, matched by the
+                    Gmail thread our request created or by this order's own HR
                     counterparty. Never by '%VOE%' — that is a substring and
                     matched a "WVOE" marketing blast onto a compliance panel.
    quote_reply_log  replies quote-reply-poll correlated to THIS order.
 
    The second source exists because the poller writes only its own table, by
-   design, so a correlated reply was invisible here — the chain ran send -> store
-   ids -> reply -> poll -> correlate -> nothing. Read across at display time
+   design, so a correlated reply was invisible here. Read across at display time
    rather than copied into email_log: the match is an inference, and email_log
    feeds the timeline, lead scoring, open counters and reminder evidence. A wrong
-   match should cost a row on a panel, not a row in the system of record.
-
-   Rows carry 'source' and 'matched_by' so the two origins stay distinguishable
-   on screen instead of silently blending. */
+   match should cost a row on a panel, not a row in the system of record. */
 declare v_order public.loan_orders; v_events jsonb; v_hr text;
 begin
   select * into v_order from public.loan_orders where id = p_order_id;
