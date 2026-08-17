@@ -53,22 +53,41 @@ function walk(dir, out = []) {
   return out;
 }
 
+/* Two kinds of browser caller, and they are exposed differently.
+ *
+ *   invoke    functions.invoke() — supabase-js attaches x-client-info itself, so
+ *             the preflight MUST allow it. Omit it and the call is impossible.
+ *   fetch     a hand-built fetch('/functions/v1/<slug>') — sends only the headers
+ *             the caller chose, so it survives a narrow allow-list. esign-docs is
+ *             called this way, which is the only reason it worked while
+ *             voe-form-fill, with the identical header list, did not.
+ *
+ * A 'fetch' caller is NOT broken today. It is a LATENT one: convert that call to
+ * functions.invoke() — the obvious tidy-up — and it breaks instantly, with no
+ * change to the function to explain it. Reported, not failed. */
 function discoverSlugs() {
-  const found = new Map();               // slug -> Set(files)
+  const found = new Map();               // slug -> { invoke:Set, fetch:Set }
+  const add = (slug, kind, file) => {
+    if (!found.has(slug)) found.set(slug, { invoke: new Set(), fetch: new Set() });
+    found.get(slug)[kind].add(file);
+  };
   for (const root of ROOTS) {
     for (const f of walk(root)) {
       const src = readFileSync(f, 'utf8');
-      /* Only functions.invoke(). A raw fetch() sends no x-client-info unless the
-         caller adds it, so it is not exposed to this failure — esign-docs is
-         called that way and works today despite omitting the header. Widening
-         this regex to all fetches would report failures that cannot happen. */
-      for (const m of src.matchAll(/functions\.invoke\(\s*['"]([a-z0-9-]+)['"]/g)) {
-        if (!found.has(m[1])) found.set(m[1], new Set());
-        found.get(m[1]).add(f);
-      }
+      for (const m of src.matchAll(/functions\.invoke\(\s*['"]([a-z0-9-]+)['"]/g)) add(m[1], 'invoke', f);
+      for (const m of src.matchAll(/functions\/v1\/([a-z0-9-]+)/g)) add(m[1], 'fetch', f);
     }
   }
   return found;
+}
+
+// Every function in the repo, for --all. A slug no browser calls today is still
+// worth knowing about: it is one refactor away from being a browser caller.
+function allSlugs() {
+  return readdirSync('supabase/functions')
+    .filter((d) => !d.startsWith('_') && !d.startsWith('.'))
+    .filter((d) => { try { return statSync(join('supabase/functions', d)).isDirectory(); } catch (_) { return false; } })
+    .sort();
 }
 
 async function preflight(slug) {
@@ -83,53 +102,76 @@ async function preflight(slug) {
   const allowRaw = r.headers.get('access-control-allow-headers') || '';
   const allowOrigin = r.headers.get('access-control-allow-origin') || '';
   const allow = allowRaw.toLowerCase();
-  const missing = MUST_ALLOW.filter((h) => !allow.includes(h));
-  return { status: r.status, allowRaw, allowOrigin, missing };
+  /* A bare `*` allows everything, and a substring check does not know that — it
+     reported claude-ai as missing all four headers when Chrome reaches it fine
+     (measured with browser-fn-probe: status 200). A checker that invents
+     failures gets ignored, and then it is worthless for the real ones. */
+  const wildcard = allow.split(',').map((s) => s.trim()).includes('*');
+  const missing = wildcard ? [] : MUST_ALLOW.filter((h) => !allow.includes(h));
+  return { status: r.status, allowRaw, allowOrigin, missing, wildcard };
 }
 
 const argv = process.argv.slice(2);
+const all = argv.includes('--all');
+const named = argv.filter((a) => !a.startsWith('--'));
 const discovered = discoverSlugs();
-const slugs = argv.length ? argv : [...discovered.keys()].sort();
+const slugs = named.length ? named : (all ? allSlugs() : [...discovered.keys()].sort());
 
 if (!slugs.length) {
-  console.error('no functions.invoke() call sites found — refusing to report a clean sweep');
+  console.error('no slugs to check — refusing to report a clean sweep');
   process.exit(2);
 }
 
-console.log(`[browser-cors] ${slugs.length} slug(s) called via supabase-js functions.invoke()\n`);
+console.log(`[browser-cors] checking ${slugs.length} slug(s)${all ? ' (--all: every function in the repo)' : ''}\n`);
 
+/* Severity depends on who calls it, and only the first is broken TODAY:
+ *   BLOCKED  an invoke() caller exists — the page cannot reach it. Fails the run.
+ *   latent   only a raw fetch() caller, or none. Reported, does not fail. */
 let bad = 0;
+const latent = [];
 for (const slug of slugs) {
+  const d = discovered.get(slug);
+  const viaInvoke = d ? [...d.invoke] : [];
+  const viaFetch = d ? [...d.fetch] : [];
+
   let r;
   try { r = await preflight(slug); }
   catch (e) { console.log(`  ERROR    ${slug} — ${e.message}`); bad++; continue; }
 
-  const callers = discovered.has(slug) ? [...discovered.get(slug)].join(', ') : '(named on the command line)';
-  if (r.status >= 400) {
-    console.log(`  FAIL     ${slug} — preflight returned ${r.status}`);
-    console.log(`           called from: ${callers}`);
-    bad++;
-  } else if (!r.allowOrigin) {
-    console.log(`  FAIL     ${slug} — preflight ${r.status} with NO Access-Control-Allow-Origin`);
-    console.log(`           called from: ${callers}`);
-    bad++;
-  } else if (r.missing.length) {
-    console.log(`  BLOCKED  ${slug} — preflight ${r.status}, but does not allow: ${r.missing.join(', ')}`);
-    console.log(`           allows: ${r.allowRaw}`);
-    console.log(`           the browser will NOT send the request; supabase-js reports`);
-    console.log(`           "Failed to send a request to the Edge Function"`);
-    console.log(`           called from: ${callers}`);
+  const ok = r.status < 400 && r.allowOrigin && !r.missing.length;
+  if (ok) { if (!all) console.log(`  ok       ${slug}`); continue; }
+
+  const why = r.status >= 400 ? `preflight returned ${r.status}`
+    : !r.allowOrigin ? `preflight ${r.status} with NO Access-Control-Allow-Origin`
+    : `does not allow: ${r.missing.join(', ')}`;
+
+  if (viaInvoke.length) {
+    console.log(`  BLOCKED  ${slug} — ${why}`);
+    console.log(`           allows: ${r.allowRaw || '(none)'}`);
+    console.log(`           supabase-js will report "Failed to send a request to the Edge Function"`);
+    console.log(`           invoke() caller(s): ${viaInvoke.join(', ')}`);
     bad++;
   } else {
-    console.log(`  ok       ${slug}`);
+    latent.push({ slug, why, allows: r.allowRaw, viaFetch });
+  }
+}
+
+if (latent.length) {
+  console.log(`\n  ── latent (${latent.length}) — not broken today, breaks the moment a caller uses functions.invoke() ──`);
+  for (const l of latent) {
+    const who = l.viaFetch.length ? `raw fetch() from ${l.viaFetch.join(', ')}` : 'no browser caller found';
+    console.log(`  latent   ${l.slug} — ${l.why}  [${who}]`);
   }
 }
 
 console.log(
   bad
-    ? `\n[browser-cors] ${bad} of ${slugs.length} would be BLOCKED in a browser.`
-    : `\n[browser-cors] OK — all ${slugs.length} allow every header supabase-js sends.`,
+    ? `\n[browser-cors] ${bad} of ${slugs.length} would be BLOCKED in a browser (an invoke() caller exists).`
+    : `\n[browser-cors] OK — every slug with an invoke() caller allows all headers supabase-js sends.`,
 );
+if (latent.length) {
+  console.log(`[browser-cors] ${latent.length} latent — safe only because nothing calls them via functions.invoke().`);
+}
 console.log('This checks the preflight only. It does not prove the page works.');
 /* process.exitCode, NOT process.exit(). process.exit() with sockets still open
    aborts teardown on Windows ("Assertion failed: !(handle->flags &

@@ -13,7 +13,15 @@ const PROCESSING_EMAIL = 'processing@ratesandrealty.com';
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey'
+  /* x-client-info is allowed even though today's caller does not send it.
+     lead-detail.html calls this with a raw fetch(), which is the only reason it
+     worked while voe-form-fill — same header list, called through
+     functions.invoke() — was unreachable from every browser for eleven days.
+     supabase-js attaches x-client-info itself, and a preflight that does not
+     allow back every requested header fails, so the browser never sends the POST.
+     Converting that one fetch() to functions.invoke() would have broken e-signature
+     document download instantly, with no code change here to explain it. */
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
 };
 const svc = () => createClient(SUPABASE_URL, SERVICE, { auth: { persistSession: false } });
 const json = (d: any, s = 200) => new Response(JSON.stringify(d), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
