@@ -12784,6 +12784,47 @@ function _lpHoiToast(m,e){ (window.showToast||window.toast||function(){})(m,!!e)
 function _lpHoiVal(id){ const e=document.getElementById(id); return e?(e.value||''):''; }
 function _lpHoiFmtPrice(v){ if(v==null||v==='') return ''; const n=Number(String(v).replace(/[^0-9.]/g,'')); return isNaN(n)?String(v):('$'+n.toLocaleString('en-US')); }
 function _lpHoiFmtDate(v){ if(!v) return ''; const d=new Date(v); if(isNaN(d.getTime())) return String(v); const p=n=>String(n).padStart(2,'0'); return p(d.getMonth()+1)+'/'+p(d.getDate())+'/'+d.getFullYear(); }
+/* Correlation token for a quote request, emitted as processing+<token>@ in
+   Reply-To. Shape matches what voe_request_log already mints — '<kind>_' plus 32
+   lowercase hex — because quote_reply_match scans for exactly that pattern and a
+   near-miss would simply never match, silently.
+   crypto.getRandomValues, not Math.random: this is the string that decides which
+   borrower's file a reply lands on, and predictable tokens would let a guessed
+   address attach a reply to a record that never sent one. */
+function _lpQuoteToken(kind){
+  const b=new Uint8Array(16); crypto.getRandomValues(b);
+  return kind+'_'+Array.from(b).map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+/* gmail-inbox takes attachments as STORAGE PATHS, never bytes: a 20MB file is
+   ~27MB as base64 JSON, which is a hostile request body, and the send downloads
+   each path service-side. VOE already holds its two PDFs as base64 (the rendered
+   form, and the signed borrower authorization fetched from its 1-hour URL), so
+   they are uploaded here and only the path travels.
+   The prefix is not cosmetic — attachmentPathError() confines every path to the
+   caller's own mailbox prefix, and it is the ONLY control stopping a client
+   naming someone else's object and having it mailed out. */
+async function _lpAttachToStorage(b64, filename, mime){
+  const bin=atob(String(b64||''));
+  const u=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i);
+  const name=String(filename||'attachment.pdf').replace(/[^A-Za-z0-9._-]/g,'_').slice(0,120);
+  const type=mime||'application/pdf';
+  const path='processing@ratesandrealty.com/'+Date.now()+'_'+Math.random().toString(36).slice(2,7)+'/'+name;
+  const up=await _authClient().storage.from('email-attachments')
+    .upload(path, new Blob([u],{type:type}), { contentType:type, upsert:false });
+  if(up&&up.error) throw new Error('attachment upload failed: '+up.error.message);
+  return { path:path, name:name, mime:type };
+}
+/* functions.invoke() returns data:null on any non-2xx and puts the real response
+   in error.context, so (data && data.error) is undefined and a naive read falls
+   through to the literal "Edge Function returned a non-2xx status code". That
+   string is what got written against a failed VOE and it explains nothing. */
+async function _lpFnError(error, data, fallback){
+  let s='';
+  try{ if(error&&error.context&&typeof error.context.json==='function'){ const j=await error.context.json(); s=(j&&(j.error||j.message))||''; } }catch(_){}
+  if(!s){ try{ if(error&&error.context&&typeof error.context.text==='function') s=(await error.context.text()||'').slice(0,300); }catch(_){} }
+  return s || (data&&data.error) || (error&&error.message) || fallback;
+}
 function _lpHoiBody(afn){
   return 'Hello '+afn+', can you provide a homeowners insurance quote for a client of mine. The information of the client is below. I only included one of the borrowers. Please let me know if you need anything else.\n\n'
     +'Address: '+_lpHoiVal('lpHoiAddress')+'\n'
@@ -12960,13 +13001,36 @@ async function lpHoiSendAll(){
     const afn=(r.agent_first||'').trim()||((r.agent_name||'').trim().split(/\s+/)[0])||'there';
     const bodyText=_lpHoiBody(afn);
     const bodyHtml='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'+lpEsc(bodyText).replace(/\n/g,'<br>')+'</div>'+_lpHoiSignatureHtml();
+    // Minted per RECIPIENT, not per run: two agents on one property each get their
+    // own token, so a reply identifies which of them answered.
+    const token=_lpQuoteToken('hoi');
     try{
-      const sendBody={ action:'send', to_email:r.agent_email, to_name:(r.agent_name||r.company||''), first_name:afn, subject:subject, html:bodyHtml, contact_id:cid };
+      /* GMAIL DWD FROM processing@, not email-service/MailerSend.
+         The move is BETWEEN two authenticated senders — SPF carries
+         include:_spf.google.com and Workspace DKIM is published — so nothing is
+         traded away on deliverability. What it buys is a real RFC Message-ID to
+         correlate the agent's reply against, which MailerSend never returned.
+         processing@ (not rene@) because the mailbox gate lets a VA reach it, so
+         Rene and the VA follow up in one chain; gmail-inbox derives the sending
+         mailbox from the caller's role and refuses one they may not use. */
+      const sendBody={ action:'send', mailbox:'processing@ratesandrealty.com',
+        to:r.agent_email, subject:subject, body_html:bodyHtml, body_text:bodyText,
+        reply_to:'processing+'+token+'@ratesandrealty.com' };
       const _cc=(_lpHoiMeta&&_lpHoiMeta.cc)||''; if(_cc) sendBody.cc=_cc;   // always CC rene@ + processing@
-      const resp=await _authClient().functions.invoke('email-service',{ body:sendBody });
+      const resp=await _authClient().functions.invoke('gmail-inbox',{ body:sendBody });
       const data=resp&&resp.data, error=resp&&resp.error;
-      if(error||!data||data.success!==true) throw new Error((data&&data.error)||(error&&error.message)||'send failed');
-      try{ await _authClient().rpc('hoi_quote_log',{ p_contact_id:cid, p_vendor_id:r.vendor_id||null, p_company:r.company||null, p_agent_name:r.agent_name||null, p_agent_first:r.agent_first||null, p_agent_last:r.agent_last||null, p_agent_email:r.agent_email||null, p_agent_phone:r.agent_phone||null, p_subject:subject, p_body:bodyText }); }catch(le){ console.warn('[hoi_quote_log]', le&&le.message); }
+      if(error||!data||data.ok!==true) throw new Error(await _lpFnError(error, data, 'send failed'));
+      /* hoi_quote_log returns the new row id, which is how the Gmail ids get onto
+         the right row. It used to be called and its return discarded. */
+      let _rowId=null;
+      try{ const lg=await _authClient().rpc('hoi_quote_log',{ p_contact_id:cid, p_vendor_id:r.vendor_id||null, p_company:r.company||null, p_agent_name:r.agent_name||null, p_agent_first:r.agent_first||null, p_agent_last:r.agent_last||null, p_agent_email:r.agent_email||null, p_agent_phone:r.agent_phone||null, p_subject:subject, p_body:bodyText }); if(!lg.error) _rowId=lg.data||null; }catch(le){ console.warn('[hoi_quote_log]', le&&le.message); }
+      /* Separately caught: the mail HAS gone out by now, so a failure to record
+         the ids must not be reported as a failed send. It costs threading on this
+         one request — the reply falls back to the token rung — and nothing else. */
+      if(_rowId){
+        try{ await _authClient().rpc('hoi_quote_set_thread',{ p_id:_rowId, p_gmail_message_id:data.message_id||null, p_gmail_thread_id:data.thread_id||null, p_rfc_message_id:data.rfc_message_id||null, p_reply_token:token }); }
+        catch(te){ console.warn('[hoi_quote_set_thread]', te&&te.message); }
+      }
       if(r.save && !r.vendor_id && (r.company||r.agent_name)){ try{ await _authClient().rpc('vendor_directory_upsert',{ p_id:null, p_role:'hoi_agent', p_name:r.agent_name||null, p_company:r.company||null, p_phone:r.agent_phone||null, p_email:r.agent_email||null, p_website:null, p_notes:null }); }catch(_){} }
       ok++;
     }catch(e){
@@ -13904,7 +13968,7 @@ async function _voeComposerSend(st){
       if(ferr||!fdata||fdata.success!==true||!fdata.content){
         throw new Error((fdata&&fdata.error)||(ferr&&ferr.message)||'VOE form could not be prepared');
       }
-      attachments=[{ content:fdata.content, filename:(fdata.filename||'Request_for_VOE.pdf'), disposition:'attachment' }];
+      attachments=[ await _lpAttachToStorage(fdata.content, (fdata.filename||'Request_for_VOE.pdf'), 'application/pdf') ];
     }catch(e){
       restore();
       showToast('VOE form not attached: '+((e&&e.message)||e)+' — nothing was sent.', true);
@@ -13928,7 +13992,7 @@ async function _voeComposerSend(st){
       if(!pr.ok) throw new Error('auth PDF fetch failed ('+pr.status+')');
       const pbuf=await pr.arrayBuffer();
       if(!attachments) attachments=[];
-      attachments.push({ content:_lpB64FromBuf(pbuf), filename:'Borrower_Authorization_signed.pdf', disposition:'attachment' });
+      attachments.push(await _lpAttachToStorage(_lpB64FromBuf(pbuf), 'Borrower_Authorization_signed.pdf', 'application/pdf'));
     } else if(auth && auth.found===false){
       if(!confirm('No signed borrower authorization is on file for this borrower. Send the VOE request without it?')){ restore(); return; }
     }
@@ -13954,21 +14018,31 @@ async function _voeComposerSend(st){
     email_log_id=(ret && ret.email_log_id)||null;
   }catch(le){ console.warn('[voe_request_log]', le&&le.message); }
   try{
-    const body={ action:'send', to_email:to, to_name:hrName, first_name:((hrName||'').split(/\s+/)[0]||''), subject:subject, html:bodyHtml, contact_id:cid };
-    if(ccEmails && ccEmails.length) body.cc=ccEmails;
+    const body={ action:'send', mailbox:'processing@ratesandrealty.com',
+      to:to, subject:subject, body_html:bodyHtml };
+    // gmail-inbox reads cc as a single header string; the composer hands over an array.
+    if(ccEmails && ccEmails.length) body.cc=Array.isArray(ccEmails)?ccEmails.join(', '):ccEmails;
     /* PROCESSING@, NOT RENE@ (2026-08-12). This was rene@, which meant every HR
        reply landed in a mailbox the VA is refused by role — she could not see or
        answer a reply even to a VOE she had sent herself. processing@ is reachable
        by both, so Rene and the VA follow up in ONE chain.
-       Still a plain address, not a plus-address: the poller matches primarily on
-       the HR sender address, and voe-inbound-poll now sweeps BOTH mailboxes so
-       requests sent before today — which carry reply_to: rene@ and will be
-       replied to there — keep matching. */
-    body.reply_to='processing@ratesandrealty.com';
+       NOW PLUS-ADDRESSED, and the bare form it replaces was a dead path. This
+       line sent processing@ while voe-inbound-poll queried
+       to:processing+<token>@ and to:rene+<token>@ — so the token rung matched
+       NOTHING for its whole existence, and nothing anywhere reported it. The
+       comment that used to sit here explained the rene@ -> processing@ move in
+       detail without noticing the token was never in the address at all.
+       The token is still only the SECONDARY signal: a recipient's mail system can
+       strip plus-addressing, and some compose a fresh message rather than
+       replying. In-Reply-To against rfc_message_id is what carries the match. */
+    body.reply_to=reply_token
+      ? ('processing+'+reply_token+'@ratesandrealty.com')
+      : 'processing@ratesandrealty.com';
     if(attachments) body.attachments=attachments;
-    const resp=await _authClient().functions.invoke('email-service',{ body:body });
+    const resp=await _authClient().functions.invoke('gmail-inbox',{ body:body });
     const data=resp&&resp.data, error=resp&&resp.error;
-    if(error||!data||data.success!==true){
+    // gmail-inbox answers { ok: true }, where email-service answered { success: true }.
+    if(error||!data||data.ok!==true){
       /* READ THE SERVER'S BODY, not the client library's wrapper.
          functions.invoke returns data:null on a non-2xx and puts the response in
          error.context — so (data && data.error) is undefined and this used to
@@ -13977,16 +14051,19 @@ async function _voeComposerSend(st){
          Vincent Solis's failed VOE, and it explains nothing about why an
          employment verification did not reach the employer. Same extraction
          inbox.js already uses. */
-      let _srv='';
-      try{ if(error&&error.context&&typeof error.context.json==='function'){ const j=await error.context.json(); _srv=(j&&(j.error||j.message))||''; } }catch(_){}
-      if(!_srv){ try{ if(error&&error.context&&typeof error.context.text==='function') _srv=(await error.context.text()||'').slice(0,300); }catch(_){} }
-      throw new Error(_srv || (data&&data.error) || (error&&error.message) || 'send failed');
+      throw new Error(await _lpFnError(error, data, 'send failed'));
     }
     /* ONLY NOW is the order ordered. voe_request_log no longer asserts it — it
        prepares the token and a 'pending' log row, and this is what records that
        the send actually happened. */
     try{ await _authClient().rpc('voe_request_sent',{ p_email_log_id:email_log_id, p_order_id:st.orderId, p_ok:true, p_error:null }); }
     catch(me){ console.warn('[voe_request_sent]', me&&me.message); }
+    /* The ids the reply will be correlated against. Separately caught on purpose:
+       the mail has already reached HR, so failing to record them is not a failed
+       send and must not be reported as one. It costs threading on this request —
+       the reply falls back to the token in Reply-To — and nothing else. */
+    try{ await _authClient().rpc('voe_set_thread',{ p_order_id:st.orderId, p_gmail_message_id:data.message_id||null, p_gmail_thread_id:data.thread_id||null, p_rfc_message_id:data.rfc_message_id||null, p_reply_token:reply_token||null }); }
+    catch(te){ console.warn('[voe_set_thread]', te&&te.message); }
     showToast('VOE request sent to '+to+' ✓');
     closeEmailComposer();
     lpLoadVoes(cid);      // refresh cards (status now ordered) + activity
