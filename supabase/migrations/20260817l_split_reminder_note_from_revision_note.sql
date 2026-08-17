@@ -1,6 +1,47 @@
--- order_reminders_run(p_interval_days integer)
--- language: plpgsql   SECURITY DEFINER
--- Captured 2026-08-14 (due date moved off midnight-today).
+-- Separate the system's suppression notice from the human's revision note.
+--
+-- REVERT:
+--   update loan_orders set revision_note = reminder_note
+--    where reminder_note is not null and coalesce(revision_note,'') = '';
+--   alter table loan_orders drop column if exists reminder_note;
+--   -- then re-apply supabase/sql/db-functions/order_reminders_run.sql as captured
+--   -- at 2026-08-17 (it writes revision_note).
+--
+-- WHY TWO FIELDS
+--
+-- revision_note carried two things written by two authors: the human's "what does
+-- the vendor need to fix", and the system's "Reminder suppressed <date>: ...".
+--
+-- The failure is NOT the system overwriting a human note — it does not. It wrote
+-- only when the field was empty or already started with 'Reminder suppressed'.
+--
+-- It is the other direction. A human typing over the suppression notice DESTROYS
+-- the explanation permanently: the field then matches neither branch, the system
+-- never rewrites it, and the order goes on being silently skipped with nothing
+-- saying why. The instruction that would have fixed the order — "re-send it, or
+-- add a note saying how it was delivered" — is exactly what gets deleted, by the
+-- person who most needed to read it. Rendering a system notice into an editable
+-- textarea makes that a matter of time rather than a possibility.
+--
+-- THE FUNCTION BODY BELOW IS THE 2026-08-17 CAPTURE WITH ONE STATEMENT CHANGED —
+-- the UPDATE now targets reminder_note. Nothing else is touched, and that is
+-- deliberate: a first attempt at this migration RETYPED the function from memory
+-- and silently reverted the due-date fix to
+-- `(now() at time zone 'America/Los_Angeles')::date`, which is the bug that
+-- produced 22 born-overdue tasks. A live function is patched, never rewritten.
+
+alter table public.loan_orders
+  add column if not exists reminder_note text;
+
+comment on column public.loan_orders.reminder_note is
+  'System-written follow-up notice from order_reminders_run. NEVER editable in the UI: it is the only record of why a reminder was suppressed, and a human overwriting it removes the instruction that would have resolved the order. Human notes go in revision_note.';
+
+-- Move the 3 existing notices out of the shared field. No human-authored
+-- revision_note exists today, so nothing hand-written is touched.
+update public.loan_orders
+   set reminder_note = revision_note,
+       revision_note = null
+ where coalesce(revision_note,'') like 'Reminder suppressed %';
 
 CREATE OR REPLACE FUNCTION public.order_reminders_run(p_interval_days integer DEFAULT 2)
  RETURNS TABLE(order_id uuid, order_type text, task_id uuid, reason text)

@@ -12437,7 +12437,7 @@ async function lpLoadOrders(cid){
   try{
     const cl = _authClient();
     const oRes = await cl.from('loan_orders')
-      .select('order_type,status,vendor_id,reference,notes,ordered_at,received_at,revision_note,client_paid,client_paid_at,inspection_date')
+      .select('order_type,status,vendor_id,reference,notes,ordered_at,received_at,revision_note,reminder_note,client_paid,client_paid_at,inspection_date')
       .eq('contact_id',cid);
     _lpOrders = {}; (oRes.data||[]).forEach(o=>{ if(o.order_type!=='voe') _lpOrders[o.order_type]=o; });
     // Resolve names for any already-selected single-row vendors.
@@ -13289,6 +13289,19 @@ function lpRenderOrders(){
     const statusList = row.type==='appraisal' ? _lpApStatuses() : LP_ORDER_STATUS;
     const opts=statusList.map(s=>'<option value="'+s.v+'"'+(s.v===st?' selected':'')+'>'+s.t+'</option>').join('');
     const nr=(st==='needs_revision');
+    /* The human's note shows whenever there IS one, not only in needs_revision.
+       It used to be display:none unless the status matched exactly, so a note
+       typed and then followed by a status change became invisible with no way
+       back to it. */
+    const hasRev = !!String(o.revision_note||'').trim();
+    /* The SYSTEM's follow-up notice — its own column since 20260817l, and
+       rendered READ-ONLY above the textarea rather than into it. Sharing one
+       field meant a human could type over the only record of why a reminder was
+       suppressed, and nothing would ever restore it: order_reminders_run wrote
+       only into an empty field or over its own previous notice, so an
+       overwritten explanation was gone for good — taking with it the one line
+       that said how to fix the order. */
+    const remNote = String(o.reminder_note||'').trim();
     // Status badge color: needs_revision→amber, paid→orange(#f59e0b), scheduled→blue(#60a5fa).
     const stStyle = nr ? 'border-color:rgba(224,168,82,.6);color:#E0B84C;'
                  : paidSt ? 'border-color:rgba(245,158,11,.75);color:#f59e0b;background:rgba(245,158,11,.14);font-weight:600;'
@@ -13325,7 +13338,18 @@ function lpRenderOrders(){
         +statusCell
         +'<span style="font-size:10px;text-align:right;white-space:nowrap;"><span id="lpSaved-'+row.type+'"></span><span id="lpDate-'+row.type+'" style="color:#888;"> '+dateTxt+'</span></span>'
       +'</div>'
-      +'<textarea id="lpRev-'+row.type+'" onblur="lpOrderRevSave(\''+row.type+'\')" placeholder="Revision needed — what does the vendor need to fix?" style="'+revStyle+(nr?'':'display:none;')+'">'+lpEsc(o.revision_note||'')+'</textarea>';
+      /* System notice ABOVE, read-only. Not a textarea and not inside one: it is
+         the only record of why a reminder was suppressed, and it carries the
+         instruction that resolves the order ("re-send it, or add a note saying
+         how it was delivered"). A div cannot be typed over by accident. */
+      +(remNote
+        ? ('<div style="position:relative;z-index:2;margin-top:6px;padding:6px 8px;border-radius:7px;'
+           + 'background:rgba(224,168,82,.10);border:1px solid rgba(224,168,82,.40);'
+           + 'color:#E0B84C;font-size:10.5px;line-height:1.45;overflow-wrap:anywhere;">'
+           + '<span style="font-weight:700;">⚠ Follow-up paused</span> '
+           + lpEsc(remNote) + '</div>')
+        : '')
+      +'<textarea id="lpRev-'+row.type+'" onblur="lpOrderRevSave(\''+row.type+'\')" placeholder="Revision needed — what does the vendor need to fix?" style="'+revStyle+((nr||hasRev)?'':'display:none;')+'">'+lpEsc(o.revision_note||'')+'</textarea>';
     if(row.type==='hoi'){
       html+='<div style="margin-top:8px;">'
         +'<button type="button" onclick="lpHoiOpenComposer()" style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;padding:5px 12px;cursor:pointer;">📨 Request Quotes</button>'
@@ -13492,6 +13516,19 @@ function lpVoeCardHtml(v){
     /* Everything below is the detail. display is set inline so a re-render
        cannot lose an open card. */
     +'<div id="lpVoeBody-'+k+'" style="display:'+(open?'block':'none')+';margin-top:7px;">'
+    /* THE SYSTEM'S FOLLOW-UP NOTICE, read-only and FIRST in the body.
+       All three notices that exist today are on VOE orders, and VOE is not in
+       LP_ORDER_ROWS — it renders here, not in the orders tracker — so surfacing
+       it only on the tracker tiles would have left every real case invisible.
+       A div, never a textarea: this is the only record of why follow-up stopped
+       and it carries the instruction that resolves the order. */
+    +(String(v.reminder_note||'').trim()
+      ? ('<div style="margin-bottom:7px;padding:6px 8px;border-radius:7px;'
+         + 'background:rgba(224,168,82,.10);border:1px solid rgba(224,168,82,.40);'
+         + 'color:#E0B84C;font-size:10.5px;line-height:1.45;overflow-wrap:anywhere;">'
+         + '<span style="font-weight:700;">⚠ Follow-up paused</span> '
+         + lpEsc(String(v.reminder_note).trim()) + '</div>')
+      : '')
     +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">'
       +'<select id="lpVoeBor-'+k+'" onchange="lpVoeBorrowerChange(\''+k+'\',this.value)" style="'+sel+'flex:1;min-width:0;">'+bopts+'</select>'
       +'<select onchange="lpVoeStatusChange(\''+k+'\',this.value)" style="'+sel+'">'+stOpts+'</select>'

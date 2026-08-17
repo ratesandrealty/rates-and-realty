@@ -969,6 +969,56 @@ const SPECS = [
     ],
   },
   {
+    /* The system's follow-up notice must be READABLE and NOT EDITABLE.
+     *
+     * It lived in revision_note, which lpRenderOrders renders into a textarea
+     * that is display:none unless status === 'needs_revision'. All three notices
+     * that exist are on VOE orders sitting at 'ordered'/'received', so every one
+     * of them was in the DOM and invisible. Worse, had they been visible in that
+     * textarea, typing over one would have destroyed the only record of why
+     * follow-up stopped — order_reminders_run never rewrites a field a human has
+     * taken over.
+     *
+     * Now its own column, rendered as a DIV. This asserts both halves: the words
+     * are on screen, and there is no editable control holding them. */
+    name: 'VOE follow-up notice is readable and not editable',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          if (typeof lpRenderVoe !== 'function') return 'HARNESS: lpRenderVoe missing';
+          /* #lpVoeCards is built by lpRenderOrders(), not present in the static
+             HTML — the same mounting step the HOI spec needs. */
+          if (typeof lpRenderOrders === 'function') { try { lpRenderOrders(); } catch (e) {} }
+          if (!document.getElementById('lpVoeCards')) return 'HARNESS: #lpVoeCards never mounted';
+          var NOTE = 'Reminder suppressed 2026-08-17: marked ordered, but no evidence this VOE reached the HR contact.';
+          _lpVoes = [
+            { key: 'k1', id: 'aaaaaaaa-0000-0000-0000-0000000000a1', status: 'ordered',
+              employer_name: 'With Notice', reminder_note: NOTE },
+            { key: 'k2', id: 'bbbbbbbb-0000-0000-0000-0000000000b2', status: 'ordered',
+              employer_name: 'No Notice', reminder_note: null }
+          ];
+          _lpVoeOpen = { k1: true, k2: true };
+          lpRenderVoe();
+          var host = document.getElementById('lpVoeCards');
+          var b1 = document.getElementById('lpVoeBody-k1');
+          var b2 = document.getElementById('lpVoeBody-k2');
+          if (!b1 || !b2) return 'HARNESS: fixture cards did not render';
+          // Readable: the words are visible on the card that has one.
+          var shown = /no evidence this VOE reached/.test(b1.innerText);
+          // Not editable: no input or textarea anywhere holds the notice text.
+          var editable = Array.prototype.slice
+            .call(host.querySelectorAll('textarea, input'))
+            .some(function (e) { return /no evidence this VOE reached/.test(e.value || ''); });
+          // Paired: the card without a notice gains nothing. textContent, so a
+          // collapsed card cannot pass this vacuously.
+          var leaked = /Follow-up paused/.test(b2.textContent);
+          return 'shown=' + shown + ' editable=' + editable + ' leaked=' + leaked;
+        })()`,
+       'shown=true editable=false leaked=false'],
+    ],
+  },
+  {
     /* The e-sign workspace's Send is legitimately disabled with no signer, and
      * that is fine — what was not fine is that it said nothing, so a refusal
      * and a dead button looked identical. Assert the reason is ON SCREEN and
