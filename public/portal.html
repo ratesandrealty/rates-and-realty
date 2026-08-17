@@ -603,11 +603,25 @@ function loadShowings() {
   list.innerHTML = '<div style="color:var(--muted);font-size:.9rem;padding:8px 0">Loading...</div>';
   empty.style.display = 'none';
 
-  var url = SB + '/rest/v1/showings?or=(email.eq.' + encodeURIComponent(currentUser.email) + ',portal_user_id.eq.' + currentUser.id + ')&order=created_at.desc';
-
-  fetch(url, { headers: sbHeaders() })
+  /* Reads go through portal-data, not /rest/v1/showings.
+     This was one of three callers still reading the table directly with the
+     public anon key, and the reason public_read_showings cannot be closed: a
+     borrower holds no Supabase session, so the borrower IS the anonymous role.
+     portal-data applies the same or-on-portal_user_id-or-email scope this URL
+     used to build client-side, but server-side and with both inputs validated
+     before they reach a PostgREST filter string. */
+  fetch(SB + '/functions/v1/portal-data', {
+    method: 'POST',
+    headers: sbHeaders(),
+    body: JSON.stringify({
+      action: 'get_showings',
+      portal_user_id: currentUser.id || null,
+      email: currentUser.email || null
+    })
+  })
   .then(function(r) { return r.json(); })
-  .then(function(data) {
+  .then(function(res) {
+    var data = (res && res.showings) || [];
     list.innerHTML = '';
     if (!data || !data.length) {
       empty.style.display = 'block';

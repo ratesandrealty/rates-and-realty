@@ -875,11 +875,27 @@ async function initAddToBatchBanner() {
   var anon = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
   // Load batch context (date/time/ids) from first row
   try {
-    var r = await fetch(SB + '/rest/v1/showings?batch_id=eq.' + bid + '&deleted_at=is.null&limit=1', {
-      headers: { 'Authorization':'Bearer '+anon, 'apikey':anon }
+    /* Batch context comes from portal-data, not /rest/v1/showings. This was one
+       of three callers still reading the table directly with the public anon
+       key. The read is scoped server-side to the caller's own portal_user_id or
+       email, so you can only load the context of a tour that is yours — the
+       direct URL it replaces would return any batch to anyone holding the id.
+       deleted_at is filtered here rather than in the query because the action
+       returns the whole batch and reports which rows are still live. */
+    var pu = (typeof getPortalUser === 'function') ? getPortalUser() : null;
+    var r = await fetch(SB + '/functions/v1/portal-data', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'Authorization':'Bearer '+anon, 'apikey':anon },
+      body: JSON.stringify({
+        action: 'get_batch_showings',
+        batch_id: bid,
+        portal_user_id: (pu && pu.id) || null,
+        email: (pu && pu.email) || null
+      })
     });
-    var rows = await r.json();
-    _addToBatchContext = (rows && rows[0]) || null;
+    var res = await r.json();
+    var rows = ((res && res.showings) || []).filter(function (x) { return !x.deleted_at; });
+    _addToBatchContext = rows[0] || null;
   } catch(e) { console.warn('[addToBatch] context fetch failed:', e); }
   if (!_addToBatchContext) { showToast && showToast('Tour not found'); return; }
   var dateLabel = _addToBatchContext.preferred_date

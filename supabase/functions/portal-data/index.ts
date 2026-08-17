@@ -510,7 +510,14 @@ Deno.serve(async (req: Request) => {
     if (action === 'get_batch_showings') {
       const { batch_id } = body;
       if (!batch_id || !UUID_RE.test(String(batch_id))) return err('valid batch_id required');
-      let q = sb.from('showings').select('id, status, deleted_at, preferred_date, preferred_time')
+      /* batch_id, portal_user_id and contact_id are returned because
+         search-homes.html's "add homes to this tour" copies them onto the rows
+         it inserts — without them a home added to an existing tour would land
+         unowned, which is the orphan case portal-auth-modal's removed sync was
+         nominally there to repair. Safe to return: the caller already proved it
+         owns these rows to get this far. */
+      let q = sb.from('showings')
+        .select('id, batch_id, status, deleted_at, preferred_date, preferred_time, portal_user_id, contact_id')
         .eq('batch_id', batch_id);
       const scoped = scopeToCaller(q, body);
       if (!scoped) return err('portal_user_id or email required');
