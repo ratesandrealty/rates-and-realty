@@ -29,14 +29,16 @@
 //
 // Body opts: { dry_run?: bool, lookback_days?: int (default 14),
 //              max_messages?: int (default 60), mailboxes?: string[] }
-// Deployed verify_jwt=false (project cron convention) with an x-cron-key gate.
+// Deployed verify_jwt=false (project cron convention); the real gate is
+// requireStaff({allowInternal, roles:['admin']}) — x-internal-secret via the
+// vault, or an admin session.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { gmailApi } from '../_shared/gmail-dwd.ts'
+import { requireStaff } from '../_shared/require-staff.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const CRON_KEY = Deno.env.get('CRON_KEY') || ''
 
 const PROCESSING = 'processing@ratesandrealty.com'
 const RENE = 'rene@ratesandrealty.com'
@@ -78,12 +80,22 @@ function parseEmail(raw: string): string {
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: J })
 
-  /* Gate. verify_jwt=false is the project's cron convention, so this header is
-     the control, not decoration. When CRON_KEY is unset the function refuses
-     rather than running open — an unset secret must never read as "no gate
-     needed", which is how sms-service became an open relay. */
-  if (!CRON_KEY) return err('CRON_KEY is not configured; refusing to run ungated', 500)
-  if (req.headers.get('x-cron-key') !== CRON_KEY) return err('forbidden', 403)
+  /* Gate. verify_jwt=false is the cron convention and is NOT what protects this:
+     the anon key is a project-signed JWT printed in every page, so true would not
+     have closed it either.
+
+     requireStaff({allowInternal}) rather than a fresh x-cron-key of its own. This
+     project had THREE cron-secret conventions — x-cron-secret, x-cron-key,
+     x-internal-secret — and that spread is exactly how the CRON_KEY rotation
+     missed three workflows: a rotation is only as reliable as the number of
+     places somebody has to remember. x-internal-secret is the one that survived,
+     validated against the vault, and a fourth convention here would re-open the
+     problem that consolidation closed.
+
+     roles:['admin'] is explicit because requireStaff DEFAULTS OPEN relative to
+     admin — its default STAFF_ROLES admits va, agent and loa. */
+  const gate = await requireStaff(req, { allowInternal: true, roles: ['admin'], what: 'quote-reply-poll' })
+  if (!gate.ok) return err(gate.msg || 'forbidden', gate.status || 403)
 
   const body = await req.json().catch(() => ({} as any))
   const dryRun = !!body.dry_run

@@ -253,12 +253,19 @@ verify_jwt = false
 # cron jobid 37 (*/10) posts with no Authorization header.
 verify_jwt = false
 
+[functions.zztest-mailbox-insert]
+# TEMPORARY proof fixture for quote-reply-poll. DELETE AFTER THE PROOFS.
+# requireStaff(allowInternal, roles:['admin']); refuses any mailbox but rene@/processing@.
+verify_jwt = false
+
 [functions.quote-reply-poll]
 # Cron-invoked with no Authorization header, same convention as voe-inbound-poll.
 # verify_jwt = false is NOT what protects this function — the anon key is a
 # project-signed JWT and is printed in every page, so true would not have closed
-# it either. The x-cron-key header is the access control, and the function
-# REFUSES TO RUN when CRON_KEY is unset rather than falling open.
+# it either. requireStaff(allowInternal, roles:['admin']) is the access control:
+# x-internal-secret via the vault, or an admin session. Deliberately NOT a new
+# x-cron-key — three competing cron-secret names are how a rotation missed three
+# workflows, and x-internal-secret is the one that survived that consolidation.
 verify_jwt = false
 
 # NOTE: loan-date-nudges was pinned here. It moved to the guarded-senders
