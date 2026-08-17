@@ -895,6 +895,16 @@ serve(async (req) => {
       const text = body.body_text ? String(body.body_text) : ''
       const cc = body.cc ? String(body.cc).trim() : ''
       const bcc = body.bcc ? String(body.bcc).trim() : ''
+      /* Reply-To, restricted to a plus-address of OUR OWN mailboxes.
+         HOI/VOE need processing+<token>@ so a reply names the row it belongs to.
+         An unrestricted Reply-To would be a phishing primitive: mail genuinely
+         From: a ratesandrealty mailbox, DKIM-signed by us, whose replies go to
+         an address the caller chose. Confining it to rene@/processing@ (with or
+         without a +tag) gives the token what it needs and nothing else. */
+      const replyTo = body.reply_to ? String(body.reply_to).trim() : ''
+      if (replyTo && !/^(rene|processing)(\+[^@\s]+)?@ratesandrealty\.com$/i.test(replyTo)) {
+        return err('reply_to must be a rene@/processing@ address, optionally plus-tagged', 400)
+      }
       if (!to || !subject || !html) return err('to, subject, body_html required')
 
       /* ── REFUSE UNROUTABLE RECIPIENTS ────────────────────────────────────
@@ -989,6 +999,7 @@ serve(async (req) => {
 
       const raw = b64url(utf8ToB64(buildMime({
         from: mailbox, to, cc, bcc, subject, html, text, inReplyTo, references,
+        replyTo: replyTo || null,
         attachments: outAtts,
       })))
       const sendBody: any = { raw }
