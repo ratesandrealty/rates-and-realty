@@ -898,45 +898,59 @@ const SPECS = [
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,
     role: 'admin',
     evals: [
+      /* ONE eval, rendering and asserting in the SAME synchronous block.
+         Split across several evals this raced the page's own lpHoiLoadList(),
+         which completes asynchronously after load, re-renders from the real
+         (empty) list and replaced the fixture — the later assertions then
+         queried cards that no longer existed and reported "no card", which reads
+         as a renderer fault and is not one. Nothing can re-render between the
+         render and the checks if they share a tick. */
       [`(function(){
-          /* #lpHoiQuotes is built by lpRenderOrders(), not present in the static
-             HTML, so mount it first. If it still is not there, say so as a
-             HARNESS failure — otherwise every assertion below reads null and the
-             run blames the renderer for the probe's own setup. */
           if (typeof lpRenderOrders === 'function') { try { lpRenderOrders(); } catch (e) {} }
           if (!document.getElementById('lpHoiQuotes')) return 'HARNESS: #lpHoiQuotes never mounted';
+          if (typeof _lpHoiRepliesHtml !== 'function') return 'HARNESS: _lpHoiRepliesHtml missing';
+
+          var A = 'aaaaaaaa-0000-0000-0000-000000000001';
+          var B = 'bbbbbbbb-0000-0000-0000-000000000002';
+          /* Open the OWNING card before rendering. Two cards collapse by default
+             (_lpHoiOpen = !many) and innerText excludes display:none content, so
+             a visibility assertion on a collapsed card measures the collapse.
+             lpHoiRenderList keeps an explicit choice. Not via lpHoiToggle: that
+             re-renders from _lpHoiList and would drop the fixture. */
+          _lpHoiOpen[A] = true;
           lpHoiRenderList([
-            { id: 'aaaaaaaa-0000-0000-0000-000000000001', agent_email: 'withreply@example.invalid',
-              agent_name: 'With Reply', status: 'sent', is_selected: false,
+            { id: A, agent_email: 'withreply@example.invalid', agent_name: 'With Reply',
+              status: 'sent', is_selected: false,
               replies: [{ id: 'r1', source: 'quote_reply_log', matched_by: 'in_reply_to',
                           direction: 'inbound', from: 'withreply@example.invalid',
                           at: '2026-08-17T12:00:00Z',
                           preview: 'Quote is $1,842/yr HO-3 five hundred deductible' }] },
-            { id: 'bbbbbbbb-0000-0000-0000-000000000002', agent_email: 'noreply@example.invalid',
-              agent_name: 'No Reply', status: 'sent', is_selected: false, replies: [] }
+            { id: B, agent_email: 'quiet@example.invalid', agent_name: 'Quiet Agent',
+              status: 'sent', is_selected: false, replies: [] }
           ]);
-          return String(document.querySelectorAll('#lpHoiQuotes [data-hoi-id]').length);
+
+          var ca = document.querySelector('[data-hoi-id="' + A + '"]');
+          var cb = document.querySelector('[data-hoi-id="' + B + '"]');
+          if (!ca || !cb) return 'HARNESS: fixture cards did not render';
+
+          // VISIBLE on the owning card — innerText, and that card is expanded.
+          var visible = /1,842/.test(ca.innerText);
+          // The rung that matched is on screen, not swallowed.
+          var tier = /matched by in_reply_to/.test(ca.innerText);
+          /* ABSENT from the other card — textContent ON PURPOSE. That card is
+             collapsed, so an innerText check returns '' for everything inside it
+             and would PASS VACUOUSLY even if the reply had been drawn there. */
+          var leaked = /1,842/.test(cb.textContent);
+          /* A card with no replies gains no section at all. The second agent is
+             named 'Quiet Agent' deliberately: it was 'No Reply', whose own NAME
+             contains "Repl", so this matched the fixture rather than a rendered
+             section and reported a leak that did not exist. */
+          var emptySection = /Repl/.test(cb.textContent);
+
+          return 'visible=' + visible + ' tier=' + tier
+               + ' leaked=' + leaked + ' emptySection=' + emptySection;
         })()`,
-       '2'],
-      // The reply text appears, once.
-      ['(document.getElementById("lpHoiQuotes").innerText.match(/1,842/g) || []).length + ""', '1'],
-      /* PAIRED: it is on the card that owns it, and NOT on the one that does not.
-         Counting occurrences page-wide would pass even if the reply were drawn on
-         both cards, which is the exact bug. Ask each card separately. */
-      ['(function(){var c=document.querySelector(\'[data-hoi-id="aaaaaaaa-0000-0000-0000-000000000001"]\');'
-        + 'return c && /1,842/.test(c.innerText) ? "reply on its own card" : "MISSING from its own card";})()',
-       'reply on its own card'],
-      ['(function(){var c=document.querySelector(\'[data-hoi-id="bbbbbbbb-0000-0000-0000-000000000002"]\');'
-        + 'return c && /1,842/.test(c.innerText) ? "LEAKED onto the other card" : "clean";})()',
-       'clean'],
-      // The rung that matched is on screen, not swallowed.
-      ['/matched by in_reply_to/.test(document.getElementById("lpHoiQuotes").innerText) ? "tier shown" : "tier hidden"',
-       'tier shown'],
-      /* A card with no replies gains no section at all — the panel should look
-         exactly as it did before this existed when there is nothing to show. */
-      ['(function(){var c=document.querySelector(\'[data-hoi-id="bbbbbbbb-0000-0000-0000-000000000002"]\');'
-        + 'return c && /Repl/.test(c.innerText) ? "empty section rendered" : "no section";})()',
-       'no section'],
+       'visible=true tier=true leaked=false emptySection=false'],
     ],
   },
   {
