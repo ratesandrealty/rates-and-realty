@@ -1,6 +1,6 @@
 -- voe_match_reply(p_from_email text, p_to_email text, p_cc_email text, p_subject text, p_body text, p_reply_token text)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-17. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
