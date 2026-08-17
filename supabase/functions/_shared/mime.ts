@@ -77,6 +77,7 @@ export function htmlToText(html: string): string {
 export function buildMime(o: {
   from: string; to: string; cc?: string; bcc?: string; subject: string
   html: string; text?: string; inReplyTo?: string | null; references?: string | null
+  replyTo?: string | null
   attachments?: OutAttachment[]
   // Injectable only so tests get deterministic boundaries; production uses randomUUID.
   boundaryFn?: () => string
@@ -92,6 +93,16 @@ export function buildMime(o: {
   if (o.cc) h.push(`Cc: ${o.cc}`)
   // Gmail honors a Bcc header on send and strips it from every delivered copy.
   if (o.bcc) h.push(`Bcc: ${o.bcc}`)
+  /* Reply-To carries the plus-addressed correlation token for HOI/VOE quote
+     requests, so a reply lands on an address that names the row it belongs to.
+     CR and LF are stripped rather than rejected: this value reaches here from a
+     caller, and a bare newline in a header value is header INJECTION — it would
+     let a caller append its own Bcc to outbound mail sent from a staff mailbox.
+     Stripping is safe because no legal address contains either character. */
+  if (o.replyTo) {
+    const rt = String(o.replyTo).replace(/[\r\n]+/g, ' ').trim()
+    if (rt) h.push(`Reply-To: ${rt}`)
+  }
   h.push(`Subject: ${encSubject(o.subject)}`)
   if (o.inReplyTo) h.push(`In-Reply-To: ${o.inReplyTo}`)
   if (o.references) h.push(`References: ${o.references}`)

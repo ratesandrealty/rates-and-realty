@@ -895,6 +895,16 @@ serve(async (req) => {
       const text = body.body_text ? String(body.body_text) : ''
       const cc = body.cc ? String(body.cc).trim() : ''
       const bcc = body.bcc ? String(body.bcc).trim() : ''
+      /* Reply-To, restricted to a plus-address of OUR OWN mailboxes.
+         HOI/VOE need processing+<token>@ so a reply names the row it belongs to.
+         An unrestricted Reply-To would be a phishing primitive: mail genuinely
+         From: a ratesandrealty mailbox, DKIM-signed by us, whose replies go to
+         an address the caller chose. Confining it to rene@/processing@ (with or
+         without a +tag) gives the token what it needs and nothing else. */
+      const replyTo = body.reply_to ? String(body.reply_to).trim() : ''
+      if (replyTo && !/^(rene|processing)(\+[^@\s]+)?@ratesandrealty\.com$/i.test(replyTo)) {
+        return err('reply_to must be a rene@/processing@ address, optionally plus-tagged', 400)
+      }
       if (!to || !subject || !html) return err('to, subject, body_html required')
 
       /* ── REFUSE UNROUTABLE RECIPIENTS ────────────────────────────────────
@@ -989,6 +999,7 @@ serve(async (req) => {
 
       const raw = b64url(utf8ToB64(buildMime({
         from: mailbox, to, cc, bcc, subject, html, text, inReplyTo, references,
+        replyTo: replyTo || null,
         attachments: outAtts,
       })))
       const sendBody: any = { raw }
@@ -1013,9 +1024,20 @@ serve(async (req) => {
       // from what we sent rather than losing the record entirely. Both paths carry the same
       // gmail_message_id, and the UNIQUE index on it makes a retry a no-op instead of a dup.
       let row: any
+      /* The RFC Message-ID header — NOT sj.id, and the difference is load-bearing
+         for anything correlating replies. sj.id is Gmail's API id (16 hex chars,
+         e.g. 19ff76c7c7610398); a reply's In-Reply-To/References carry the RFC
+         header (<...@mail.gmail.com>). Matching In-Reply-To against sj.id can
+         never hit, so callers that thread on replies need the header returned.
+         The fetch below already has it; it was simply never surfaced.
+         Stays null on the fallback path — the mail went out but we cannot prove
+         which header it carried, and a guess there would be worse than a null. */
+      let rfcMessageId: string | null = null
       const gm = await gmailApi(mailbox, `messages/${sj.id}?format=full`)
       if (gm.ok) {
-        row = messageToRow(mailbox, resolvedThread, await gm.json())
+        const gj = await gm.json()
+        rfcMessageId = hdr(gj.payload && gj.payload.headers, 'Message-ID')
+        row = messageToRow(mailbox, resolvedThread, gj)
       } else {
         const nowIso = new Date().toISOString()
         const toList = splitAddrs(to)
@@ -1062,7 +1084,8 @@ serve(async (req) => {
       }
 
       return ok({
-        ok: true, message_id: sj.id, thread_id: resolvedThread, persisted,
+        ok: true, message_id: sj.id, thread_id: resolvedThread,
+        rfc_message_id: rfcMessageId, persisted,
         filed_as: matched_by, attachments: attMeta.length,
       })
     }

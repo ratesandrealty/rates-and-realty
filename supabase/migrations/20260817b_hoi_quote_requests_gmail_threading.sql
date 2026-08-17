@@ -15,6 +15,22 @@
 --     drop column if exists gmail_thread_id,
 --     drop column if exists reply_token;
 --
+-- ┌──────────────────────────────────────────────────────────────────────────┐
+-- │ CORRECTION, added by 20260817c. The paragraph immediately below is WRONG  │
+-- │ and is kept only because this migration already ran.                      │
+-- │                                                                           │
+-- │ gmail_message_id is NOT the RFC Message-ID. It holds Gmail's API id       │
+-- │ (16 hex chars, e.g. 19ff76c7c7610398), because that is what this column   │
+-- │ name means everywhere here — messageToRow() stores `msg.id` into the      │
+-- │ email_log column of the same name. A reply's In-Reply-To carries the RFC  │
+-- │ header, <...@mail.gmail.com>. Comparing the two matches NOTHING.          │
+-- │                                                                           │
+-- │ So the "PRIMARY correlation" described below could never have fired — the │
+-- │ same silent-dead-path failure this file correctly diagnoses for VOE's     │
+-- │ plus-token, reproduced in its own primary path. 20260817c adds            │
+-- │ rfc_message_id, which is what In-Reply-To actually matches.               │
+-- └──────────────────────────────────────────────────────────────────────────┘
+--
 -- WHY THESE COLUMNS
 -- gmail_message_id is the RFC Message-ID of the request we sent. A reply carries
 -- it in In-Reply-To/References, and that is the PRIMARY correlation — the only

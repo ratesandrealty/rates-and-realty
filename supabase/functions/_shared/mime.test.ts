@@ -112,3 +112,28 @@ Deno.test('large attachment does not blow the argument limit', () => {
   const out = b64Binary(big)
   assert(out.length > 2 * 1024 * 1024, 'expected base64 expansion')
 })
+
+/* Reply-To carries the HOI/VOE correlation token (processing+<token>@). These
+   cover the same ground as the filename-injection test above, because the value
+   reaches buildMime from a caller and lands straight in a header. */
+Deno.test('replyTo emits a Reply-To header', () => {
+  const m = buildMime({ ...base, boundaryFn: fresh(), replyTo: 'processing+abc123@ratesandrealty.com' })
+  assertStringIncludes(m, 'Reply-To: processing+abc123@ratesandrealty.com')
+})
+
+Deno.test('no replyTo → no Reply-To header at all', () => {
+  const m = buildMime({ ...base, boundaryFn: fresh() })
+  // Absent, not empty — an empty Reply-To is honoured by some clients as "nobody".
+  const has = m.split('\r\n').some((l) => /^reply-to\s*:/i.test(l))
+  assert(!has, 'Reply-To must be omitted entirely when none was supplied')
+})
+
+Deno.test('CRLF in replyTo cannot inject a header', () => {
+  const m = buildMime({
+    ...base,
+    boundaryFn: fresh(),
+    replyTo: 'processing+t@ratesandrealty.com\r\nBcc: attacker@evil.com',
+  })
+  const injected = m.split('\r\n').some((l) => /^bcc\s*:/i.test(l))
+  assert(!injected, 'CRLF in replyTo must not start a new header line')
+})
