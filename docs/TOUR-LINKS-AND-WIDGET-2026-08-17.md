@@ -1,8 +1,24 @@
 # Stale tour share links, and the dashboard widget's "View →"
 
-Two logged items awaiting a decision. **Nothing here has been applied** — no
-expiry set, no link revoked beyond the four probe tours already deleted, no
-widget change made.
+**UPDATE 2026-08-17: section 1 is now APPLIED.** Rene confirmed "expire all"
+after reading the report below, and all 15 tours were expired. Section 2 (the
+widget) and section 3 (the batch split) remain logged, not fixed.
+
+Proven both directions on a ZZ-TEST batch rather than a real tour, because
+loading a live tour link increments its `view_count` and fires the lead scorer
+— the probe would have altered the very data being protected:
+
+```
+BEFORE   /tour/kpcM2yqvaq   HTTP 200   11,396 bytes   tour served in full
+AFTER    /tour/kpcM2yqvaq   HTTP 404      268 bytes   "Tour not available"
+```
+
+Final state: **15 tours, 15 expired, 0 never-expiring**, no ZZ-TEST residue.
+Revert is one statement — every row was `expires_at IS NULL` beforehand:
+
+```sql
+update showing_batches set expires_at = null where expires_at is not null;
+```
 
 ## 1. Share links — every remaining tour is stale
 
@@ -98,3 +114,30 @@ no share link, because the trigger that mints one fires on `showing_batches`
 insert and that insert never happens. Worth resolving before the deep link is
 added, or the fix will work for staff-created tours and dead-end on
 borrower-created ones.
+
+## 3. The size of the split — logged, not fixed
+
+`submit-showing` inserts `showings` with a generated `batch_id` and never inserts
+the `showing_batches` row. Measured 2026-08-17, after the probe cleanup:
+
+| | |
+|---|---|
+| distinct `batch_id`s in `showings` | 11 |
+| `showing_batches` rows | 15 |
+| **`batch_id`s with NO batch row** | **1** |
+| **`showings` rows those cover** | **4** |
+| `showings` with a null `batch_id` | 0 |
+
+The one orphan is `7a9b8440` — four homes, created 2026-06-13, the tour Rene
+clicked through on 2026-08-16.
+
+**READ THE SMALLNESS CORRECTLY.** One orphan out of eleven is not evidence the
+gap is narrow; it is evidence `submit-showing` has been used once. Every future
+borrower-submitted tour adds exactly one more, and each arrives invisible to the
+staff tours list, with no share link and no deep-link target. The rate is one per
+use, not one in eleven.
+
+The reverse direction is not symmetric and is worth stating: 15 batch rows
+against 11 batch_ids means **four `showing_batches` rows have no homes at all** —
+the create-flow artifacts described above. So the two tables disagree in both
+directions, for two unrelated reasons.
