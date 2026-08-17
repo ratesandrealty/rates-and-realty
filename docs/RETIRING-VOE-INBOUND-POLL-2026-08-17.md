@@ -186,13 +186,19 @@ for its entire existence**: `lead-detail` sent a bare `processing@` while this
 matcher and the poller queried `processing+<token>@`, so it never matched
 anything until the send was fixed on 2026-08-17.
 
-## Proposed order of operations
+## Order of operations
 
-1. `select cron.unschedule(37);` — stop the sweep. Reversible; leaves everything
-   else in place.
-2. Watch one working day. `quote_reply_log` should keep correlating; nothing else
-   should change.
-3. Then, if the timeline entry is judged worth keeping, add the `email_log`
-   insert to `quote-reply-poll` **before** dropping `voe_match_reply`.
-4. `drop function public.voe_match_reply(...)` last, and only once
-   `voe-inbound-poll` itself is deleted — it is that function's only caller.
+1. **DONE 2026-08-17 ~17:25Z — `cron.unschedule(37)`.** Job 37
+   (`voe-inbound-poll-10min`, `*/10`) is gone from `cron.job`. Reversible: the
+   edge function and `voe_match_reply` both remain, so re-scheduling restores it
+   exactly.
+2. **Watch one working day.** `quote-reply-poll` (job 50) should keep running and
+   correlating; nothing else should change.
+3. **The `email_log` write is NOT being added, decided rather than deferred.** A
+   poller that mutates the system of record on an inference is the thing this
+   design deliberately avoided, `gmail-inbox` still persists a VOE reply when a
+   human opens the thread, and the panel reads `quote_reply_log` either way — so
+   nothing visible is lost.
+4. `drop function public.voe_match_reply(...)` last, after the working day, and
+   only once `voe-inbound-poll` itself is deleted — it is that function's only
+   caller. Until then it stays in place, callable but uncalled.
