@@ -1,3 +1,10 @@
+> **SUPERSEDED 2026-08-17 — see `PORTAL-IDENTITY-STATE-2026-08-17.md`.**
+>
+> Kept as history. Written the day before the `showings` work finished, so its
+> section 5 (`showings` readable by anyone with the anon key) is **no longer
+> true** — that is now closed. Its section 4 finding, that the borrower RLS layer
+> already largely exists, still stands and still shortens the migration.
+
 # Borrower portal — reassessment before the Supabase Auth migration
 
 Read-only. Nothing changed: no guard added, no function deployed, no schema or

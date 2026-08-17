@@ -1,3 +1,14 @@
+> **SUPERSEDED 2026-08-17 — see `PORTAL-IDENTITY-STATE-2026-08-17.md`.**
+>
+> Kept as history. **Its exposure tables are stale and should not be quoted.**
+> Since this was written: `get_all_showings` was removed, `save_application` and
+> `get_documents` were narrowed to a uuid, the `showings` table was closed to all
+> anonymous access except the public form's insert, and five showing-management
+> actions were added to portal-data with caller scoping.
+>
+> The central claim below is still true and is why the current doc exists: the
+> portal issues no session, so nothing in portal-data can authenticate anybody.
+
 # The borrower portal has no authentication
 
 Not "weak authentication". None. `portal-auth` verifies a password and then
