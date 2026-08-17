@@ -33,10 +33,32 @@ const SERVICE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const BUCKET = 'borrower-documents';
 const REQUIRED = ['voe_loan_number', 'voe_employer_block', 'voe_date', 'voe_applicant_block'];
 
+/* x-client-info IS REQUIRED HERE, and leaving it out made this function
+   unreachable from every browser for eleven days.
+
+   supabase-js attaches x-client-info to every functions.invoke(). The browser
+   therefore lists it in Access-Control-Request-Headers on the preflight, and a
+   preflight that does not allow back EVERY requested header fails — so the
+   browser never sends the POST at all. What the user sees is supabase-js's
+   client-side FunctionsFetchError, "Failed to send a request to the Edge
+   Function", which reads like the function is down or missing. It was neither:
+   deployed, ACTIVE, verify_jwt matching its pin, and answering curl perfectly.
+
+   The edge logs are what identified it — OPTIONS 200 with NO POST following.
+   The preflight succeeded and the request was abandoned in the browser.
+
+   WHY IT SURVIVED: curl and Deno do not enforce CORS and send no preflight, so
+   every non-browser check passed. This function has never once succeeded from
+   the page that calls it (added 2026-08-06, 352e98f). gmail-inbox allows
+   'authorization, x-client-info, apikey, content-type' and is why HOI worked
+   while VOE did not — the difference was three words in a header, not the
+   caller.
+
+   Any function a browser reaches through supabase-js needs x-client-info here. */
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 const json = (d: unknown, s = 200) =>
   new Response(JSON.stringify(d), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
