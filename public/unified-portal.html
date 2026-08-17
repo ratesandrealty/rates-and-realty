@@ -1799,12 +1799,23 @@ function viewListing(key, addr) {
   }
 }
 
-function removeSaved(id) {
-  fetch('https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/portal-data', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'remove_saved_home', id: id })
-  }).then(function() { showToast('Removed from saved', 'info'); loadSavedHomes(); loadDashboardStats(); })
-    .catch(function() { showToast('Error removing', 'error'); });
+/* Sends the caller's identity, and READS THE RESULT.
+   This used to post only { action, id } — no identity at all, so knowing a
+   saved_listings id was enough to delete anyone's row — and it toasted "Removed
+   from saved" from a bare .then(), never looking at the response. A refusal and
+   a success produced exactly the same message. portal-data now scopes the delete
+   to the caller and returns the affected count; `deleted: 0` is a refusal and
+   says so. */
+async function removeSaved(id) {
+  try {
+    var res = await _shCall('remove_saved_home', { id: id });
+    if (!res || !res.deleted) throw new Error('That saved home is not yours, or it was already removed.');
+    showToast('Removed from saved', 'info');
+    loadSavedHomes();
+    loadDashboardStats();
+  } catch (e) {
+    showToast('Could not remove: ' + ((e && e.message) || 'error'), 'error');
+  }
 }
 
 /* ===== SHOWING CART ===== */
