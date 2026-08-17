@@ -13106,21 +13106,29 @@ function lpHoiToggle(id){
  * matches an id we generated and stored, while address_unique means only that
  * one row happened to hold that sender's address. Somebody reading a premium off
  * this card should be able to see which of those they are trusting. */
-function _lpHoiRepliesHtml(r){
-  const reps = (r && Array.isArray(r.replies)) ? r.replies : [];
-  if(!reps.length) return '';
+function _lpHoiActivityHtml(r){
+  const evs = (r && Array.isArray(r.activity)) ? r.activity : [];
+  if(!evs.length) return '';
   return '<div style="margin-top:7px;padding-top:7px;border-top:1px dashed rgba(255,255,255,.10);">'
     + '<div style="font-size:9.5px;font-weight:700;color:#8f8f8f;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;">'
-      + 'Repl' + (reps.length>1 ? ('ies (' + reps.length + ')') : 'y') + '</div>'
-    + reps.map(function(q){
+      + 'Email activity (' + evs.length + ')</div>'
+    + evs.map(function(q){
+        const out = (q && q.direction === 'outbound');
         const when = q && q.at ? _lpDD(q.at) : '';
         const tier = String((q && q.matched_by) || '');
         const weak = (tier === 'address_unique');
+        /* The SEND is the half that was missing, and it is what makes a
+           sent-and-unanswered card different from one where nothing happened.
+           Direction is shown as a word, not only a colour — the two states are
+           the whole point of the section. */
+        const who = out ? ('to ' + ((q && q.to) || '—')) : ('from ' + ((q && q.from) || 'unknown sender'));
         return '<div style="font-size:10.5px;margin-bottom:5px;overflow-wrap:anywhere;">'
-          + '<div style="color:#9fd0a8;font-weight:600;">' + lpEsc((q && q.from) || 'unknown sender')
+          + '<div style="color:' + (out ? '#C9A84C' : '#9fd0a8') + ';font-weight:600;">'
+            + (out ? 'Sent ' : 'Reply ') + lpEsc(who)
             + (when ? ('<span style="color:#777;font-weight:400;"> · ' + lpEsc(when) + '</span>') : '')
           + '</div>'
-          + ((q && q.preview) ? ('<div style="color:#bbb;margin-top:1px;">' + lpEsc(q.preview) + '</div>') : '')
+          + ((q && q.subject) ? ('<div style="color:#ccc;margin-top:1px;">' + lpEsc(q.subject) + '</div>') : '')
+          + ((q && q.preview) ? ('<div style="color:#999;margin-top:1px;">' + lpEsc(q.preview) + '</div>') : '')
           + (tier ? ('<div style="margin-top:2px;font-size:9px;color:' + (weak ? '#E5A0A0' : '#777') + ';">matched by '
               + lpEsc(tier) + (weak ? ' — sender address only, verify before trusting' : '') + '</div>') : '')
           + '</div>';
@@ -13189,11 +13197,13 @@ function lpHoiRenderList(rows){
         /* THE AGENT'S REPLY, if the poller correlated one to THIS request.
            hoi_quote_list carries them per request (q.row_id = h.id), so a
            borrower with three requests out to three agents sees each reply on
-           the card it belongs to rather than all three on all three.
+           the card it belongs to rather than all three on all three. The SEND is
+           here too, joined on the thread it created — without it a sent and
+           unanswered card looked identical to one where nothing happened.
            matched_by is shown, not hidden: 'address_unique' is a weaker claim
            than 'in_reply_to', and whoever reads a quote off this card should be
            able to see how confident the match was. */
-        +_lpHoiRepliesHtml(r)
+        +_lpHoiActivityHtml(r)
       +'</div>'
       +'</div>';
   }).join('');

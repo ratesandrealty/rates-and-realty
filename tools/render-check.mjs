@@ -921,12 +921,23 @@ const SPECS = [
           lpHoiRenderList([
             { id: A, agent_email: 'withreply@example.invalid', agent_name: 'With Reply',
               status: 'sent', is_selected: false,
-              replies: [{ id: 'r1', source: 'quote_reply_log', matched_by: 'in_reply_to',
-                          direction: 'inbound', from: 'withreply@example.invalid',
-                          at: '2026-08-17T12:00:00Z',
-                          preview: 'Quote is $1,842/yr HO-3 five hundred deductible' }] },
+              activity: [
+                { id: 'r1', source: 'quote_reply_log', matched_by: 'in_reply_to',
+                  direction: 'inbound', from: 'withreply@example.invalid',
+                  at: '2026-08-17T12:00:00Z',
+                  subject: 'Re: Homeowners Insurance Quote Request',
+                  preview: 'Quote is $1,842/yr HO-3 five hundred deductible' },
+                /* The SEND. Its absence is the bug this half exists for: a
+                   request sent and not yet answered looked exactly like one
+                   where nothing had happened. */
+                { id: 's1', source: 'email_log', matched_by: null,
+                  direction: 'outbound', to: 'withreply@example.invalid',
+                  at: '2026-08-17T11:00:00Z',
+                  subject: 'Homeowners Insurance Quote Request',
+                  preview: 'Can you provide a homeowners insurance quote' }
+              ] },
             { id: B, agent_email: 'quiet@example.invalid', agent_name: 'Quiet Agent',
-              status: 'sent', is_selected: false, replies: [] }
+              status: 'sent', is_selected: false, activity: [] }
           ]);
 
           var ca = document.querySelector('[data-hoi-id="' + A + '"]');
@@ -935,6 +946,10 @@ const SPECS = [
 
           // VISIBLE on the owning card — innerText, and that card is expanded.
           var visible = /1,842/.test(ca.innerText);
+          /* The send is shown as well as the reply. Without this a card that was
+             sent and not answered is indistinguishable from one where nothing
+             happened — the state that most needs chasing. */
+          var sent = /Sent to withreply@example\.invalid/.test(ca.innerText);
           // The rung that matched is on screen, not swallowed.
           var tier = /matched by in_reply_to/.test(ca.innerText);
           /* ABSENT from the other card — textContent ON PURPOSE. That card is
@@ -945,12 +960,12 @@ const SPECS = [
              named 'Quiet Agent' deliberately: it was 'No Reply', whose own NAME
              contains "Repl", so this matched the fixture rather than a rendered
              section and reported a leak that did not exist. */
-          var emptySection = /Repl/.test(cb.textContent);
+          var emptySection = /Email activity/.test(cb.textContent);
 
-          return 'visible=' + visible + ' tier=' + tier
+          return 'visible=' + visible + ' sent=' + sent + ' tier=' + tier
                + ' leaked=' + leaked + ' emptySection=' + emptySection;
         })()`,
-       'visible=true tier=true leaked=false emptySection=false'],
+       'visible=true sent=true tier=true leaked=false emptySection=false'],
     ],
   },
   {

@@ -11,27 +11,27 @@ CREATE OR REPLACE FUNCTION public.hoi_quote_list(p_contact_id uuid)
  STABLE SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
-  /* Each quote request, carrying the replies quote-reply-poll correlated to IT.
+  /* Each quote request with its ACTIVITY: the send, anything Gmail grouped into
+     that thread, and the replies quote-reply-poll correlated to this request.
 
-     quote-reply-poll writes to quote_reply_log and touches nothing else, so
-     before this an HOI reply could be correlated and render nowhere — the same
-     gap voe_activity had until 20260817i.
+     The outbound was always recorded — gmail-inbox's send writes email_log the
+     same way it does for VOE — but hoi_quote_list never read that table, so a
+     request that was sent and not yet answered looked identical to one where
+     nothing had happened. That is the worst of the three states to be unable to
+     tell apart, because it is the one that needs chasing.
 
-     SCOPED TO THE REQUEST (q.row_id = h.id), not the contact. A contact normally
-     has several requests out to several agents at once, so contact-level scoping
-     would show every agent's reply on every agent's card. Same correction the VOE
-     side needed.
+     SCOPED BY THREAD (el.gmail_thread_id = h.gmail_thread_id), so it consults no
+     attribution. That matters: on the first genuine external delivery
+     (rduarte89@yahoo.com, "Homeowners Insurance Quote Request - Daniel Garcia")
+     matchContact left contact_id NULL, and anything keyed on the contact would
+     have missed the send outright.
 
-     READ ACROSS, NOT COPIED IN: quote_reply_log stays the poller's record. A
-     correlation is an inference, and hoi_quote_requests feeds the panel, the
-     winner lookup and quote selection. A wrong match should cost a row on a card,
-     not a row in the record. Each reply carries source and matched_by so its
-     origin and the rung that matched it stay visible.
+     Legacy requests carry no thread id and match nothing here — correct, since
+     MailerSend returned no id and there is no honest way to tie them to a thread.
 
-     to_jsonb(h) rather than enumerated columns, so a column added later appears
-     here without anyone remembering — the failure mode of an enumerated list is
-     silent omission. The single caller does `r.data || []` and iterates, and
-     PostgREST returns the array either way, so the JS-side shape is unchanged. */
+     NOT TWICE: voe-inbound-poll already writes inbound replies into email_log, so
+     a message can genuinely be in both tables. The email_log side excludes any
+     row already carried as a reply for this request. */
   select coalesce(
     jsonb_agg(s.row_json order by s.sent_at desc nulls last, s.created_at desc),
     '[]'::jsonb)
@@ -39,23 +39,54 @@ AS $function$
     select h.sent_at,
            h.created_at,
            to_jsonb(h) || jsonb_build_object(
-             'replies',
+             'activity',
              coalesce((
-               select jsonb_agg(jsonb_build_object(
-                        'id',         q.id,
-                        'source',     'quote_reply_log',
-                        'matched_by', q.matched_by,
-                        'direction',  'inbound',
-                        'from',       q.from_email,
-                        'to',         q.to_email,
-                        'subject',    q.subject,
-                        'at',         coalesce(q.received_at, q.created_at),
-                        'preview',    nullif(trim(left(
-                                        regexp_replace(coalesce(q.snippet, ''), '\s+', ' ', 'g'),
-                                        160)), '')
-                      ) order by coalesce(q.received_at, q.created_at) desc)
-               from public.quote_reply_log q
-               where q.kind = 'hoi' and q.row_id = h.id
+               select jsonb_agg(u.ev order by u.at desc)
+               from (
+                 select jsonb_build_object(
+                          'id',         el.id,
+                          'source',     'email_log',
+                          'matched_by', null,
+                          'direction',  el.direction,
+                          'from',       el.from_email,
+                          'to',         el.to_email,
+                          'subject',    el.subject,
+                          'at',         el.created_at,
+                          'status',     el.status,
+                          'preview',    nullif(trim(left(
+                                          regexp_replace(
+                                            regexp_replace(coalesce(el.body_text, el.body_html, ''),
+                                                           '<[^>]+>', ' ', 'g'),
+                                            '\s+', ' ', 'g'), 160)), '')
+                        ) as ev,
+                        el.created_at as at
+                 from public.email_log el
+                 where h.gmail_thread_id is not null
+                   and el.gmail_thread_id = h.gmail_thread_id
+                   and not exists (
+                     select 1 from public.quote_reply_log q2
+                     where q2.row_id = h.id
+                       and q2.gmail_message_id = el.gmail_message_id
+                   )
+                 union all
+                 select jsonb_build_object(
+                          'id',         q.id,
+                          'source',     'quote_reply_log',
+                          'matched_by', q.matched_by,
+                          'direction',  'inbound',
+                          'from',       q.from_email,
+                          'to',         q.to_email,
+                          'subject',    q.subject,
+                          'at',         coalesce(q.received_at, q.created_at),
+                          'status',     'received',
+                          'preview',    nullif(trim(left(
+                                          regexp_replace(coalesce(q.snippet, ''), '\s+', ' ', 'g'),
+                                          160)), '')
+                        ) as ev,
+                        coalesce(q.received_at, q.created_at) as at
+                 from public.quote_reply_log q
+                 where q.kind = 'hoi' and q.row_id = h.id
+               ) u
              ), '[]'::jsonb)
            ) as row_json
     from public.hoi_quote_requests h
