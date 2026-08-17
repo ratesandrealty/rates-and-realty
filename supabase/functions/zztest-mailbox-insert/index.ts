@@ -48,6 +48,25 @@ serve(async (req) => {
     return new Response(JSON.stringify({ error: 'mailbox must be one of ours' }), { status: 400, headers: J })
   }
 
+  /* Cleanup lives HERE rather than as a new gmail-inbox action, deliberately.
+     gmail-inbox's modify supports mark_read and archive only, and widening a
+     production mail API so a test can tidy up after itself is how a capability
+     nobody needs ends up permanently reachable. This function is deleted with
+     the fixtures it created. The query is forced to match ZZ-TEST subjects only. */
+  if (String(b.action || '') === 'trash') {
+    const q = encodeURIComponent(`subject:ZZ-TEST newer_than:2d`)
+    const lr = await gmailApi(mailbox, `messages?q=${q}&maxResults=200`)
+    if (!lr.ok) return new Response(JSON.stringify({ error: `list ${lr.status}` }), { status: 502, headers: J })
+    const lj = await lr.json()
+    const ids: string[] = (lj.messages || []).map((m: any) => m.id)
+    let trashed = 0
+    for (const id of ids) {
+      const tr = await gmailApi(mailbox, `messages/${id}/trash`, { method: 'POST', body: '{}' })
+      if (tr.ok) trashed++
+    }
+    return new Response(JSON.stringify({ ok: true, mailbox, found: ids.length, trashed }), { status: 200, headers: J })
+  }
+
   const lines: string[] = []
   lines.push(`From: ${String(b.from || 'zz-test@example.org')}`)
   lines.push(`To: ${String(b.to || mailbox)}`)
