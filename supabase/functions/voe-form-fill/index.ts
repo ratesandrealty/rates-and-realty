@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { PDFDocument } from 'npm:pdf-lib@1.17.1';
+import { PDFDocument, PDFName, PDFBool } from 'npm:pdf-lib@1.17.1';
 import { requireStaff } from '../_shared/require-staff.ts';
 
 /* voe-form-fill — merge Part I of Request_for_VOE_BLANK.pdf from CRM data.
@@ -163,28 +163,31 @@ Deno.serve(async (req: Request) => {
     put('voe_date', today);
     put('voe_applicant_block', applicantBlock);
 
-    /* DELIBERATELY NOT SETTING /NeedAppearances, and this is worth writing down
-     * because it was added here on a wrong diagnosis and then removed.
+    /* THE VALUES WERE THERE ALL ALONG AND THE FORM STILL RENDERED BLANK.
      *
-     * The blank-looking form was blamed on missing appearance streams. That was
-     * a measurement error: /AP lives on the WIDGET annotation, not on the field
-     * dict that was being read, and a later check "found no text" in streams
-     * that are Flate-compressed. Decompressed, the appearance for
-     * voe_employer_block draws exactly what it should —
+     * Inspected on the actual bytes rather than trusting `merged` below, which
+     * only reports what this function INTENDED to write:
      *
-     *   <616D617A6F6E> Tj                        "amazon"
-     *   <31323233352046617965204176656E7565> Tj  "12235 Faye Avenue"
-     *   <47617264656E2047726F7665> Tj            "Garden Grove"
+     *   voe_employer_block  value="amazon\n12235 Faye Avenue\nGarden Grove"  /AP=MISSING
+     *   voe_applicant_block value="Rene Duarte\n..."                        /AP=MISSING
+     *   AcroForm /NeedAppearances: NOT SET
      *
-     * pdf-lib regenerates appearances on save() already, so the bytes are right.
-     * NeedAppearances would tell a viewer to THROW THOSE AWAY and rebuild them,
-     * which on read-only fields can render worse than what we generated. It is
-     * not a free belt-and-braces: it hands a correct form to a viewer to redo.
+     * Every field carried the right /V and NONE had an appearance stream. Most
+     * viewers paint /AP, not /V, so the form is filled in the file and empty on
+     * screen — and which viewer you open it in decides whether you see anything.
+     * That is why it looked populated once and blank later, and why HR could
+     * receive a request that appears to ask for nothing.
      *
-     * The real defect was ordering — the row was written after the PDF was
-     * built. Fixed in lead-detail's _voeComposerSend, not here.
-     *
-     * NO flatten() either: Part II's 56 fields are HR's to complete. */
+     * Two belts, on purpose:
+     *   updateFieldAppearances() generates the streams here, so the bytes are
+     *     correct for viewers that only paint /AP;
+     *   NeedAppearances tells a viewer to regenerate them anyway, which covers
+     *     the fields enableReadOnly() may leave without one.
+     * Neither flattens: Part II's 56 fields stay HR's to complete. */
+    form.updateFieldAppearances();
+    pdf.catalog.getOrCreateAcroForm().dict.set(PDFName.of('NeedAppearances'), PDFBool.True);
+
+    /* NO flatten(): Part II's 56 fields are HR's to complete. */
     const out = await pdf.save();
 
     return json({
