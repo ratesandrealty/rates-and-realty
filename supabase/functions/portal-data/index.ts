@@ -42,16 +42,34 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL_RE = /^[^\s,"'()]+@[^\s,"'()]+\.[^\s,"'()]+$/;
 
+/* borrower_id is 'RR-' + 6 hex, from generate_borrower_id(). Verified against
+   the data rather than the generator alone: all 1,069 values across
+   showings.borrower_id, contacts.crm_id and portal_users.borrower_id match, so a
+   strict pattern refuses nothing that is real. */
+const BORROWER_RE = /^RR-[0-9A-F]{6}$/i;
+
+/* ONE validator for every identity value that reaches a filter string.
+   Everything that builds an or-expression goes through this, including
+   scopeToCaller below, so there is a single place where "what shape is a valid
+   identity" is decided. Returns the normalised value, or null if malformed —
+   never an escaped version, because escaping is how you end up maintaining an
+   escaper. */
+function validIdent(kind: 'uuid' | 'email' | 'borrower', v: unknown): string | null {
+  const str = String(v ?? '').trim();
+  if (!str) return null;
+  if (kind === 'uuid') return UUID_RE.test(str) ? str : null;
+  if (kind === 'email') { const e = str.toLowerCase(); return EMAIL_RE.test(e) ? e : null; }
+  return BORROWER_RE.test(str) ? str.toUpperCase() : null;
+}
+
 /* Returns the query narrowed to the caller, or null when no usable identity was
    supplied — the caller must treat null as a refusal, never as "no filter". */
 function scopeToCaller(q: any, body: any): any | null {
-  const pid = String(body?.portal_user_id || '').trim();
-  const em = String(body?.email || '').toLowerCase().trim();
-  const okPid = pid && UUID_RE.test(pid);
-  const okEm = em && EMAIL_RE.test(em);
-  if (okPid && okEm) return q.or(`portal_user_id.eq.${pid},email.eq."${em}"`);
-  if (okPid) return q.eq('portal_user_id', pid);
-  if (okEm) return q.eq('email', em);
+  const pid = validIdent('uuid', body?.portal_user_id);
+  const em = validIdent('email', body?.email);
+  if (pid && em) return q.or(`portal_user_id.eq.${pid},email.eq."${em}"`);
+  if (pid) return q.eq('portal_user_id', pid);
+  if (em) return q.eq('email', em);
   return null;
 }
 
@@ -185,24 +203,32 @@ Deno.serve(async (req: Request) => {
 
     // ─── GET SHOWINGS (portal) ───────────────────────────────────────────
     if (action === 'get_showings') {
-      const { portal_user_id, email, borrower_id } = body;
-      if (!portal_user_id && !email && !borrower_id) return err('portal_user_id, email or borrower_id required');
+      /* EVERY value here is validated before it reaches the or-expression.
+         `or=` is comma-separated, so the old
+         `email.eq.${email}` let an email containing a comma or a quote append
+         its own predicate and widen the caller's scope. Malformed input is
+         REFUSED, not escaped — and refused with its own message, so it cannot be
+         mistaken for the identity-not-supplied branch below. */
+      const _gsPid = validIdent('uuid', body.portal_user_id);
+      const _gsEm = validIdent('email', body.email);
+      const _gsBid = validIdent('borrower', body.borrower_id);
+      if (body.portal_user_id && !_gsPid) return err('malformed portal_user_id');
+      if (body.email && !_gsEm) return err('malformed email');
+      if (body.borrower_id && !_gsBid) return err('malformed borrower_id');
+      if (!_gsPid && !_gsEm && !_gsBid) return err('portal_user_id, email or borrower_id required');
 
-      let query = sb.from('showings').select('*').order('created_at', { ascending: false });
+      /* Only the fields actually supplied are OR'd. The old branch always
+         emitted all three, so a caller sending just a portal_user_id also sent
+         `email.eq.,borrower_id.eq.` — empty-string predicates that match any row
+         holding an empty string in those columns. */
+      const _gsParts: string[] = [];
+      if (_gsPid) _gsParts.push(`portal_user_id.eq.${_gsPid}`);
+      if (_gsEm) _gsParts.push(`email.eq."${_gsEm}"`);
+      if (_gsBid) _gsParts.push(`borrower_id.eq.${_gsBid}`);
 
-      if (portal_user_id) {
-        query = sb.from('showings').select('*')
-          .or(`portal_user_id.eq.${portal_user_id},email.eq.${email || ''},borrower_id.eq.${borrower_id || ''}`)
-          .order('created_at', { ascending: false });
-      } else if (email) {
-        query = sb.from('showings').select('*')
-          .eq('email', email.toLowerCase().trim())
-          .order('created_at', { ascending: false });
-      } else if (borrower_id) {
-        query = sb.from('showings').select('*')
-          .eq('borrower_id', borrower_id)
-          .order('created_at', { ascending: false });
-      }
+      const query = sb.from('showings').select('*')
+        .or(_gsParts.join(','))
+        .order('created_at', { ascending: false });
 
       const { data, error } = await query;
       if (error) return err(error.message, 500);
@@ -232,14 +258,20 @@ Deno.serve(async (req: Request) => {
 
     // ─── GET APPLICATION ─────────────────────────────────────────────────
     if (action === 'get_application') {
-      const { email, borrower_id, portal_user_id } = body;
+      /* Same or-injection as get_showings had: `email.eq.${email}` concatenated
+         raw. Validated and refused here, not escaped. */
+      const { portal_user_id } = body;
+      const email = validIdent('email', body.email);
+      const borrower_id = validIdent('borrower', body.borrower_id);
+      if (body.email && !email) return err('malformed email');
+      if (body.borrower_id && !borrower_id) return err('malformed borrower_id');
       if (!email && !borrower_id && !portal_user_id) return err('email, borrower_id or portal_user_id required');
 
       let data = null;
 
       if (email) {
         const res = await sb.from('mortgage_applications')
-          .select('*').or(`email.eq.${email},borrower_email.eq.${email}`)
+          .select('*').or(`email.eq."${email}",borrower_email.eq."${email}"`)
           .order('updated_at', { ascending: false }).limit(1).maybeSingle();
         data = res.data;
       }
@@ -345,18 +377,27 @@ Deno.serve(async (req: Request) => {
 
     // ─── GET SAVED HOMES ─────────────────────────────────────────────────
     if (action === 'get_saved_homes') {
-      const { portal_user_id, email } = body;
-      let { contact_id } = body;
+      /* All three were concatenated raw into the or-expression below. Validated
+         and refused here; the resolved contact_id comes back from the database
+         and is re-validated anyway, because "it came from a query" is how a
+         value stops being checked. */
+      const portal_user_id = validIdent('uuid', body.portal_user_id);
+      const email = validIdent('email', body.email);
+      let contact_id = validIdent('uuid', body.contact_id);
+      if (body.portal_user_id && !portal_user_id) return err('malformed portal_user_id');
+      if (body.email && !email) return err('malformed email');
+      if (body.contact_id && !contact_id) return err('malformed contact_id');
+
       // Resolve contact_id from portal_user_id so legacy rows (saved before
       // portal_user_id was populated) are still found.
       if (!contact_id && portal_user_id) {
         const { data: pu } = await sb.from('portal_users').select('contact_id').eq('id', portal_user_id).maybeSingle();
-        if (pu?.contact_id) contact_id = pu.contact_id;
+        if (pu?.contact_id) contact_id = validIdent('uuid', pu.contact_id);
       }
       const orParts: string[] = [];
       if (portal_user_id) orParts.push(`portal_user_id.eq.${portal_user_id}`);
       if (contact_id) orParts.push(`contact_id.eq.${contact_id}`);
-      if (email) orParts.push(`email.eq.${email}`);
+      if (email) orParts.push(`email.eq."${email}"`);
       if (!orParts.length) return err('portal_user_id, contact_id or email required');
       const { data, error } = await sb.from('saved_listings')
         .select('*')
@@ -443,8 +484,19 @@ Deno.serve(async (req: Request) => {
       const { data: ownerRow } = await sb.from('contacts')
         .select('borrower_id').eq('id', resolvedContactId).maybeSingle();
 
-      const filters: string[] = [`contact_id.eq.${resolvedContactId}`];
-      if (ownerRow?.borrower_id) filters.push(`borrower_id.eq.${ownerRow.borrower_id}`);
+      /* Both values here are SERVER-DERIVED — resolvedContactId from portal_users
+         and borrower_id from the contact row — so neither is attacker-supplied
+         and neither was the injection the other actions had. They are validated
+         anyway, and deliberately: "it came from a query" is exactly the reasoning
+         that stops a value being checked, and this filter sits one schema change
+         away from carrying something looser. A value that fails is dropped rather
+         than refused, because the caller did not supply it and cannot fix it —
+         dropping narrows the result, which is the safe direction. */
+      const _gdCid = validIdent('uuid', resolvedContactId);
+      if (!_gdCid) return err('Could not resolve a valid contact for this user', 500);
+      const _gdBid = validIdent('borrower', ownerRow?.borrower_id);
+      const filters: string[] = [`contact_id.eq.${_gdCid}`];
+      if (_gdBid) filters.push(`borrower_id.eq.${_gdBid}`);
 
       const { data, error } = await sb.from('uploaded_documents')
         .select('*')

@@ -49,33 +49,78 @@ scoped** to the caller's own `portal_user_id` **or** `email` through
 `scopeToCaller()`, with both inputs validated against PostgREST filter
 injection. **Eight are not.**
 
-### The eight that still trust the body — the handoff list
+### THE INVENTORY, CORRECTED — read from each action's body
 
-| action | identity it trusts | notes |
-|---|---|---|
-| `get_showings` | `portal_user_id` \| `email` \| `borrower_id` | builds its own `.or()` |
-| `get_application` | `email` \| `borrower_id` \| `portal_user_id` | |
-| `save_application` | `portal_user_id` \| `contact_id` | **write** |
-| `get_saved_homes` | `portal_user_id` \| `contact_id` \| `email` | **see below** |
-| `get_documents` | `portal_user_id` only | mints 1-hour signed URLs into the private bucket, service role, bypassing storage RLS |
-| `delete_document` | `document_id` + `portal_user_id` | **write**; ownership checked — against the id the caller supplied |
-| `get_profile` | `portal_user_id` | |
-| `update_profile` | `portal_user_id` | **write** |
+**An earlier version of this table came from a script whose 30-line window bled
+between adjacent actions, and it reported `get_saved_homes` as scoped when it is
+not.** Every line below was read from the action body. A handoff that is 80%
+right is the dangerous kind, so the method matters as much as the result.
 
-**`get_saved_homes` is injectable and should be fixed on its own.** It
-concatenates raw body values into a PostgREST or-expression:
+There are **three tiers**, not the two a scoped/unscoped split implies. The
+difference decides how much work each one is in the migration.
+
+**A — narrowed by `scopeToCaller()` (7).** The query is filtered to rows carrying
+the caller's own `portal_user_id` or `email`.
+
+`remove_saved_home` · `update_showing_status` · `get_batch_showings` ·
+`remove_showing` · `cancel_batch` · `restore_batch` · `reschedule_batch`
+
+**B — filtered by the claimed identity, via a validated or-expression (3).**
+
+| action | accepts |
+|---|---|
+| `get_showings` | `portal_user_id` \| `email` \| `borrower_id` |
+| `get_application` | `email` \| `borrower_id` \| `portal_user_id` |
+| `get_saved_homes` | `portal_user_id` \| `contact_id` \| `email` |
+
+**C — resolve the claimed `portal_user_id` to a contact server-side, then act on
+that contact (5).** These never filter on a raw body value; they look the contact
+up and use what comes back.
+
+| action | |
+|---|---|
+| `get_documents` | mints 1-hour signed URLs into the private bucket, service role, bypassing storage RLS |
+| `delete_document` | **write**; genuine ownership check — against the `portal_user_id` the caller supplied |
+| `get_profile` | |
+| `update_profile` | **write** |
+| `save_application` | **write**; `portal_user_id` or `contact_id` |
+
+**Tier C is the least work to migrate** — swap the claimed `portal_user_id` for
+`auth.uid()` and the resolution logic is already correct. Tiers A and B also need
+their filters reworked.
+
+All fifteen share the one defect that no amount of tiering fixes: **the identity
+is asserted by the caller.**
+
+### Or-filter injection — CLOSED 2026-08-17
+
+Three actions concatenated raw body values into a PostgREST `or=` expression,
+which is comma-separated, so a comma or a quote in an identity field appended the
+caller's own predicate and widened their scope:
 
 ```js
-if (email) orParts.push(`email.eq.${email}`);      // no validation
-...
-.or(orParts.join(','))
+if (email) orParts.push(`email.eq.${email}`);      // was: no validation
 ```
 
-`or=` is comma-separated, so an `email` containing a comma or a quote rewrites
-the predicate and widens the caller's own scope — exactly what `scopeToCaller()`
-validates against and this does not. `get_showings` builds its filter the same
-way. Neither is authenticated either, but injection is a separate and smaller
-problem with a separate and smaller fix.
+`get_showings`, `get_application` and `get_saved_homes` — not two. Every value
+now goes through **one** validator, `validIdent()`, which `scopeToCaller()` also
+delegates to, so there is a single definition of what a valid identity looks
+like. Malformed input is **refused, never escaped**, and refused with its own
+message (`malformed email`) so it cannot be confused with the
+identity-not-supplied refusal (`… required`) — both are 400, and conflating them
+is how the 403 case was masked a pass earlier.
+
+`get_documents` also builds an or-expression, but from **server-derived** values
+(a resolved `contact_id` and the contact's own `borrower_id`), so it was never
+the same defect. It is validated anyway, because "it came from a query" is
+precisely the reasoning that stops a value being checked.
+
+**Known inconsistency, not yet fixed:** through `scopeToCaller()` a *malformed*
+identity returns `"portal_user_id or email required"` rather than
+`"malformed …"`. Still a refusal, still not escaped — but it conflates malformed
+with missing, which is the distinction the rest of this section is careful about.
+Fixing it means changing `scopeToCaller`'s null-return contract across seven
+proven actions; worth doing deliberately rather than as a rider.
 
 ### The four that required no identity at all — CLOSED 2026-08-17
 
