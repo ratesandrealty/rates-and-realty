@@ -771,7 +771,19 @@ const SPECS = [
       /* 4. SHOWN, not merely populated. .ld-toast is opacity:0 until .show is
             added, so a textContent assertion alone passes on a toast nobody can
             see — the exact defect this spec exists to catch. */
-      ['(function(){var t=document.getElementById("ld-toast"),s=getComputedStyle(t);'
+      /* WAITS FOR THE TRANSITION TO SETTLE, and the wait is not a fudge.
+         .ld-toast has `transition: all .28s ease` over `opacity: 0`, so reading
+         computed opacity in the same tick the class is added returns the
+         PRE-transition value — measured here as exactly "show=true opacity=0",
+         not a fraction, because no style recalc had happened yet. A user sees it
+         fade in over 280ms.
+         The assertion is not weakened by waiting: it reads the SETTLED opacity,
+         so it still fails if .show is never applied, if a later rule holds the
+         toast at 0, or if something clears it early. 400ms is comfortably inside
+         the 3200ms auto-hide. */
+      ['(async () => {'
+        + 'await new Promise(r => setTimeout(r, 400));'
+        + 'var t=document.getElementById("ld-toast"),s=getComputedStyle(t);'
         + 'return (t.classList.contains("show")&&parseFloat(s.opacity)>0.9)'
         + '?"visible":("show="+t.classList.contains("show")+" opacity="+s.opacity);})()',
        'visible'],
