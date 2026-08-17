@@ -883,6 +883,63 @@ const SPECS = [
     ],
   },
   {
+    /* HOI replies render on the card they belong to — and only that one.
+     *
+     * hoi_quote_list carries replies per REQUEST (q.row_id = h.id). The failure
+     * this guards is contact-level scoping, where a borrower with three requests
+     * out to three agents would see every agent's reply on every agent's card.
+     * That is not hypothetical: it is exactly what voe_activity did until it was
+     * scoped to the order.
+     *
+     * Driven through lpHoiRenderList directly with a two-row fixture rather than
+     * through the panel's own load, so the assertion is about the RENDERER and
+     * does not depend on which RPCs the panel happens to fire on open. */
+    name: 'HOI replies render on their own card, not the others',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          /* #lpHoiQuotes is built by lpRenderOrders(), not present in the static
+             HTML, so mount it first. If it still is not there, say so as a
+             HARNESS failure — otherwise every assertion below reads null and the
+             run blames the renderer for the probe's own setup. */
+          if (typeof lpRenderOrders === 'function') { try { lpRenderOrders(); } catch (e) {} }
+          if (!document.getElementById('lpHoiQuotes')) return 'HARNESS: #lpHoiQuotes never mounted';
+          lpHoiRenderList([
+            { id: 'aaaaaaaa-0000-0000-0000-000000000001', agent_email: 'withreply@example.invalid',
+              agent_name: 'With Reply', status: 'sent', is_selected: false,
+              replies: [{ id: 'r1', source: 'quote_reply_log', matched_by: 'in_reply_to',
+                          direction: 'inbound', from: 'withreply@example.invalid',
+                          at: '2026-08-17T12:00:00Z',
+                          preview: 'Quote is $1,842/yr HO-3 five hundred deductible' }] },
+            { id: 'bbbbbbbb-0000-0000-0000-000000000002', agent_email: 'noreply@example.invalid',
+              agent_name: 'No Reply', status: 'sent', is_selected: false, replies: [] }
+          ]);
+          return String(document.querySelectorAll('#lpHoiQuotes [data-hoi-id]').length);
+        })()`,
+       '2'],
+      // The reply text appears, once.
+      ['(document.getElementById("lpHoiQuotes").innerText.match(/1,842/g) || []).length + ""', '1'],
+      /* PAIRED: it is on the card that owns it, and NOT on the one that does not.
+         Counting occurrences page-wide would pass even if the reply were drawn on
+         both cards, which is the exact bug. Ask each card separately. */
+      ['(function(){var c=document.querySelector(\'[data-hoi-id="aaaaaaaa-0000-0000-0000-000000000001"]\');'
+        + 'return c && /1,842/.test(c.innerText) ? "reply on its own card" : "MISSING from its own card";})()',
+       'reply on its own card'],
+      ['(function(){var c=document.querySelector(\'[data-hoi-id="bbbbbbbb-0000-0000-0000-000000000002"]\');'
+        + 'return c && /1,842/.test(c.innerText) ? "LEAKED onto the other card" : "clean";})()',
+       'clean'],
+      // The rung that matched is on screen, not swallowed.
+      ['/matched by in_reply_to/.test(document.getElementById("lpHoiQuotes").innerText) ? "tier shown" : "tier hidden"',
+       'tier shown'],
+      /* A card with no replies gains no section at all — the panel should look
+         exactly as it did before this existed when there is nothing to show. */
+      ['(function(){var c=document.querySelector(\'[data-hoi-id="bbbbbbbb-0000-0000-0000-000000000002"]\');'
+        + 'return c && /Repl/.test(c.innerText) ? "empty section rendered" : "no section";})()',
+       'no section'],
+    ],
+  },
+  {
     /* The e-sign workspace's Send is legitimately disabled with no signer, and
      * that is fine — what was not fine is that it said nothing, so a refusal
      * and a dead button looked identical. Assert the reason is ON SCREEN and

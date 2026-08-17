@@ -13096,6 +13096,37 @@ function lpHoiToggle(id){
   if(car)  car.textContent = _lpHoiOpen[id] ? '▾' : '▸';
 }
 
+/* Replies quote-reply-poll correlated to ONE quote request.
+ *
+ * Empty string when there are none, so a card without a reply looks exactly as
+ * it did — the panel gains a section only when there is something in it.
+ *
+ * matched_by is DISPLAYED rather than hidden, and 'address_unique' is called out
+ * in a warning colour. The three rungs are not equally strong: In-Reply-To
+ * matches an id we generated and stored, while address_unique means only that
+ * one row happened to hold that sender's address. Somebody reading a premium off
+ * this card should be able to see which of those they are trusting. */
+function _lpHoiRepliesHtml(r){
+  const reps = (r && Array.isArray(r.replies)) ? r.replies : [];
+  if(!reps.length) return '';
+  return '<div style="margin-top:7px;padding-top:7px;border-top:1px dashed rgba(255,255,255,.10);">'
+    + '<div style="font-size:9.5px;font-weight:700;color:#8f8f8f;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;">'
+      + 'Repl' + (reps.length>1 ? ('ies (' + reps.length + ')') : 'y') + '</div>'
+    + reps.map(function(q){
+        const when = q && q.at ? _lpDD(q.at) : '';
+        const tier = String((q && q.matched_by) || '');
+        const weak = (tier === 'address_unique');
+        return '<div style="font-size:10.5px;margin-bottom:5px;overflow-wrap:anywhere;">'
+          + '<div style="color:#9fd0a8;font-weight:600;">' + lpEsc((q && q.from) || 'unknown sender')
+            + (when ? ('<span style="color:#777;font-weight:400;"> · ' + lpEsc(when) + '</span>') : '')
+          + '</div>'
+          + ((q && q.preview) ? ('<div style="color:#bbb;margin-top:1px;">' + lpEsc(q.preview) + '</div>') : '')
+          + (tier ? ('<div style="margin-top:2px;font-size:9px;color:' + (weak ? '#E5A0A0' : '#777') + ';">matched by '
+              + lpEsc(tier) + (weak ? ' — sender address only, verify before trusting' : '') + '</div>') : '')
+          + '</div>';
+      }).join('')
+    + '</div>';
+}
 function lpHoiRenderList(rows){
   const box=document.getElementById('lpHoiQuotes'); if(!box) return;
   if(!rows||!rows.length){ box.innerHTML=''; return; }
@@ -13155,6 +13186,14 @@ function lpHoiRenderList(rows){
           +'<input placeholder="$ quote" value="'+lpEsc(amt)+'" onchange="lpHoiQuoteAmount(\''+r.id+'\',this.value)" style="'+ctl+'width:88px;">'
           +(seld?'<span style="font-size:11px;color:#50c878;font-weight:700;">Winner</span>':'<button onclick="lpHoiSelect(\''+r.id+'\')" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;">Select ✓</button>')
         +'</div>'
+        /* THE AGENT'S REPLY, if the poller correlated one to THIS request.
+           hoi_quote_list carries them per request (q.row_id = h.id), so a
+           borrower with three requests out to three agents sees each reply on
+           the card it belongs to rather than all three on all three.
+           matched_by is shown, not hidden: 'address_unique' is a weaker claim
+           than 'in_reply_to', and whoever reads a quote off this card should be
+           able to see how confident the match was. */
+        +_lpHoiRepliesHtml(r)
       +'</div>'
       +'</div>';
   }).join('');
