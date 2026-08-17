@@ -137,6 +137,61 @@ to FAIL against `9f87ca6^` through `tools/serve-prefix.mjs`, which is the half
 the original claim never had. Full record:
 `docs/FALSE-PROOF-CLAIM-9f87ca6-2026-08-15.md`.
 
+## CORS: curl proves nothing about a browser
+
+`voe-form-fill` was deployed, ACTIVE, `verify_jwt` matching its pin, and answered
+curl perfectly — while being **unreachable from the page for eleven days**, from
+the moment the browser call was added (`352e98f`, 2026-08-06).
+
+Its `Access-Control-Allow-Headers` was `Content-Type, Authorization, apikey`.
+**supabase-js attaches `x-client-info` to every `functions.invoke()`**, so the
+browser lists it in `Access-Control-Request-Headers`, and a preflight that does
+not allow back **every** requested header fails. The browser then abandons the
+request and never sends the POST.
+
+What the user sees is `Failed to send a request to the Edge Function` —
+supabase-js's **client-side** `FunctionsFetchError`. It reads like the function
+is down, missing, or undeployed, and it sends you to check all three. All three
+were fine.
+
+**The signature in the edge log is OPTIONS 200 followed by NO POST.** A preflight
+that succeeds and is then followed by nothing means the refusal happened inside
+the browser. The server sees only the OPTIONS, so every server-side check — logs,
+status, drift, pin — looks healthy.
+
+`gmail-inbox` allows `authorization, x-client-info, apikey, content-type`. That
+is the entire reason HOI worked while VOE did not: three words in a header, not
+the caller.
+
+```
+node tools/browser-cors-check.mjs        # sweeps every functions.invoke() slug
+node tools/browser-fn-probe.mjs <slug>   # real Chromium, real origin, real call
+```
+
+`browser-cors-check` reads one header off one preflight and is cheap enough to
+run every time. `browser-fn-probe` actually makes the call from
+`admin.ratesandrealty.com` through **the page's own supabase-js** — it must be the
+page's library, because a probe that hand-builds a `fetch` picks its own headers
+and can pass while the page fails, which is the whole bug class.
+
+Both were broken before being trusted: `esign-docs` still omits `x-client-info`
+and both tools correctly report it BLOCKED, exit 1. (`esign-docs` is fine in
+production **because `lead-detail.html` calls it with a raw `fetch`**, which sends
+no `x-client-info`. Convert that call to `functions.invoke()` and it breaks
+instantly — a live trap, not a theoretical one.)
+
+Use `process.exitCode`, never `process.exit()`, in these tools. `process.exit()`
+with sockets still open aborts teardown on Windows and **the crash replaces the
+exit code with 0**, so a run that correctly found a blocked function reports
+success. A gate that always exits 0 is worse than no gate, because it is
+believed.
+
+**This is the same family as every other trap in this file: the check reported
+fewer problems than existed.** curl and Deno send no preflight and enforce no
+CORS, so nothing outside a browser can observe this failure — which is exactly
+why "the Node proofs passed" was not evidence, and why the frontend-first gate
+caught what six green proofs did not.
+
 ## n8n: an edit is NOT shipped until an execution proves it
 
 `update_workflow` returns success, echoes the new values back, and **the running
