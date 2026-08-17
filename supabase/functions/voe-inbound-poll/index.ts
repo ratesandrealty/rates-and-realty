@@ -11,13 +11,17 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { requireStaff } from '../_shared/require-staff.ts'
 import { getMailboxToken } from '../_shared/gmail-dwd.ts'
+import { isOurAddress } from '../_shared/identity.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID')!
 const CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET')!
 
-const SELF_ADDRESSES = ['rene@ratesandrealty.com','processing@ratesandrealty.com','reneduarte.homeside@gmail.com']
+/* Was a local three-entry list. It is now the shared one — this file already
+   knew about reneduarte.homeside@gmail.com while gmail-inbox's matcher did not,
+   and that gap is exactly what mis-filed 344 rows onto one contact. One
+   definition so the two cannot disagree again. */
 const J = { 'Content-Type': 'application/json' }
 
 function rest(path: string){ return `${SUPABASE_URL}/rest/v1/${path}` }
@@ -210,7 +214,7 @@ serve(async (req) => {
         summary.fetched++
         const headers = msg.payload && msg.payload.headers
         const fromEmail = parseEmail(hdr(headers, 'From'))
-        if (fromEmail && SELF_ADDRESSES.includes(fromEmail)) continue
+        if (fromEmail && isOurAddress(fromEmail)) continue
         const rfcId = (hdr(headers, 'Message-ID') || hdr(headers, 'Message-Id') || '').trim()
         if (rfcId) {
           if (seenRfc.has(rfcId)) { summary.cross_mailbox_duplicates = (summary.cross_mailbox_duplicates || 0) + 1; continue }

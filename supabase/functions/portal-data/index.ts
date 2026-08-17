@@ -1,5 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+/* EMAIL_RE moved to _shared/identity.ts, unchanged. gmail-inbox's matchContact
+   needed the same expression to close the same or-filter injection, and two
+   copies of a security pattern drift — this one was written here first. */
+import { EMAIL_RE } from '../_shared/identity.ts';
 
 /**
  * portal-data edge function
@@ -40,7 +44,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
  * a comma or a quote would let the caller rewrite the predicate and widen their
  * own scope. Anything not matching these shapes is refused rather than escaped. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const EMAIL_RE = /^[^\s,"'()]+@[^\s,"'()]+\.[^\s,"'()]+$/;
+// EMAIL_RE is imported from _shared/identity.ts — same expression, one definition.
 
 /* borrower_id is 'RR-' + 6 hex, from generate_borrower_id(). Verified against
    the data rather than the generator alone: all 1,069 values across

@@ -66,6 +66,7 @@ import {
 // The attachment download below runs as the service role and bypasses storage RLS, so
 // this predicate is the actual authorization control. Kept in _shared to be testable.
 import { attachmentPathError } from '../_shared/attach.ts'
+import { RENE, PROCESSING, isOurAddress, validEmail } from '../_shared/identity.ts'
 // Escrow-number → contact. A pure function in _shared for the same reason as the
 // two above, and because loan_orders.reference is 0-populated: nothing in
 // production exercises it, so its 37 offline tests ARE its coverage.
@@ -78,9 +79,17 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 
-const RENE = 'rene@ratesandrealty.com'
-const PROCESSING = 'processing@ratesandrealty.com'
-const SELF = new Set([RENE, PROCESSING])
+/* RENE and PROCESSING come from _shared/identity.ts so the strings have one
+   definition. The SELF set that used to live here is GONE — it held only these
+   two, which is why matchContact() filed every message touching either personal
+   gmail onto the contact record that holds them. isOurAddress() is the shared,
+   wider answer.
+
+   allowedMailboxes() below still builds from these two constants ALONE and must
+   keep doing so. It decides which mailbox a caller may impersonate; OUR_ADDRESSES
+   is deliberately broader and includes gmail accounts we do not host. Widening
+   the gate to match the attribution list would be a security change disguised as
+   a de-duplication. */
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -374,7 +383,22 @@ async function persistMessages(svc: any, rows: any[], contactId: string | null, 
 // MATCH: first participant email that resolves to a contact (direct) or a vendor
 // (→ borrower via that vendor's most recent loan_order) wins.
 async function matchContact(svc: any, emails: string[]) {
-  const uniq = [...new Set(emails.map((e) => (e || '').toLowerCase()).filter((e) => e && !SELF.has(e)))]
+  /* Two filters, and they answer different questions.
+     validEmail() — is this a shape we are willing to put in a PostgREST filter?
+       These addresses come from inbound To/Cc headers, which anyone can write.
+       The .or() below is built by string concatenation and splits on commas, so a
+       header containing one could rewrite the filter. Anything that does not match
+       is DROPPED, never escaped: escaping has to be right every time, refusing has
+       to be right once. A dropped address simply does not match a contact, which
+       is the same outcome as an address we do not recognise.
+     isOurAddress() — is this one of ours, and therefore not a third party?
+       Was `!SELF.has(e)` over a two-entry set holding only rene@ and processing@.
+       Neither personal gmail was in it, so every message touching one attributed
+       to the contact record that holds them: 344 rows, 185 threads, 96 sender
+       domains on a single borrower. */
+  const uniq = [...new Set(
+    emails.map((e) => validEmail(e)).filter((e): e is string => !!e && !isOurAddress(e)),
+  )]
   for (const e of uniq) {
     /* READ FILTER: current roster only. Found by the 2026-08-11 ghost sweep —
        three email_log rows written AFTER the 08-08 merge sat on 93724c8a, the
@@ -395,6 +419,11 @@ async function matchContact(svc: any, emails: string[]) {
        is no refusal here to fall back on, and silently unfiling mail that used
        to file is a worse trade than an occasional wrong live pick. */
     const { data: c } = await svc.from('contacts').select('id')
+      /* `e` is interpolated into an or-filter, which PostgREST parses by splitting
+         on commas — so this is only safe because validEmail() has already refused
+         any address containing a comma, quote or parenthesis. If that filter is
+         ever loosened, this line becomes an injection point again. Line 428 uses
+         .ilike() with a bound value and does not depend on it. */
       .or(`email.ilike.${e},secondary_email.ilike.${e}`)
       .is('merged_into_contact_id', null)
       .limit(1)

@@ -36,6 +36,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { gmailApi } from '../_shared/gmail-dwd.ts'
 import { requireStaff } from '../_shared/require-staff.ts'
+import { isOurAddress } from '../_shared/identity.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -48,14 +49,12 @@ const RENE = 'rene@ratesandrealty.com'
    answer there. Dropping rene@ would silently stop matching those. */
 const DEFAULT_MAILBOXES = [PROCESSING, RENE]
 
-/* Our own addresses. Outbound copies and the CC that HOI sends to processing@
-   land in these mailboxes too, and a message From: us is never a reply TO us —
-   without this the poller would correlate our own request against its own row
-   and report a reply that never came. */
-const SELF = new Set([
-  RENE, PROCESSING,
-  'reneduarte.homeside@gmail.com',
-])
+/* Mailboxes this function may SWEEP. Deliberately NOT OUR_ADDRESSES, which is
+   broader and includes personal gmail accounts: those are not Workspace mailboxes,
+   DWD cannot impersonate them, and accepting one from the request body would be a
+   request to go read an account we do not host. "Is this ours?" and "may we open
+   it?" are different questions and this file needs both, separately. */
+const POLLABLE = new Set([RENE, PROCESSING])
 
 const J = { 'Content-Type': 'application/json' }
 
@@ -106,7 +105,7 @@ serve(async (req) => {
     : DEFAULT_MAILBOXES
 
   for (const mb of mailboxes) {
-    if (!SELF.has(mb)) return err(`refusing to poll a mailbox that is not ours: ${mb}`, 400)
+    if (!POLLABLE.has(mb)) return err(`refusing to poll a mailbox that is not ours: ${mb}`, 400)
   }
 
   const results: any[] = []
@@ -141,7 +140,11 @@ serve(async (req) => {
       counts.considered++
 
       // Our own outbound and CC copies are not replies.
-      if (SELF.has(fromEmail)) { counts.skipped_self++; continue }
+      /* Our own outbound and the CC HOI sends to processing@ land in these
+         mailboxes too, and a message From: us is never a reply TO us. Uses the
+         WIDER shared list, not POLLABLE: a reply forwarded from either personal
+         gmail is still us. */
+      if (isOurAddress(fromEmail)) { counts.skipped_self++; continue }
 
       /* Delivered-To is included with To/Cc because that is where the
          plus-address actually survives: Gmail rewrites To on delivery in some
