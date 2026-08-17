@@ -55,47 +55,6 @@ function scopeToCaller(q: any, body: any): any | null {
   return null;
 }
 
-/* ── CALLER -> CONTACT, for tables that carry neither portal_user_id nor email ──
- *
- * scopeToCaller() works by filtering on the caller's own columns, which only
- * helps where those columns exist. `showings` and `saved_listings` both carry
- * portal_user_id AND email, so they scope directly. `document_annotations`
- * carries neither — it has document_id and contact_id — so ownership there has
- * to be resolved: caller -> portal_users.contact_id -> uploaded_documents.contact_id.
- *
- * Accepts EITHER portal_user_id or email, matching scopeToCaller and
- * get_showings, and for the same measured reason: 16 of 41 showings carry a
- * portal_user_id while all 41 carry an email, so a uuid-only rule silently hides
- * rows from their own owner.
- *
- * Same validation. An unvalidated value never reaches a filter — these go
- * through .eq() rather than a PostgREST or-expression, but the shapes are
- * checked anyway so the rule is one rule and not two. */
-async function resolveCallerContactId(body: any): Promise<string | null> {
-  const pid = String(body?.portal_user_id || '').trim();
-  const em = String(body?.email || '').toLowerCase().trim();
-  if (pid && UUID_RE.test(pid)) {
-    const { data } = await sb.from('portal_users').select('contact_id').eq('id', pid).maybeSingle();
-    if (data?.contact_id) return data.contact_id;
-  }
-  if (em && EMAIL_RE.test(em)) {
-    const { data } = await sb.from('portal_users').select('contact_id').eq('email', em).maybeSingle();
-    if (data?.contact_id) return data.contact_id;
-  }
-  return null;
-}
-
-/* Does this document belong to that contact? Returns a reason rather than a
-   boolean so the caller can answer 404 vs 403 — telling a stranger "not found"
-   for a document that exists, and "forbidden" for one that does not, are both
-   worse than saying which. */
-async function documentOwnedBy(documentId: string, contactId: string): Promise<'ok' | 'missing' | 'forbidden'> {
-  const { data: doc } = await sb.from('uploaded_documents')
-    .select('id, contact_id').eq('id', documentId).maybeSingle();
-  if (!doc) return 'missing';
-  return doc.contact_id === contactId ? 'ok' : 'forbidden';
-}
-
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
@@ -655,72 +614,24 @@ Deno.serve(async (req: Request) => {
       return ok({ success: true, updated: (data || []).length });
     }
 
-    if (action === 'get_annotations') {
-      /* SCOPED via the document's owner. document_annotations carries neither
-         portal_user_id nor email, so scopeToCaller cannot filter it — ownership
-         resolves caller -> portal_users.contact_id -> uploaded_documents.contact_id.
-         Previously a bare document_id returned another borrower's annotations. */
-      const { document_id } = body;
-      if (!document_id) return err('document_id required');
-      const _gaContact = await resolveCallerContactId(body);
-      if (!_gaContact) return err('portal_user_id or email required');
-      const _gaOwn = await documentOwnedBy(String(document_id), _gaContact);
-      if (_gaOwn === 'missing') return err('Document not found', 404);
-      if (_gaOwn === 'forbidden') return err('Forbidden — document does not belong to this user', 403);
-      const { data, error } = await sb.from('document_annotations')
-        .select('id, document_id, contact_id, page, x, y, text, font_size, color, created_at, created_by')
-        .eq('document_id', String(document_id))
-        .order('page', { ascending: true })
-        .order('y', { ascending: true });
-      if (error) return err(error.message, 500);
-      return ok({ annotations: data || [] });
-    }
+    /* get_annotations and save_annotations were REMOVED 2026-08-17.
 
-    // ─── SAVE ANNOTATIONS ────────────────────────────────────────────────
-    // Replaces the full annotation set for a given document_id. Safer than
-    // partial upserts since the browser sends the authoritative current state.
-    if (action === 'save_annotations') {
-      /* SCOPED, AND THIS ONE WAS THE URGENT ONE. It DELETES every existing
-         annotation on the document before inserting the supplied set, and it took
-         nothing but a document_id — so any caller who knew one could wipe another
-         borrower's annotations, with the delete landing before any insert could
-         fail. Ownership is resolved the same way as get_annotations, and it is
-         checked BEFORE the delete runs. */
-      const { document_id, annotations, contact_id, created_by } = body;
-      if (!document_id) return err('document_id required');
-      if (!Array.isArray(annotations)) return err('annotations must be an array');
-      const _saContact = await resolveCallerContactId(body);
-      if (!_saContact) return err('portal_user_id or email required');
-      const _saOwn = await documentOwnedBy(String(document_id), _saContact);
-      if (_saOwn === 'missing') return err('Document not found', 404);
-      if (_saOwn === 'forbidden') return err('Forbidden — document does not belong to this user', 403);
+       Zero callers: nothing in this repo referenced either action — no UI, no
+       module, nothing. They had just been scoped to the document's owner, but
+       guarding an endpoint nobody calls still leaves it reachable, and
+       save_annotations DELETED every annotation on a document before inserting
+       the supplied set. Removing the surface beats guarding it.
 
-      // Delete everything previously saved for this document, then insert the new set.
-      const { error: delErr } = await sb.from('document_annotations')
-        .delete().eq('document_id', String(document_id));
-      if (delErr) return err('Delete existing failed: ' + delErr.message, 500);
+       THE ROWS ARE NOT TOUCHED. document_annotations keeps its 2 rows, snapshot
+       in document_annotations_snapshot_20260817.
 
-      if (annotations.length === 0) {
-        return ok({ success: true, count: 0 });
-      }
-
-      const rows = annotations.map((a: any) => ({
-        document_id: String(document_id),
-        contact_id:  contact_id || null,
-        page:        Number.isFinite(Number(a.page)) ? Math.max(1, Math.floor(Number(a.page))) : 1,
-        x:           Number(a.x) || 0,
-        y:           Number(a.y) || 0,
-        text:        String(a.text || ''),
-        font_size:   Number.isFinite(Number(a.font_size)) ? Math.max(6, Math.min(72, Math.floor(Number(a.font_size)))) : 12,
-        color:       /^#[0-9A-Fa-f]{6}$/.test(String(a.color || '')) ? a.color : '#000000',
-        created_by:  created_by || null,
-      }));
-      const { data, error: insErr } = await sb.from('document_annotations')
-        .insert(rows).select();
-      if (insErr) return err('Insert failed: ' + insErr.message, 500);
-      return ok({ success: true, count: data?.length || 0 });
-    }
-
+       IF THIS FEATURE IS EVER REVIVED, READ THIS FIRST: both existing rows key
+       document_id to a GOOGLE DRIVE FILE ID (e.g. 15JKO-kF6-Kmqd0HsLNK...), not
+       to an uploaded_documents uuid — the column is text, and neither row joins
+       to a document. The ownership check written here resolved
+       caller -> portal_users.contact_id -> uploaded_documents.contact_id, which
+       would have answered 404 for every real annotation. Whatever replaces this
+       needs to decide which id space it lives in before it needs a guard. */
     // ─── DELETE DOCUMENT ─────────────────────────────────────────────────
     if (action === 'delete_document') {
       const { document_id, portal_user_id } = body;

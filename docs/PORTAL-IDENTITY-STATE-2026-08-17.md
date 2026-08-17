@@ -43,9 +43,39 @@ the borrower portal reads from; it did not authenticate the portal. Nothing can,
 while `portal-auth` issues no session — it verifies a password and returns a user
 object, and the browser keeps it in `localStorage`.
 
-17 actions. **Nine are now scoped** to the caller's own `portal_user_id` **or**
-`email`, with both inputs validated against PostgREST filter injection. **Eight
-are not.**
+**15 actions** — `get_annotations` and `save_annotations` were deleted outright
+2026-08-17 (zero callers; removing the surface beats guarding it). **Seven are
+scoped** to the caller's own `portal_user_id` **or** `email` through
+`scopeToCaller()`, with both inputs validated against PostgREST filter
+injection. **Eight are not.**
+
+### The eight that still trust the body — the handoff list
+
+| action | identity it trusts | notes |
+|---|---|---|
+| `get_showings` | `portal_user_id` \| `email` \| `borrower_id` | builds its own `.or()` |
+| `get_application` | `email` \| `borrower_id` \| `portal_user_id` | |
+| `save_application` | `portal_user_id` \| `contact_id` | **write** |
+| `get_saved_homes` | `portal_user_id` \| `contact_id` \| `email` | **see below** |
+| `get_documents` | `portal_user_id` only | mints 1-hour signed URLs into the private bucket, service role, bypassing storage RLS |
+| `delete_document` | `document_id` + `portal_user_id` | **write**; ownership checked — against the id the caller supplied |
+| `get_profile` | `portal_user_id` | |
+| `update_profile` | `portal_user_id` | **write** |
+
+**`get_saved_homes` is injectable and should be fixed on its own.** It
+concatenates raw body values into a PostgREST or-expression:
+
+```js
+if (email) orParts.push(`email.eq.${email}`);      // no validation
+...
+.or(orParts.join(','))
+```
+
+`or=` is comma-separated, so an `email` containing a comma or a quote rewrites
+the predicate and widens the caller's own scope — exactly what `scopeToCaller()`
+validates against and this does not. `get_showings` builds its filter the same
+way. Neither is authenticated either, but injection is a separate and smaller
+problem with a separate and smaller fix.
 
 ### The four that required no identity at all — CLOSED 2026-08-17
 
@@ -152,12 +182,49 @@ untested if it had been mistaken for one.
   one, so each action still needs `getUser()` with RLS underneath.
 - Storage signed URLs follow from the `uploaded_documents` policies.
 
-**3. A trap this pass created, and it must be closed in the same change.**
-`staff_read_showings` keeps the old predicate, whose first clause is
-`COALESCE(current_app_role(),'') <> 'va'`. For an authenticated user with no row
-in `auth_user_roles` that is TRUE, so they read every showing. No such user
-exists today — borrowers are `portal_users`, not `auth.users`. **The migration
-creates exactly that user.** Whoever lands step 2 must revisit this policy in the
-same pass, or migrating the borrowers hands them the whole table.
+### STEP 0 OF THE MIGRATION, NOT A FOOTNOTE: the NULL-role trap
 
-Still several sessions. Item 1 is not, and does not depend on the rest.
+`staff_read_showings` carries the old predicate:
+
+```sql
+USING ( (COALESCE(current_app_role(), '') <> 'va')
+        OR is_admin() OR is_lead_shared_with_me(contact_id) )
+```
+
+For an authenticated user **with no row in `auth_user_roles`**,
+`current_app_role()` returns NULL, `COALESCE` makes it `''`, and `'' <> 'va'` is
+**TRUE** — so the OR short-circuits and they read **every showing**.
+
+No such user exists today, which is the only reason this is safe: borrowers are
+`portal_users`, not `auth.users`. **The migration creates exactly that user.**
+The moment four borrowers land in `auth.users` without roles, each one can read
+all 39 showings — every borrower's name, email, phone, property address, agent
+notes and feedback.
+
+This is the same bug that was just fixed one layer up, in the same expression: a
+NULL role reading as "not a va" instead of as "no role". It was correct to carry
+the predicate over verbatim when only the audience changed — that made the
+regression attributable — but it must not survive the migration.
+
+**Rewriting this policy is a prerequisite for migrating any borrower into
+`auth.users`, not a follow-up.** The shape it needs is an explicit staff test
+rather than a negative one: require `is_admin()`, or a role in an allow-list, or
+`is_lead_shared_with_me()`. Never "is not a va".
+
+### What is several sessions, and what is not
+
+**Small and independent — can be done any time, in any order:**
+
+- `get_saved_homes` and `get_showings` filter injection: validate the inputs
+  before they reach the or-expression. One helper already exists.
+- The eight body-identity actions could be brought level with the seven scoped
+  ones. Narrowing, not authentication — but it removes "any id will do".
+
+**Genuinely several sessions — the migration itself**, in the order above:
+`auth.users` migration → frontend rewrite (the bulk) → **the NULL-role policy
+rewrite** → drop the service role and pin `verify_jwt = true` → storage.
+
+The frontend rewrite is the long pole, and it is frontend-first by rule: it ships
+and is confirmed before any guard moves. Every guard change in the showings work
+followed that order and none of them caused an outage; the one regression that
+did occur (`Prefer: return=representation`) was caught by a probe, not by a user.
