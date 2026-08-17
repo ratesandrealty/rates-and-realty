@@ -37,6 +37,7 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { gmailApi } from '../_shared/gmail-dwd.ts'
 import { requireStaff } from '../_shared/require-staff.ts'
 import { isOurAddress } from '../_shared/identity.ts'
+import { attachmentsOf } from '../_shared/gmail-attachments.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -192,6 +193,15 @@ serve(async (req) => {
         reply_token: match?.reply_token || null,
         matched_by: matchedBy,
         received_at: msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : null,
+        /* METADATA ONLY, from the format=full message already in hand. Discarding
+           it here would cost a Gmail round trip PER MESSAGE the first time anyone
+           asks what arrived — the tree is fetched either way, so not recording it
+           buys nothing and forecloses the question.
+           Never bodies: attachmentId is the handle that fetches bytes on demand,
+           and a correlation log is not a document store. Same shape and same
+           extractor as email_log.attachments, which is what makes "is this our
+           own form returned on reply-all" a comparison rather than a guess. */
+        attachments: attachmentsOf(msg),
       }
 
       /* A dry run computes everything and writes NOTHING, so the correlation can

@@ -67,6 +67,7 @@ import {
 // this predicate is the actual authorization control. Kept in _shared to be testable.
 import { attachmentPathError } from '../_shared/attach.ts'
 import { RENE, PROCESSING, isOurAddress, validEmail } from '../_shared/identity.ts'
+import { collectAttachments } from '../_shared/gmail-attachments.ts'
 // Escrow-number → contact. A pure function in _shared for the same reason as the
 // two above, and because loan_orders.reference is 0-populated: nothing in
 // production exercises it, so its 37 offline tests ARE its coverage.
@@ -179,24 +180,12 @@ function walk(part: any, acc: { text: string; html: string }) {
  * multipart/alternative, with attachments as siblings at whatever depth the
  * sending client chose. Content-ID and Content-Disposition come along because
  * they are the only way to tell a real attachment from an inline image. */
-function collectAttachments(part: any, out: any[]) {
-  if (!part) return
-  if (part.filename && part.body && part.body.attachmentId) {
-    const h = part.headers || []
-    const cid = (hdr(h, 'Content-ID') || '').replace(/^<|>$/g, '').trim()
-    const disp = (hdr(h, 'Content-Disposition') || '').trim().toLowerCase()
-    out.push({
-      filename: part.filename,
-      mimeType: part.mimeType || null,
-      size: part.body.size || null,
-      attachmentId: part.body.attachmentId,
-      partId: part.partId || null,
-      contentId: cid || null,
-      disposition: disp ? disp.split(';')[0] : null,
-    })
-  }
-  if (Array.isArray(part.parts)) for (const p of part.parts) collectAttachments(p, out)
-}
+/* Moved to _shared/gmail-attachments.ts, unchanged, and imported above.
+   quote-reply-poll records the same shape onto quote_reply_log, and the point of
+   recording it is that the two can be COMPARED — an inbound part matching one we
+   sent on the same thread is our own form returning on reply-all, not the
+   document arriving. That comparison is only sound while both sides come from
+   the same extractor, so there must not be a second copy of this. */
 
 /* One classifier for attachment type, so the list icon and the chip icon in the
  * thread view cannot drift apart. Extension is checked as well as MIME because
