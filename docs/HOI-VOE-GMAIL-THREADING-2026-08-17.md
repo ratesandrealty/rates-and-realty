@@ -1,124 +1,165 @@
-# HOI / VOE reply threading over Gmail DWD — handoff
+# HOI / VOE reply threading over Gmail DWD
 
-Option (c) approved; Part 1 already established that `gmail.modify` covers send
-and that `gmail-inbox:996` does it in production. This records what was verified,
-what landed, and what the next session picks up. **The build is not done** — only
-the schema landed.
+Built and proven. This replaces the handoff that used to live here; the parts of
+it that were wrong are recorded below rather than deleted, because one of them
+would have shipped a correlation that could never match.
 
-## Verified before building
+## The correction that mattered
 
-### 1. The deliverability gate — SAFE
+The previous handoff, and `20260817b`'s own comments, said:
 
-This mattered because the move is not "add Gmail sending", it is **off
-MailerSend**: `email-service` transmits via `api.mailersend.com`, and HOI and VOE
-both go through it today. Checked in DNS rather than assumed:
+> `gmail_message_id` is the RFC Message-ID of the request we sent. A reply
+> carries it in In-Reply-To/References, and that is the PRIMARY correlation.
+
+**It is not, and it does not.** Two different strings:
 
 ```
-SPF    v=spf1 a mx include:_spf.google.com include:_spf.mlsend.com include:_spf.mailersend.net ~all
-DKIM   google._domainkey.ratesandrealty.com  →  v=DKIM1; k=rsa; p=MIIBIjANBgkq…  (real 2048-bit key)
-MX     ASPMX.L.GOOGLE.com, ALT1-4  (Google Workspace is the mail host)
-DMARC  v=DMARC1; p=none; rua=mailto:rene@ratesandrealty.com; pct=100
+Gmail API id     19ff76c7c7610398                                  <- send returns this
+RFC Message-ID   <CAP-aoA0q1TwTffAdeYwLxD_Pj757BYCJrkLbTA_Wms_…>   <- In-Reply-To carries this
 ```
 
-**Google is in SPF and Workspace DKIM is published**, so `processing@` sending via
-Gmail DWD is a fully authenticated sender for the domain. Both MailerSend and
-Google are already authorised, so this is a move **between two authenticated
-senders** — not off one. No threading-for-deliverability trade with insurance
-agents.
+Every `gmail_message_id` in `email_log` is 16 hex characters, because
+`messageToRow()` stores `msg.id` into it. That is what the column name means
+everywhere in this codebase, so the HOI column named to match it held the API id
+too.
 
-DMARC is `p=none`, so neither sender is being rejected on alignment today; that
-is worth knowing but does not change the answer.
+A poller matching In-Reply-To against it would have matched **nothing, on every
+reply, forever** — the identical failure the same document correctly diagnosed
+for VOE's plus-token, reproduced in its own primary path. Both fail silently: the
+reply simply never attaches, and nothing reports it.
 
-### 2. One poller for both — YES, they can share
+Fixed by storing all three, because they do different jobs:
 
-Correlation is identical for HOI and VOE: the reply's `In-Reply-To` /
-`References` matched against the stored `gmail_message_id`. **Only the target
-table differs.** Sharing is strictly better than two pollers:
+| column | holds | used for |
+|---|---|---|
+| `gmail_message_id` | Gmail API id | idempotency, re-fetching the message |
+| `rfc_message_id` | RFC header | **what In-Reply-To actually matches** |
+| `gmail_thread_id` | thread id | corroboration against Gmail's own grouping |
 
-- one Gmail sweep instead of two
-- **one idempotency key**, rather than two that can disagree about whether a
-  reply was already processed
+`gmail-inbox`'s send now returns `rfc_message_id`. It always had the value — the
+post-send `format=full` read gets real headers — it was never surfaced.
 
-No reason to split, so the remaining work assumes a single poller.
+### The second correction: HOI never used `proc_hoi_agent`
 
-### 3. VOE's token path is dead — confirmed, not inferred
+The handoff said to preserve that template by rendering through `email-service`
+`preview`. `lpHoiSendAll` does not use it. It composes its body from a hardcoded
+string in `_lpHoiBody()`. `proc_hoi_agent` belongs to the **other** HOI path — the
+generic composer at `lead-detail.html:11110` — which writes no
+`hoi_quote_requests` row and so has nothing to thread. No preview call was
+needed; the template is untouched.
 
-| | |
-|---|---|
-| `admin/lead-detail.html:13967` | sends `body.reply_to = 'processing@ratesandrealty.com'` — **bare** |
-| `supabase/functions/voe-inbound-poll/index.ts:130-131` | queries `to:rene+${o.voe_reply_token}@…` and `to:processing+${o.voe_reply_token}@…` |
+## What shipped
 
-The send has never emitted a plus-address, so those two queries have never
-matched anything. The comment above line 13967 carefully explains the rene@ →
-processing@ move (so the VA can see replies) without noticing that the token it
-depends on was never in the address. It is a real example of why the token is
-**secondary** in the design below: a token nobody emits and a token a recipient
-strips fail the same way.
+- **`gmail-inbox`** — send returns `rfc_message_id`; accepts `reply_to`,
+  restricted to `rene@`/`processing@` with an optional `+tag`. Unrestricted
+  Reply-To would be a phishing primitive: mail genuinely From: a ratesandrealty
+  mailbox, DKIM-signed by us, replying to an address the caller chose.
+- **`_shared/mime.ts`** — `Reply-To`, with CR/LF stripped. A newline in a header
+  value is header injection. 3 tests; the injection one was **broken before it
+  was trusted** — without the strip it fails with `Bcc: attacker@evil.com` as a
+  real header. 11/11.
+- **`20260817c`** — `rfc_message_id` on `hoi_quote_requests`; all three columns on
+  `loan_orders`, which had none.
+- **`20260817d`** — `quote_reply_match()` plus `hoi_quote_set_thread()` /
+  `voe_set_thread()`.
+- **`20260817e`** — `quote_reply_log`.
+- **`quote-reply-poll`** — one poller, both tables.
+- **`admin/lead-detail.html`** — both sends rewired; VOE's Reply-To now carries
+  the token.
 
-### 4. No logging regression
+## The ladder
 
-`gmail-inbox`'s send writes to **`email_log`** — the same table `email-service`
-uses. Moving HOI/VOE across does not lose the send record.
+1. **`In-Reply-To` / `References` → `rfc_message_id`** — primary. The only rung
+   that survives a recipient whose mail system strips plus-addressing, or who
+   composes a fresh message instead of replying.
+2. **token → `reply_token` / `voe_reply_token`** — secondary, because it is
+   trivially lost.
+3. **sender address — ONLY when it identifies exactly one row.**
 
-### 5. The HOI template pipeline survives
+Rung 3 returns **no row** when the address is on more than one, as
+`ambiguous_address`. This is not a rare edge case: **every HOI agent address
+currently in the table is on two borrowers** — `jesus@ezinsurance123.com`,
+`rodriguez.michelle1@ace.aaa.com`, `johnle.agency@gmail.com`. `voe_match_reply`'s
+equivalent fallback picks the *most recent* order for the address, which would
+file a reply about one borrower onto another's record, silently, on borrower NPI.
 
-HOI uses the `proc_hoi_agent` template with merge tags, rendered by
-`email-service` `preview` — which `admin/lead-detail.html` already calls before
-showing the composer. The rewire keeps that: **render through email-service
-`preview`, then send the rendered HTML via `gmail-inbox`.** Only the transport
-moves; templates, merge tags and the preview UI are untouched.
+`voe_match_reply` is untouched and still serves `voe-inbound-poll`.
 
-## What landed
+## Proofs
 
-`supabase/migrations/20260817b_hoi_quote_requests_gmail_threading.sql` — applied
-and committed.
+Ten assertions, all passing. Every fixture was a ZZ-TEST row; the only address
+that received real mail was `rene@ratesandrealty.com`.
 
-- `gmail_message_id`, `gmail_thread_id`, `reply_token` on `hoi_quote_requests`
-- partial UNIQUE on `gmail_message_id` — this is what makes re-polling a reply a
-  no-op instead of a duplicate; partial because every pre-existing row is null
-- partial UNIQUE on `reply_token`, index on `gmail_thread_id`
+| | proof | result |
+|---|---|---|
+| P1 | HOI reply correlates via In-Reply-To to the right row | `in_reply_to`, `kind=hoi` |
+| P1b | Gmail grouped the reply into the sent thread | thread ids equal |
+| P2 | VOE reply correlates to the right `loan_orders` row | `in_reply_to`, `kind=voe` |
+| P2b | same thread grouping for VOE | thread ids equal |
+| P3 | plus-token **stripped** — In-Reply-To still catches it | `in_reply_to`, token seen: null |
+| P4 | **BREAK IT**: bogus token + no In-Reply-To, plausible subject | `unmatched`, no row |
+| P5 | two rows sharing one agent address — reply lands on the correct one | A→A, B→B |
+| P5b | shared address with no In-Reply-To | `ambiguous_address`, no row |
+| P6 | poller idempotency | `recorded:0, duplicate:11` |
+| — | `dry_run` computes the match and writes nothing | `rows_written: 0` |
 
-**Deliberately not backfilled.** The six existing `hoi_quote_requests` rows and
-five VOE orders hold no Message-ID, because MailerSend never returned one to
-store. They cannot be threaded from data we hold. **Threading history starts at
-the next send, and the UI must say so** rather than rendering an empty thread
-that reads as broken.
+**Paired present-assertion.** P5b would pass vacuously if rung 3 always refused,
+so it is paired with the opposite case: a ZZ-TEST row whose agent address appears
+exactly once returns `address_unique` with that row id. The refusal is selective,
+not blanket.
 
-A process note worth keeping: this migration was applied to production via the
-MCP `apply_migration` before the repo file existed. Wrong order — for a few
-minutes production held schema the repo had no record of, which is the same drift
-shape `check-function-drift` exists to catch on the function side. Write the file
-first.
+**A bug the proofs caught.** `Prefer: resolution=ignore-duplicates` targets the
+PRIMARY KEY unless `on_conflict` names another column. `id` defaults to a fresh
+uuid, so there was never a PK conflict to ignore — the insert proceeded and died
+on the UNIQUE index instead. A re-poll of five recorded messages reported
+`recorded:0 duplicate:0`: every one took the error branch. The table was never
+wrong, the constraint held — but idempotency was working *by accident*, at the
+database's insistence rather than by the poller's design. **A row-count assertion
+would have passed here and proved nothing.**
 
-## What remains
+Cleanup verified rather than assumed: 26 fixture messages trashed, all DB
+fixtures removed, and afterwards **6 `hoi_quote_requests` and 5 VOE
+`loan_orders` remain with zero of the new columns set.** The temporary fixture
+function was deleted and its endpoint returns 404.
 
-1. **Rewire the HOI send** onto `gmail-inbox`'s send action. Do not build a
-   parallel sender. Store `gmail_message_id` and `gmail_thread_id` on the
-   `hoi_quote_requests` row **at send**, from the `id` / `threadId` the send
-   returns.
-2. **Rewire the VOE send** the same way, and **emit the plus-token in reply-to**
-   (`processing+<token>@ratesandrealty.com`) so `voe-inbound-poll`'s existing
-   queries finally match something.
-3. **Build the shared poller**, correlating in this order:
-   1. `In-Reply-To` / `References` → `gmail_message_id` — **primary**
-   2. plus-token in the delivered-to address — secondary
-   3. `agent_email` / `hr_contact_email` **+ `contact_id`** — **last**, because
-      `jesus@ezinsurance123.com` already appears on two borrowers, so the address
-      alone cannot identify a row
-   Idempotent on `gmail_message_id`.
+## What a green run does NOT prove
 
-### The proofs the build owes
+**The browser click-path.** The proofs drive the same sequence the rewired page
+uses — `gmail-inbox` send → `hoi_quote_log` → `hoi_quote_set_thread` — but from
+Node, not from the page. `render-check` confirms `lead-detail.html` parses and
+executes (6/6 clean), which rules out a SyntaxError but says nothing about
+whether the Send button is wired correctly.
 
-- Real HOI send → reply → correlates to the right row via `In-Reply-To`, and
-  `gmail_thread_id` matches the thread Gmail itself groups.
-- Same for VOE.
-- Reply from an address that **strips the plus token** — `In-Reply-To` must still
-  catch it.
-- **BREAK IT:** reply with a bogus token AND a stripped `In-Reply-To` — must
-  attach to **nothing**, never guess by domain.
-- Two borrowers sharing one agent address — reply lands on the correct row.
-- Poller idempotent on `gmail_message_id`.
+This is the frontend-first rule applied honestly: **a human must send one HOI
+quote request and one VOE request from the browser and confirm both work.** Until
+then the rewire is unconfirmed on the only path a user takes.
 
-Use ZZ-TEST rows and send only to an internal mailbox, never a real agent
-address; delete the rows afterwards. The six HOI rows and five VOE orders stay
-untouched.
+**Third-party delivery.** Fixture replies were imported into our own mailbox
+rather than delivered by an outside MTA. Deliverability was gated separately
+against DNS: SPF carries `include:_spf.google.com`, Workspace DKIM is published,
+MX is Google. This is a move between two authenticated senders, not off one.
+
+## The one thing not done
+
+**`quote-reply-poll` is deployed but nothing invokes it.** No pg_cron job was
+created, deliberately: scheduling it would start it sweeping live mailboxes
+before a human has confirmed the frontend, and the correct order is the reverse.
+
+Once the browser paths are confirmed:
+
+```sql
+select cron.schedule('quote-reply-poll', '*/10 * * * *', $$
+  select net.http_post(
+    url := 'https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/quote-reply-poll',
+    headers := public.internal_call_headers(),
+    body := '{"lookback_days":2}'::jsonb)
+$$);
+```
+
+`internal_call_headers()` sends `x-internal-secret`, which is what the function
+validates. It deliberately does **not** define a fourth cron-secret name: this
+project had three — `x-cron-secret`, `x-cron-key`, `x-internal-secret` — and that
+spread is how the CRON_KEY rotation missed three workflows.
+
+Verify the first run by reading `net._http_response`, not the job status: a
+`succeeded` cron row only means the request was queued.
