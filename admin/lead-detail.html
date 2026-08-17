@@ -13958,10 +13958,80 @@ async function _voeSendTestCopy(st){
  * return false with the composer open and asserts the toast is both present and
  * painted above the modal, because this page has already shipped a toast that
  * fired correctly and rendered underneath an overlay. */
-function _voeConfirmNoAuth(){
-  if(confirm('No signed borrower authorization is on file for this borrower. Send the VOE request without it?')) return true;
-  showToast('VOE not sent — no signed borrower authorization on file, and you chose not to send without it.', true);
-  return false;
+/* IN-PAGE MODAL, NOT confirm(). A browser can switch confirm() off — Chrome
+ * offers "prevent this page from creating additional dialogs" after repeated
+ * prompts — and a suppressed confirm() returns false with no dialog shown. This
+ * gate decides whether an employment verification goes to an employer with no
+ * signed borrower authorization behind it, and a compliance decision must not be
+ * answerable by a browser setting nobody remembers enabling.
+ *
+ * Nothing here can be suppressed: it is DOM, and it resolves only on a click or
+ * Escape. z-index sits at 2147483000, above the composer at 10001, and one below
+ * the toast at 2147483001 so the outcome message still paints over it. */
+function _voeNoAuthModal(){
+  return new Promise(function(resolve){
+    var ov=document.createElement('div');
+    ov.id='voeNoAuthOverlay';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:2147483000;'
+      + 'display:flex;align-items:center;justify-content:center;padding:20px;';
+    ov.innerHTML =
+      '<div role="alertdialog" aria-modal="true" aria-labelledby="voeNoAuthTitle" style="max-width:520px;width:100%;'
+      + 'background:#141414;border:1px solid rgba(248,113,113,.45);border-radius:14px;padding:22px 24px;'
+      + 'box-shadow:0 10px 40px rgba(0,0,0,.6);color:#eee;font-size:.92rem;line-height:1.55;">'
+      + '<h3 id="voeNoAuthTitle" style="margin:0 0 10px;font-size:1.02rem;color:#f8b4b4;">No signed borrower authorization on file</h3>'
+      + '<p style="margin:0 0 8px;">This borrower has no signed authorization on record. Sending the VOE '
+      + 'asks an employer to release employment details without one.</p>'
+      + '<p style="margin:0 0 18px;color:#bbb;">If you continue, the decision is recorded against this loan order '
+      + 'with your name and the time.</p>'
+      + '<div style="display:flex;gap:10px;justify-content:flex-end;">'
+      + '<button type="button" id="voeNoAuthCancel" style="padding:8px 16px;border-radius:9px;cursor:pointer;'
+      + 'border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.06);color:#eee;font-weight:600;">Cancel</button>'
+      + '<button type="button" id="voeNoAuthProceed" style="padding:8px 16px;border-radius:9px;cursor:pointer;'
+      + 'border:1px solid rgba(248,113,113,.5);background:rgba(248,113,113,.16);color:#f8b4b4;font-weight:700;">Send without it</button>'
+      + '</div></div>';
+    document.body.appendChild(ov);
+    function done(v){
+      try{ document.removeEventListener('keydown', onKey); ov.remove(); }catch(_){}
+      resolve(v);
+    }
+    // Escape resolves to the SAFE answer, matching what dismissing a dialog means.
+    function onKey(e){ if(e.key==='Escape'){ e.preventDefault(); done(false); } }
+    document.addEventListener('keydown', onKey);
+    ov.querySelector('#voeNoAuthCancel').addEventListener('click', function(){ done(false); });
+    ov.querySelector('#voeNoAuthProceed').addEventListener('click', function(){ done(true); });
+    // Focus lands on Cancel, so a stray Enter does not send without authorization.
+    setTimeout(function(){ var c=ov.querySelector('#voeNoAuthCancel'); if(c) c.focus(); }, 0);
+  });
+}
+
+/* Returns true only when a human chose to proceed AND that choice was recorded.
+ *
+ * THE RECORD IS WRITTEN BEFORE THE SEND, AND A FAILURE TO WRITE IT ABORTS.
+ * That ordering is the point: a VOE that reaches an employer with no signed
+ * authorization and no record of who decided is worse than a VOE that does not
+ * go out. No record, no send — and the refusal is a toast, never a silent skip,
+ * because a silent stop here is the exact defect this replaced. */
+async function _voeConfirmNoAuth(st, to){
+  var proceed = await _voeNoAuthModal();
+  if(!proceed){
+    showToast('VOE not sent — no signed borrower authorization on file, and you chose not to send without it.', true);
+    return false;
+  }
+  try{
+    var r = await _authClient().rpc('voe_log_unauthorized_send', {
+      p_order_id: (st && st.orderId) || null,
+      p_contact_id: (st && st.cid) || null,
+      p_hr_email: to || null
+    });
+    if(r.error) throw r.error;
+    // The RPC returns the audit_log id. No id means no row, whatever the status said.
+    if(r.data == null) throw new Error('no audit record id returned');
+  }catch(e){
+    showToast('VOE not sent — could not record the decision to proceed without a signed authorization: '
+      + ((e && e.message) || e), true);
+    return false;
+  }
+  return true;
 }
 async function _voeComposerSend(st){
   const cid=st.cid, k=st.k;
@@ -14019,7 +14089,7 @@ async function _voeComposerSend(st){
       if(!attachments) attachments=[];
       attachments.push(await _lpAttachToStorage(_lpB64FromBuf(pbuf), 'Borrower_Authorization_signed.pdf', 'application/pdf'));
     } else if(auth && auth.found===false){
-      if(!_voeConfirmNoAuth()){ restore(); return; }
+      if(!(await _voeConfirmNoAuth(st, to))){ restore(); return; }
     }
   }catch(be){
     restore();

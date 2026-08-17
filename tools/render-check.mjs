@@ -750,16 +750,52 @@ const SPECS = [
      * stacking assertion passes trivially, and the real decline always happens
      * with the composer open. Eval 2 asserts the modal is genuinely there and
      * has size, so "toast on top" cannot pass vacuously. */
-    name: 'VOE declining the no-auth prompt says so, VISIBLY',
+    name: 'VOE no-auth modal: Cancel aborts, VISIBLY',
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,
     role: 'admin',
+    /* Counts calls so the cancel path can assert the decision was NOT recorded.
+       A gate that logs on cancel would be a different bug — a record saying a
+       human approved something they declined — and no assertion below would
+       notice without this. */
+    /* Records onto WINDOW, not onto the harness's `state` object. RPC_STATE is a
+       local inside the stub source and is not exposed to an eval, so asserting
+       on it reads undefined, coerces to 0, and PASSES WITHOUT THE STUB EVER
+       BEING WIRED. The proceed spec below asserting this same counter reaches 1
+       is what proves the counter works at all — a 0 that can never become 1
+       measures nothing. */
+    rpcFns: {
+      voe_log_unauthorized_send:
+        '(args) => { window.__rcLogged = (window.__rcLogged || 0) + 1; window.__rcLoggedArgs = args; return 4242; }',
+    },
     evals: [
-      // 1. Open the real composer, make confirm() DECLINE, run the real guard.
-      ['(async () => {'
-        + 'await openEmailComposer({to:"zz-test.fixture@example.invalid",subject:"ZZ-TEST VOE",bodyHtml:"<p>x</p>",title:"VOE"});'
-        + 'window.confirm = function(){ return false; };'
-        + 'return String(_voeConfirmNoAuth());})()',
+      /* 1. REAL CLICK, NOT A STUB. The previous version overwrote window.confirm
+            and asserted on the return value, which proves the branch is reachable
+            and nothing about whether a person can operate it.
+            This opens the real composer, starts the real guard, waits for the
+            modal to mount, then checks the Cancel button is the TOPMOST element
+            at its own centre before clicking it. elementFromPoint is the right
+            tool here — unlike the toast, a button is pointer-events:auto, so a
+            hit test answers the question actually being asked: would a real
+            click land on this, or on something painted over it. */
+      [`(async () => {
+          await openEmailComposer({to:"zz-test.fixture@example.invalid",subject:"ZZ-TEST VOE",bodyHtml:"<p>x</p>",title:"VOE"});
+          window.__rcVoe = _voeConfirmNoAuth({orderId:"00000000-0000-0000-0000-000000000000",cid:${JSON.stringify(FIXTURE)}}, "hr@example.invalid");
+          await new Promise(r => setTimeout(r, 150));
+          var b = document.getElementById("voeNoAuthCancel");
+          if (!b) return "modal never mounted";
+          var r = b.getBoundingClientRect();
+          if (!(r.width > 0 && r.height > 0)) return "cancel button has no area";
+          var top = document.elementFromPoint(r.left + r.width/2, r.top + r.height/2);
+          if (!(top === b || b.contains(top))) return "cancel covered by " + ((top && (top.id || top.tagName)) || "nothing");
+          b.click();
+          return String(await window.__rcVoe);
+        })()`,
        'false'],
+      // 1b. The modal is GONE after choosing — a dialog that lingers blocks the page.
+      ['document.getElementById("voeNoAuthOverlay") === null ? "dismissed" : "still open"',
+       'dismissed'],
+      /* 1c. Cancelling must NOT record a decision. */
+      ['String(window.__rcLogged || 0)', '0'],
       // 2. The modal really is open and has area — or eval 5 proves nothing.
       ['(function(){var o=document.getElementById("ecOverlay");if(!o)return "composer missing";'
         + 'var s=getComputedStyle(o),b=o.getBoundingClientRect();'
@@ -801,15 +837,49 @@ const SPECS = [
         + '}).map(function(e){return (e.id||e.tagName)+":"+getComputedStyle(e).zIndex;});'
         + 'return bad.length?"COVERED BY "+bad.join(", "):"toast on top";})()',
        'toast on top'],
-      /* 6-7. THE PAIRING. Everything above would also pass if the guard toasted
-         unconditionally — which would be a different bug, warning about a
-         missing authorization on every send. Clear the toast, ACCEPT the prompt,
-         and assert the guard returns true having said nothing. */
-      ['(function(){var t=document.getElementById("ld-toast");t.textContent="";'
-        + 't.className="ld-toast";window.confirm=function(){return true;};'
-        + 'return String(_voeConfirmNoAuth());})()',
+    ],
+  },
+  {
+    /* THE OTHER BUTTON. The cancel spec above would pass in full if the guard
+       refused unconditionally — a gate that never lets anything through is not
+       the bug we have, but it is a bug, and nothing over there would catch it.
+       This drives "Send without it" and asserts the opposite outcome: proceed,
+       silently, having RECORDED the decision.
+       Both specs share the window counter, and each one proves the other is not
+       measuring a dead stub — 0 here would be indistinguishable from an unwired
+       harness if it could never reach 1. */
+    name: 'VOE no-auth modal: Send without it proceeds and records the decision',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    rpcFns: {
+      voe_log_unauthorized_send:
+        '(args) => { window.__rcLogged = (window.__rcLogged || 0) + 1; window.__rcLoggedArgs = args; return 4242; }',
+    },
+    evals: [
+      [`(async () => {
+          await openEmailComposer({to:"zz-test.fixture@example.invalid",subject:"ZZ-TEST VOE",bodyHtml:"<p>x</p>",title:"VOE"});
+          window.__rcVoe = _voeConfirmNoAuth({orderId:"00000000-0000-0000-0000-000000000000",cid:${JSON.stringify(FIXTURE)}}, "hr@example.invalid");
+          await new Promise(r => setTimeout(r, 150));
+          var b = document.getElementById("voeNoAuthProceed");
+          if (!b) return "modal never mounted";
+          var r = b.getBoundingClientRect();
+          if (!(r.width > 0 && r.height > 0)) return "proceed button has no area";
+          var top = document.elementFromPoint(r.left + r.width/2, r.top + r.height/2);
+          if (!(top === b || b.contains(top))) return "proceed covered by " + ((top && (top.id || top.tagName)) || "nothing");
+          b.click();
+          return String(await window.__rcVoe);
+        })()`,
        'true'],
+      // The decision was recorded — exactly once.
+      ['String(window.__rcLogged || 0)', '1'],
+      /* Recorded AGAINST THE RIGHT ORDER. A record filed on the wrong loan is
+         worse than none: it clears one file while implicating another. */
+      ['String(window.__rcLoggedArgs && window.__rcLoggedArgs.p_order_id)',
+       '00000000-0000-0000-0000-000000000000'],
+      ['String(window.__rcLoggedArgs && window.__rcLoggedArgs.p_hr_email)', 'hr@example.invalid'],
+      // Proceeding is silent — the toast belongs to the refusal path only.
       ['document.getElementById("ld-toast").textContent', ''],
+      ['document.getElementById("voeNoAuthOverlay") === null ? "dismissed" : "still open"', 'dismissed'],
     ],
   },
   {
