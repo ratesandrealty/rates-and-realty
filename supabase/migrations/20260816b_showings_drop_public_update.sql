@@ -1,0 +1,56 @@
+-- showings: drop public_update_showings (step 2a)
+--
+-- BEFORE (captured 2026-08-16, both PERMISSIVE):
+--
+--   public_read_showings    SELECT  {public}  USING ((COALESCE(current_app_role(), ''::text) <> 'va'::text)
+--                                                     OR is_admin() OR is_lead_shared_with_me(contact_id))
+--   public_update_showings  UPDATE  {public}  USING (true)  WITH CHECK (true)
+--
+-- REVERT — one statement, and it is the whole of what this migration does:
+--
+--   CREATE POLICY public_update_showings ON public.showings
+--     AS PERMISSIVE FOR UPDATE TO public
+--     USING (true) WITH CHECK (true);
+--
+-- WHY THIS IS SAFE NOW AND WAS NOT BEFORE
+-- public_update_showings granted UPDATE to {public} with USING(true) — every
+-- anonymous caller could rewrite every row. It survived step 2 of the plan only
+-- because public/unified-portal.html PATCHed the table directly with the anon
+-- key at six call sites. Those moved to portal-data in a609926, and Rene has
+-- confirmed all four click-paths in production: remove, reschedule, cancel,
+-- restore. So the caller that needed it no longer exists.
+--
+-- NOTHING ELSE NEEDS UPDATE ON THIS TABLE. Checked rather than assumed:
+--   * no frontend PATCH or PUT against /rest/v1/showings remains anywhere —
+--     the only textual hit is an explanatory comment in portal-auth-modal.js
+--   * admin/showings.html is READ-ONLY; its data source moved to the
+--     tours-admin edge function
+--   * the five edge functions that touch showings — contact-intelligence,
+--     google-calendar-sync, portal-data, sms-service, submit-showing — all use
+--     SUPABASE_SERVICE_ROLE_KEY, which bypasses RLS entirely, so no policy here
+--     can affect them
+-- After this, NO policy on showings grants UPDATE, to anon or to authenticated.
+-- That is deliberate: every write now goes through portal-data or a service-role
+-- function, and both are unaffected by RLS.
+--
+-- READS ARE NOT CLOSED IN THIS PASS, ON PURPOSE.
+-- public_read_showings is role {public} and its first clause,
+-- COALESCE(current_app_role(),'') <> 'va', is TRUE for an anonymous caller — so
+-- it, not open_showings, is what actually grants anonymous SELECT. Rewriting it
+-- would break three callers that still read the table directly with the anon
+-- key:
+--
+--   public/portal.html:606        the borrower's own showings list
+--   public/search-homes.html:878  the batch check behind "add to batch"
+--   dashboard/index.html:304      dead in practice — the page redirects to
+--                                 unified-portal.html — but still shipped
+--
+-- Those must move to portal-data first and be confirmed working, exactly as the
+-- six did. Frontend first, then the guard. Closing reads in the same pass that
+-- removes their only access path is the mistake email-service made.
+--
+-- ANONYMOUS INSERT IS UNTOUCHED. public_insert_showings remains: the public
+-- showing-request form depends on it, and search-homes.html:926 inserts
+-- directly with the anon key when adding a home to an existing batch.
+
+DROP POLICY IF EXISTS public_update_showings ON public.showings;
