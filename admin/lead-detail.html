@@ -14048,6 +14048,25 @@ async function _voeComposerSend(st){
   const ytdImg=(cfg.voe_ytd_screenshot_url||'').trim();
   const imgHtml=ytdImg?('<div style="margin-top:14px;"><img src="'+lpEsc(ytdImg)+'" alt="&quot;Year to date thru&quot; section" style="max-width:100%;border:1px solid #ddd;border-radius:6px;"></div>'):'';
   const bodyHtml='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'+stripMarkdownFences(editor?.innerHTML?.trim()||'')+imgHtml+'</div>';
+  /* PERSIST THE CARD BEFORE BUILDING THE PDF.
+   *
+   * voe-form-fill reads employer, HR and label from the loan_orders ROW. Those
+   * values were only written later in this same function, by voe_request_log —
+   * so a freshly typed employer reached the database AFTER the PDF that was
+   * supposed to contain it, and the attachment went out built from the previous
+   * value. lpVoeSave was called only for a card with no id yet (`if(!v.id)`),
+   * which is never true for an order being sent.
+   *
+   * Ordering, not formatting: the PDF itself is correct once the row is. Proven
+   * on the bytes — the appearance stream for voe_employer_block draws
+   * "amazon" / "12235 Faye Avenue" / "Garden Grove" in three Tj operators.
+   *
+   * loan_order_set is an upsert keyed on p_order_id, so calling it here is
+   * idempotent and costs one round trip. It is NOT awaited for its return value
+   * — voe_request_log still writes the same fields afterwards, so a failure here
+   * degrades to the old behaviour rather than blocking the send. */
+  try{ await lpVoeSave(st.k); }catch(_){}
+
   // Fetch the staged VOE PDF → base64 attachment (public bucket; graceful if not staged).
   let attachments=undefined;
   if(cfg.voe_form_url){

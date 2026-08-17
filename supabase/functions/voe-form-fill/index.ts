@@ -163,7 +163,28 @@ Deno.serve(async (req: Request) => {
     put('voe_date', today);
     put('voe_applicant_block', applicantBlock);
 
-    /* NO flatten(): Part II's 56 fields are HR's to complete. */
+    /* DELIBERATELY NOT SETTING /NeedAppearances, and this is worth writing down
+     * because it was added here on a wrong diagnosis and then removed.
+     *
+     * The blank-looking form was blamed on missing appearance streams. That was
+     * a measurement error: /AP lives on the WIDGET annotation, not on the field
+     * dict that was being read, and a later check "found no text" in streams
+     * that are Flate-compressed. Decompressed, the appearance for
+     * voe_employer_block draws exactly what it should —
+     *
+     *   <616D617A6F6E> Tj                        "amazon"
+     *   <31323233352046617965204176656E7565> Tj  "12235 Faye Avenue"
+     *   <47617264656E2047726F7665> Tj            "Garden Grove"
+     *
+     * pdf-lib regenerates appearances on save() already, so the bytes are right.
+     * NeedAppearances would tell a viewer to THROW THOSE AWAY and rebuild them,
+     * which on read-only fields can render worse than what we generated. It is
+     * not a free belt-and-braces: it hands a correct form to a viewer to redo.
+     *
+     * The real defect was ordering — the row was written after the PDF was
+     * built. Fixed in lead-detail's _voeComposerSend, not here.
+     *
+     * NO flatten() either: Part II's 56 fields are HR's to complete. */
     const out = await pdf.save();
 
     return json({

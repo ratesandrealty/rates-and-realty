@@ -1,9 +1,39 @@
--- voe_activity(p_order_id uuid)
--- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-17. This layer had NO git history:
--- check-function-drift.mjs compares deployed EDGE functions and never
--- opens the database, so 5 of 307 were recorded and the rest existed only
--- in production. Re-capture after any change.
+-- voe_activity: scope to the ORDER, and stop matching "VOE" as a substring.
+--
+-- REVERT: re-apply the 2026-08-05 capture in supabase/sql/db-functions/voe_activity.sql.
+--
+-- ══ TWO INDEPENDENT FAULTS, ONE WHERE CLAUSE ══
+--
+-- 1. `subject ilike '%VOE%'` IS A SUBSTRING MATCH. It matched
+--    "Professional Pro Plus – a WVOE Program Enhancement!" — a lender marketing
+--    blast — because WVOE contains VOE. A marketing email was rendering on a
+--    compliance panel. Dropped entirely: template='voe_request' and the full
+--    phrase 'verification of employment' are what identify these messages, and
+--    both are precise.
+--
+-- 2. IT SELECTED BY CONTACT, NOT BY ORDER. p_order_id was used only to look up
+--    the contact and to label threads, so every VOE-ish message on the CONTACT
+--    appeared on EVERY order of that contact — and, with email_log
+--    over-attributed, on a contact the mail never belonged to. Measured: the
+--    thread "Re: Verification of Employment Request — Rafael Hernandez Andrade"
+--    was rendering on Rene Duarte's order. That is one borrower's employment
+--    verification displayed on another borrower's record.
+--
+-- ══ HOW AN ORDER IS NOW EXPRESSED ══
+--
+--   a) same Gmail thread as the request we sent (gmail_thread_id), for anything
+--      sent through the new path — exact, and independent of attribution
+--   b) failing that, this order's OWN HR counterparty address on this contact
+--
+-- (b) still leans on contact_id, so it inherits attribution for legacy rows —
+-- but it is narrowed by the order's HR address, which is what separates two
+-- orders on one contact and what excludes another borrower's thread. The
+-- marketing blast was addressed to this order's HR address, so (b) alone would
+-- not have excluded it; fault 1 is what removes it. THE TWO FIXES ARE
+-- INDEPENDENT AND BOTH ARE NEEDED.
+--
+-- Neither depends on detaching the historical email_log rows. Scoping stops the
+-- leak on its own; the detach is a separate cleanup.
 
 CREATE OR REPLACE FUNCTION public.voe_activity(p_order_id uuid)
  RETURNS jsonb
@@ -11,29 +41,6 @@ CREATE OR REPLACE FUNCTION public.voe_activity(p_order_id uuid)
  STABLE SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
-/* Scoped to the ORDER, not the contact, and no longer matches "VOE" as a
-   substring.
-
-   Two independent faults previously lived in one WHERE clause:
-
-   1. `subject ilike '%VOE%'` matched "Professional Pro Plus - a WVOE Program
-      Enhancement!", a lender marketing blast, because WVOE contains VOE. A
-      marketing email rendering on a compliance panel. Dropped: template and the
-      full phrase are precise.
-
-   2. Selection was by CONTACT. p_order_id was used only to find the contact, so
-      every VOE-ish message on the contact appeared on every order of that
-      contact — and, with email_log over-attributed, on a contact the mail never
-      belonged to. Measured: "Re: Verification of Employment Request - Rafael
-      Hernandez Andrade" rendered on Rene Duarte's order. One borrower's
-      employment verification on another borrower's record.
-
-   An order is now expressed as (a) the Gmail thread our request created, which
-   never consults contact_id and is therefore immune to attribution, or (b) this
-   order's OWN HR counterparty on this contact, which is what separates two
-   orders on one contact. The marketing blast was addressed TO this order's HR
-   address, so (b) alone would not exclude it — fault 1 is what removes it. Both
-   fixes are needed and neither depends on detaching historical rows. */
 declare v_order public.loan_orders; v_events jsonb; v_hr text;
 begin
   select * into v_order from public.loan_orders where id = p_order_id;
@@ -42,6 +49,7 @@ begin
   v_hr := lower(nullif(trim(coalesce(v_order.hr_contact_email, '')), ''));
 
   with hr_meta as (
+    -- one row per HR email used across this contact's VOE orders -> label source
     select lower(trim(hr_contact_email)) as hr_key,
            nullif(max(hr_contact_name), '') as hr_name,
            nullif(max(employer_name), '')   as employer
@@ -65,8 +73,14 @@ begin
     from public.email_log el
     where
       (
+        /* (a) the thread Gmail itself grouped around our request. Exact, and it
+           does not consult contact_id at all, so it is immune to attribution. */
         (v_order.gmail_thread_id is not null and el.gmail_thread_id = v_order.gmail_thread_id)
         or
+        /* (b) legacy fallback: this order's own HR counterparty on this contact.
+           Narrower than "the contact's mail" — it is what distinguishes two
+           orders on one contact, and what keeps another borrower's VOE thread
+           off this order. */
         (v_hr is not null
          and el.contact_id = v_order.contact_id
          and (lower(coalesce(el.to_email,'')) = v_hr
@@ -74,6 +88,10 @@ begin
               or position(v_hr in lower(coalesce(el.to_emails::text,''))) > 0
               or position(v_hr in lower(coalesce(el.cc_email,''))) > 0))
       )
+      /* NO '%VOE%'. It is a substring and matched WVOE in a marketing subject.
+         template and the full phrase are precise; nothing else identifies a VOE
+         message, and a looser net on a compliance panel is how a lender blast
+         ended up beside borrower correspondence. */
       and (el.template = 'voe_request'
            or el.subject ilike '%verification of employment%')
   )

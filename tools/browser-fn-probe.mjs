@@ -46,9 +46,22 @@ const PAGE = 'https://admin.ratesandrealty.com/admin/lead-detail.html';
 // Public anon key — printed in every page of the site.
 const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdodmJtc2lid25zc3hwZXNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwNjE2NTUsImV4cCI6MjA4OTYzNzY1NX0.QaewUhTWdATj35VewvmfQcHB_b3I9FhhwXSRuqNBKvw';
 
-const slugs = process.argv.slice(2);
+/* --body '<json>' sends a real payload instead of the default probe body, and
+   --show prints the response instead of only the reached/blocked verdict. Added
+   because "the page gets a different answer than curl" is the same shape as the
+   CORS bug, and answering it needs the BROWSER's actual response, not a
+   reconstruction of it. */
+const argv = process.argv.slice(2);
+let bodyOverride = null;
+let show = false;
+const slugs = [];
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i] === '--body') { bodyOverride = argv[++i]; continue; }
+  if (argv[i] === '--show') { show = true; continue; }
+  slugs.push(argv[i]);
+}
 if (!slugs.length) {
-  console.error('usage: browser-fn-probe.mjs <slug> [slug...]');
+  console.error('usage: browser-fn-probe.mjs [--body <json>] [--show] <slug> [slug...]');
   process.exit(2);
 }
 
@@ -112,17 +125,24 @@ try {
       });
       try {
         const r = await c.functions.invoke(${JSON.stringify(slug)}, {
-          body: { order_id: '00000000-0000-0000-0000-000000000000' },
+          body: ${bodyOverride || JSON.stringify({ order_id: '00000000-0000-0000-0000-000000000000' })},
         });
         const e = r.error;
         const msg = e ? String(e.message || '') : '';
-        return ({
+        var out = {
           harness_ok: true,
           reached: !/Failed to send a request/i.test(msg),
           err_name: e ? (e.name || '') : '',
           err_msg: msg.slice(0, 140),
           status: (e && e.context && e.context.status) || (e ? null : 200),
-        });
+        };
+        if (${show ? 'true' : 'false'} && r.data) {
+          // Never print base64 payloads — they are megabytes and tell you nothing.
+          var d = JSON.parse(JSON.stringify(r.data));
+          if (d && typeof d.content === 'string') d.content = '<' + d.content.length + ' base64 chars>';
+          out.data = d;
+        }
+        return out;
       } catch (ex) {
         return ({ harness_ok: true, reached: false, err_name: 'threw', err_msg: String((ex && ex.message) || ex).slice(0, 160) });
       }
