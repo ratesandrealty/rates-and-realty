@@ -43,24 +43,35 @@ the borrower portal reads from; it did not authenticate the portal. Nothing can,
 while `portal-auth` issues no session — it verifies a password and returns a user
 object, and the browser keeps it in `localStorage`.
 
-17 actions. Five are scoped to the caller's own `portal_user_id` **or** `email`
-through the shared `scopeToCaller()` helper, with both inputs validated against
-PostgREST filter injection. **Twelve are not.**
+17 actions. **Nine are now scoped** to the caller's own `portal_user_id` **or**
+`email`, with both inputs validated against PostgREST filter injection. **Eight
+are not.**
 
-### The four that require no identity at all
+### The four that required no identity at all — CLOSED 2026-08-17
 
-These take only an object id. Knowing the id is sufficient; nothing is claimed,
-so nothing can be checked.
+These took only an object id: knowing it was sufficient, nothing was claimed, so
+nothing could be checked. All four now require an identity and refuse without one.
 
-| action | takes | effect |
+| action | was | now |
 |---|---|---|
-| `save_annotations` | `document_id` | **DELETES every existing annotation on that document**, then inserts the supplied set |
-| `get_annotations` | `document_id` | returns them |
-| `update_showing_status` | `batch_id` or `showing_id` | sets status on any batch — including `cancelled` |
-| `remove_saved_home` | `id` | deletes any saved_listings row |
+| `save_annotations` | `document_id` — **DELETED every annotation on the document** then inserted | owner resolved and checked **before** the delete; 403 otherwise |
+| `get_annotations` | `document_id` | same ownership check; 403 otherwise |
+| `update_showing_status` | `batch_id`/`showing_id`, no identity | `scopeToCaller`, returns `updated` count |
+| `remove_saved_home` | `id`, with an **optional** `portal_user_id` filter | `scopeToCaller`, returns `deleted` count |
 
-`save_annotations` is the sharpest: an unauthenticated destructive write to
-another borrower's document, and the delete happens before any insert can fail.
+`remove_saved_home` is worth calling out separately: it applied `portal_user_id`
+only `if (portal_user_id)`, so omitting the field ran the delete unscoped. **An
+optional guard is not a guard.**
+
+`showings` and `saved_listings` carry `portal_user_id` and `email`, so
+`scopeToCaller()` filters them directly. `document_annotations` carries neither —
+only `document_id` and `contact_id` — so ownership resolves
+caller → `portal_users.contact_id` → `uploaded_documents.contact_id`, via
+`resolveCallerContactId()` and `documentOwnedBy()`.
+
+Both write actions return the affected count, and the caller reads it: a delete
+or update that matched nothing is a REFUSAL and is reported as one, rather than
+being indistinguishable from success at the status code.
 
 ### The eight that require an identity, but the caller supplies it
 
@@ -104,12 +115,24 @@ The recommendation is unchanged: **Supabase Auth, not a hand-rolled token.**
 `portal-auth`'s own header has said so since before any of this. What has changed
 is that the surface is smaller and better understood.
 
-**1. Cheap, and independent of the migration** — the four no-identity actions.
-Requiring `portal_user_id`/`email` and running them through `scopeToCaller()`
-brings them level with the five already done. It does not authenticate anything,
-but it removes "knowing an id is sufficient", and `save_annotations` in
-particular should not wait for a migration to stop being a destructive
-unauthenticated write.
+**1. ~~Cheap, and independent of the migration~~ — DONE 2026-08-17.** The four
+no-identity actions now require an identity and refuse without one. It does not
+authenticate anything — nothing here can — but "knowing an id is sufficient" is
+gone, and `save_annotations` no longer lets any caller wipe another borrower's
+annotations.
+
+Proven per action against ZZ-TEST fixtures: own identity works; a **real other
+borrower** pointed at a document that is not theirs gets **403**; no identity
+gets **400**, not a silent empty; a control with the caller's own identity and a
+missing object id returns **404 / `updated: 0`**, which is what distinguishes a
+miss from a refusal; and an email carrying a PostgREST or-expression is refused
+rather than escaped. After all four refusal attempts on `save_annotations` the
+original annotation was still present and no attacker text had been written.
+
+The 403 path needed a second portal_user resolving to a different real contact to
+reach at all — with an unrecognised email the function answers 400 ("identity not
+recognised"), which is a different branch and would have left the cross-user case
+untested if it had been mistaken for one.
 
 **2. The migration proper**, in the order this repo has learned to use:
 

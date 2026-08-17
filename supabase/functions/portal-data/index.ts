@@ -55,6 +55,47 @@ function scopeToCaller(q: any, body: any): any | null {
   return null;
 }
 
+/* ── CALLER -> CONTACT, for tables that carry neither portal_user_id nor email ──
+ *
+ * scopeToCaller() works by filtering on the caller's own columns, which only
+ * helps where those columns exist. `showings` and `saved_listings` both carry
+ * portal_user_id AND email, so they scope directly. `document_annotations`
+ * carries neither — it has document_id and contact_id — so ownership there has
+ * to be resolved: caller -> portal_users.contact_id -> uploaded_documents.contact_id.
+ *
+ * Accepts EITHER portal_user_id or email, matching scopeToCaller and
+ * get_showings, and for the same measured reason: 16 of 41 showings carry a
+ * portal_user_id while all 41 carry an email, so a uuid-only rule silently hides
+ * rows from their own owner.
+ *
+ * Same validation. An unvalidated value never reaches a filter — these go
+ * through .eq() rather than a PostgREST or-expression, but the shapes are
+ * checked anyway so the rule is one rule and not two. */
+async function resolveCallerContactId(body: any): Promise<string | null> {
+  const pid = String(body?.portal_user_id || '').trim();
+  const em = String(body?.email || '').toLowerCase().trim();
+  if (pid && UUID_RE.test(pid)) {
+    const { data } = await sb.from('portal_users').select('contact_id').eq('id', pid).maybeSingle();
+    if (data?.contact_id) return data.contact_id;
+  }
+  if (em && EMAIL_RE.test(em)) {
+    const { data } = await sb.from('portal_users').select('contact_id').eq('email', em).maybeSingle();
+    if (data?.contact_id) return data.contact_id;
+  }
+  return null;
+}
+
+/* Does this document belong to that contact? Returns a reason rather than a
+   boolean so the caller can answer 404 vs 403 — telling a stranger "not found"
+   for a document that exists, and "forbidden" for one that does not, are both
+   worse than saying which. */
+async function documentOwnedBy(documentId: string, contactId: string): Promise<'ok' | 'missing' | 'forbidden'> {
+  const { data: doc } = await sb.from('uploaded_documents')
+    .select('id, contact_id').eq('id', documentId).maybeSingle();
+  if (!doc) return 'missing';
+  return doc.contact_id === contactId ? 'ok' : 'forbidden';
+}
+
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
@@ -369,13 +410,23 @@ Deno.serve(async (req: Request) => {
 
     // ─── REMOVE SAVED HOME ───────────────────────────────────────────────
     if (action === 'remove_saved_home') {
-      const { id, portal_user_id } = body;
-      if (!id) return err('id required');
+      /* SCOPED, and no longer optional. This used to apply portal_user_id only
+         `if (portal_user_id)` — omit it and the delete ran unscoped, so knowing a
+         saved_listings id was enough to delete anyone's row. An optional guard is
+         not a guard; it is a suggestion.
+         saved_listings carries portal_user_id AND email, so scopeToCaller filters
+         directly, with both inputs validated against PostgREST filter injection. */
+      const { id } = body;
+      if (!id || !UUID_RE.test(String(id))) return err('valid id required');
       let q = sb.from('saved_listings').delete().eq('id', id);
-      if (portal_user_id) q = q.eq('portal_user_id', portal_user_id);
-      const { error } = await q;
+      const scoped = scopeToCaller(q, body);
+      if (!scoped) return err('portal_user_id or email required');
+      const { data, error } = await scoped.select('id');
       if (error) return err(error.message, 500);
-      return ok({ success: true });
+      /* The count is the answer. A delete that matched nothing is a REFUSAL, and
+         it is indistinguishable from a success at the status code — the caller
+         reads deleted and says so. */
+      return ok({ success: true, deleted: (data || []).length });
     }
 
     // ─── GET DOCUMENTS ───────────────────────────────────────────────────
@@ -474,14 +525,24 @@ Deno.serve(async (req: Request) => {
       const allowed = ['new', 'pending', 'confirmed', 'completed', 'cancelled'];
       if (!allowed.includes(status)) return err('Invalid status');
 
+      /* SCOPED. This took a batch_id or showing_id and NO identity at all, so
+         anyone who knew an id could set any tour's status — including cancelling
+         a confirmed one. showings carries portal_user_id AND email, so
+         scopeToCaller filters directly. */
       let q = sb.from('showings').update({ status, updated_at: new Date().toISOString() });
-      if (batch_id) q = q.eq('batch_id', batch_id);
-      else if (showing_id) q = q.eq('id', showing_id);
-      else return err('batch_id or showing_id required');
+      if (batch_id) {
+        if (!UUID_RE.test(String(batch_id))) return err('valid batch_id required');
+        q = q.eq('batch_id', batch_id);
+      } else if (showing_id) {
+        if (!UUID_RE.test(String(showing_id))) return err('valid showing_id required');
+        q = q.eq('id', showing_id);
+      } else return err('batch_id or showing_id required');
 
-      const { error } = await q;
+      const scoped = scopeToCaller(q, body);
+      if (!scoped) return err('portal_user_id or email required');
+      const { data, error } = await scoped.select('id');
       if (error) return err(error.message, 500);
-      return ok({ success: true, status });
+      return ok({ success: true, status, updated: (data || []).length });
     }
 
     // ─── GET ANNOTATIONS ─────────────────────────────────────────────────
@@ -595,8 +656,17 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'get_annotations') {
+      /* SCOPED via the document's owner. document_annotations carries neither
+         portal_user_id nor email, so scopeToCaller cannot filter it — ownership
+         resolves caller -> portal_users.contact_id -> uploaded_documents.contact_id.
+         Previously a bare document_id returned another borrower's annotations. */
       const { document_id } = body;
       if (!document_id) return err('document_id required');
+      const _gaContact = await resolveCallerContactId(body);
+      if (!_gaContact) return err('portal_user_id or email required');
+      const _gaOwn = await documentOwnedBy(String(document_id), _gaContact);
+      if (_gaOwn === 'missing') return err('Document not found', 404);
+      if (_gaOwn === 'forbidden') return err('Forbidden — document does not belong to this user', 403);
       const { data, error } = await sb.from('document_annotations')
         .select('id, document_id, contact_id, page, x, y, text, font_size, color, created_at, created_by')
         .eq('document_id', String(document_id))
@@ -610,9 +680,20 @@ Deno.serve(async (req: Request) => {
     // Replaces the full annotation set for a given document_id. Safer than
     // partial upserts since the browser sends the authoritative current state.
     if (action === 'save_annotations') {
+      /* SCOPED, AND THIS ONE WAS THE URGENT ONE. It DELETES every existing
+         annotation on the document before inserting the supplied set, and it took
+         nothing but a document_id — so any caller who knew one could wipe another
+         borrower's annotations, with the delete landing before any insert could
+         fail. Ownership is resolved the same way as get_annotations, and it is
+         checked BEFORE the delete runs. */
       const { document_id, annotations, contact_id, created_by } = body;
       if (!document_id) return err('document_id required');
       if (!Array.isArray(annotations)) return err('annotations must be an array');
+      const _saContact = await resolveCallerContactId(body);
+      if (!_saContact) return err('portal_user_id or email required');
+      const _saOwn = await documentOwnedBy(String(document_id), _saContact);
+      if (_saOwn === 'missing') return err('Document not found', 404);
+      if (_saOwn === 'forbidden') return err('Forbidden — document does not belong to this user', 403);
 
       // Delete everything previously saved for this document, then insert the new set.
       const { error: delErr } = await sb.from('document_annotations')
