@@ -13773,7 +13773,7 @@ function lpVoeMetaHtml(v){
 function _lpVoeThreadNote(v){
   return (v && v.gmail_thread_id)
     ? '<span style="color:#9fd0a8;">↩ replies in the original thread</span>'
-    : '<span style="color:#E0B84C;">⚠ no original thread stored — this starts a NEW email</span>';
+    : '<span style="color:#E0B84C;">⚠ no thread stored — the conversation starts from your reply, and is saved from then on</span>';
 }
 async function lpVoeFollowUp(k){
   const v=_lpVoeFind(k); if(!v){ showToast('No VOE selected', true); return; }
@@ -13837,7 +13837,34 @@ async function _lpVoeFollowUpSend(v){
     const resp=await _authClient().functions.invoke('gmail-inbox',{ body:body });
     const data=resp&&resp.data, error=resp&&resp.error;
     if(error||!data||data.ok!==true) throw new Error(await _lpFnError(error, data, 'send failed'));
-    showToast('Follow-up sent to '+to+(v.gmail_thread_id?' (in the original thread) ✓':' (new thread) ✓'));
+    /* ADOPT THE THREAD, exactly as the HOI reply does. Without this a VOE order
+       with no gmail_thread_id starts a BRAND NEW conversation on every single
+       follow-up, forever — which is the state HOI was in before, and the reason
+       Rafael's order can never accumulate a thread.
+       THE GUARD IS THIS `if`, NOT THE RPC: voe_set_thread's coalesce is
+       coalesce(nullif(trim(p_x),''), x), so the parameter wins whenever it is
+       non-empty. It protects against a blank argument, not against replacing a
+       populated row. Only the caller knows whether this is an adoption or a
+       deliberate re-send.
+       Best-effort: the mail has already gone, so failing to record the id must
+       not read as failing to send. */
+    let _adopted=false;
+    if(!v.gmail_thread_id && data && data.thread_id){
+      try{
+        const _sr=await _authClient().rpc('voe_set_thread',{
+          p_order_id:v.id, p_gmail_message_id:data.message_id||null,
+          p_gmail_thread_id:data.thread_id||null, p_rfc_message_id:data.rfc_message_id||null });
+        if(_sr && _sr.error) throw _sr.error;
+        _adopted=true;
+      }catch(te){
+        console.warn('[voe_set_thread]', te&&te.message);
+        showToast('Reply sent, but the thread id could not be stored — the next reply will start another new thread.', true);
+      }
+    }
+    showToast('Reply sent to '+to+(v.gmail_thread_id
+      ? ' (in the original thread) ✓'
+      : (_adopted ? ' — new thread started and saved; replies from here stay together ✓'
+                  : ' (new thread) ✓')));
     closeEmailComposer();
     lpLoadVoes(lpCid());
   }catch(e){
@@ -13920,7 +13947,7 @@ function lpVoeCardHtml(v){
     +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:7px;font-size:10px;">'
       +'<button type="button" onclick="lpVoeFollowUp(\''+k+'\')" style="background:rgba(201,168,76,.12);'
         +'border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;font-size:11px;'
-        +'font-weight:600;padding:3px 10px;cursor:pointer;">Follow up by email</button>'
+        +'font-weight:600;padding:3px 10px;cursor:pointer;">Reply to HR</button>'
       +_lpVoeThreadNote(v)
     +'</div>'
     /* One thread per ORDER, and an order is already per-employer: the unique
@@ -14770,7 +14797,7 @@ function lpVoeRenderActivity(box, a, k){
         if(host && typeof host.scrollIntoView==='function') host.scrollIntoView({block:'nearest'});
         return;
       }
-      const id=this.getAttribute('data-email-id'); if(id) lpVoeEmailOpen(id);
+      const id=this.getAttribute('data-email-id'); if(id) lpVoeEmailOpen(id, _ownerKey);
     });
   }
 }
@@ -14781,7 +14808,12 @@ function lpVoeEmailEnsureModal(){
   ov.innerHTML='<div style="background:#141310;border:1px solid rgba(201,168,76,.3);border-radius:14px;max-width:720px;width:100%;box-shadow:0 24px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;max-height:88vh;">'
     +'<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);">'
       +'<div style="min-width:0;"><div id="lpVoeEmailSubject" style="font-size:14px;font-weight:700;color:#C9A84C;word-break:break-word;">Email</div><div id="lpVoeEmailMeta" style="font-size:10.5px;color:#999;margin-top:4px;line-height:1.5;"></div></div>'
-      +'<button onclick="lpVoeEmailClose()" style="background:transparent;border:none;color:#888;font-size:20px;cursor:pointer;line-height:1;flex-shrink:0;">✕</button>'
+      +'<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'
+        +'<button id="lpVoeEmailReply" type="button" style="display:none;background:rgba(201,168,76,.12);'
+          +'border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;font-size:11px;'
+          +'font-weight:600;padding:3px 10px;cursor:pointer;font-family:inherit;">Reply to HR</button>'
+        +'<button onclick="lpVoeEmailClose()" style="background:transparent;border:none;color:#888;font-size:20px;cursor:pointer;line-height:1;">✕</button>'
+      +'</div>'
     +'</div>'
     +'<div id="lpVoeEmailBody" style="padding:14px 18px;overflow:auto;"></div>'
   +'</div>';
@@ -14913,7 +14945,12 @@ async function _lpEmailAttOpen(frameId, i){
 }
 
 
-async function lpVoeEmailOpen(emailId){
+/* `ownerKey` is the VOE card this message belongs to, passed by the row click.
+   Without it the modal is a dead end: for an order with no thread the row opens
+   here and there is nothing to reply with, which is what "the rows are what I
+   clicked" describes. The reply itself is the CARD's action — one HR contact,
+   one reply — just reachable from here too. */
+async function lpVoeEmailOpen(emailId, ownerKey){
   const ov=lpVoeEmailEnsureModal();
   const subjEl=document.getElementById('lpVoeEmailSubject'), metaEl=document.getElementById('lpVoeEmailMeta'), bodyEl=document.getElementById('lpVoeEmailBody');
   subjEl.textContent='Email'; metaEl.textContent=''; bodyEl.innerHTML='<div style="font-size:11px;color:#888;">Loading…</div>';
@@ -14930,6 +14967,22 @@ async function lpVoeEmailOpen(emailId){
   if(d.cc) metaBits.push('CC: '+lpEsc(d.cc));
   if(d.at) metaBits.push(lpEsc(_lpFmtDT(d.at)));
   metaEl.innerHTML=metaBits.join(' &nbsp;·&nbsp; ');
+  /* Reply is the CARD's action, shown here only when we know which card this
+     message belongs to. Hidden rather than disabled when we do not: a button
+     that cannot say who it would reply to is worse than no button. */
+  const _rb=document.getElementById('lpVoeEmailReply');
+  if(_rb){
+    const _k=ownerKey||'';
+    const _own=(_k && typeof _lpVoeFind==='function') ? _lpVoeFind(_k) : null;
+    if(_own && String(_own.hr_contact_email||'').trim()){
+      _rb.style.display='';
+      _rb.onclick=function(){ lpVoeEmailClose(); lpVoeFollowUp(_k); };
+    } else {
+      _rb.style.display='none';
+      _rb.onclick=null;
+    }
+  }
+
   /* The body, quoted trailer and attachment chips all come from the page's one
      email-body renderer — see _lpRenderEmailBody. This modal owns only the
      subject and meta line above it. */

@@ -1453,6 +1453,50 @@ const SPECS = [
     ],
   },
   {
+    /* VOE must match HOI's shape. Two panels doing the same job differently is
+     * what made this confusing, so the assertion is a COMPARISON: the VOE card
+     * carries a reply button and a thread-state note exactly as the HOI card
+     * does, and the fallback modal — what a row opens when there is no thread —
+     * offers the same action rather than dead-ending. */
+    name: 'VOE reply matches HOI: card button, thread note, modal not a dead end',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          if (typeof lpRenderOrders === 'function') { try { lpRenderOrders(); } catch (e) {} }
+          if (typeof lpVoeFollowUp !== 'function')   return 'HARNESS: lpVoeFollowUp missing';
+          if (typeof lpVoeEmailOpen !== 'function')  return 'HARNESS: lpVoeEmailOpen missing';
+
+          _lpVoes = [
+            { key:'v1', id:'ord-1', status:'ordered', employer_name:'Threaded Co',
+              hr_contact_email:'hr1@x.invalid', gmail_thread_id:'TH_1', rfc_message_id:'<1@m>' },
+            { key:'v2', id:'ord-2', status:'ordered', employer_name:'Legacy Co',
+              hr_contact_email:'hr2@x.invalid', gmail_thread_id:null, rfc_message_id:null }
+          ];
+          _lpVoeOpen = { v1:true, v2:true };
+          lpRenderVoe();
+
+          var b1 = document.getElementById('lpVoeBody-v1');
+          var b2 = document.getElementById('lpVoeBody-v2');
+          if (!b1 || !b2) return 'HARNESS: VOE cards did not render';
+
+          /* same wording as HOI's button */
+          var replyBtns = document.querySelectorAll('button[onclick^="lpVoeFollowUp("]').length === 2;
+          var namedReply = b1.textContent.indexOf('Reply to HR') !== -1;
+          /* the thread note, both states, neither claiming the other's */
+          var threadedNote = b1.textContent.indexOf('replies in the original thread') !== -1;
+          var legacyNote   = b2.textContent.indexOf('conversation starts from your reply') !== -1;
+          var crossed = b1.textContent.indexOf('starts from your reply') !== -1
+                     || b2.textContent.indexOf('replies in the original thread') !== -1;
+
+          return 'buttons=' + replyBtns + ' named=' + namedReply
+               + ' threadedNote=' + threadedNote + ' legacyNote=' + legacyNote
+               + ' crossed=' + crossed;
+        })()`,
+       'buttons=true named=true threadedNote=true legacyNote=true crossed=false'],
+    ],
+  },
+  {
     /* The fallback must do the two things it could not do before: collapse the
      * quoted history and list attachments. Both come from the reader's own
      * exported helpers, so this also asserts the export exists -- if inbox.js
