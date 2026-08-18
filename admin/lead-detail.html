@@ -13369,8 +13369,14 @@ async function _lpHoiReplySend(r){
        carry no gmail_message_id at all, so there is no original conversation to
        rejoin — they can never thread backwards. What they CAN do is start one
        here: store the ids this send just returned and every later reply threads
-       into it. hoi_quote_set_thread coalesces, so it only ever fills blanks and
-       cannot overwrite a row that already had a thread.
+       into it.
+       THE GUARD IS THIS `if`, NOT THE RPC. hoi_quote_set_thread's coalesce is
+       coalesce(nullif(trim(p_x),''), x) -- the PARAMETER wins whenever it is
+       non-empty. That protects against a blank argument, NOT against
+       overwriting a row that already has a thread: measured, calling it twice
+       with a different id replaced the stored one. So the "adopt only when the
+       row has none" rule lives here, on the caller, which is also the only
+       place that knows whether this is an adoption or a deliberate re-send.
        Best-effort: the mail is already gone, so a failure to record the id must
        not read as a failure to send. It is logged and surfaced quietly. */
     let _adopted=false;

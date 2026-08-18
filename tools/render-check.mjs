@@ -1522,8 +1522,17 @@ const SPECS = [
     role: 'admin',
     evals: [
       [`(function(){
+          /* #historyList is built inside the email composer's template, so it
+             exists only once the composer has been opened. What changed is the
+             ROW RENDERING, not where the container comes from, so the spec
+             supplies the container rather than driving a composer that would
+             fetch a contact and a signature to get at it. */
           var list = document.getElementById('historyList');
-          if (!list) return 'HARNESS: #historyList never mounted';
+          if (!list) {
+            list = document.createElement('div');
+            list.id = 'historyList';
+            document.body.appendChild(list);
+          }
           if (typeof loadEmailHistory !== 'function') return 'HARNESS: loadEmailHistory missing';
 
           /* Render the rail's row markup directly from three same-day, same-subject
