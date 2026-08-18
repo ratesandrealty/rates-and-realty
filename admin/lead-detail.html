@@ -13219,6 +13219,156 @@ function lpHoiToggle(id){
  * matches an id we generated and stored, while address_unique means only that
  * one row happened to hold that sender's address. Somebody reading a premium off
  * this card should be able to see which of those they are trusting. */
+/* ── INLINE THREAD READER, shared by the HOI and VOE cards ────────────────
+ *
+ * The panels have only ever shown a 160-character, HTML-stripped preview per
+ * message. The whole conversation already exists — gmail-inbox get_thread
+ * returns every message with full bodies, direction, addresses and attachments,
+ * unpaginated — and inbox.js already knows how to render it. This mounts that
+ * renderer INTO the card rather than over it, because on these panels the point
+ * is reading the conversation against the order it belongs to.
+ *
+ * EXPAND ON DEMAND, NEVER ON RENDER. get_thread is not a read: it calls
+ * matchContact, persists messages into email_log, and runs the escrow
+ * suggester. Firing it per card while painting a panel would write rows every
+ * time the page opened, once per counterparty. So the ONLY call site is the
+ * click handler below — nothing in the render path touches it, and the toggle
+ * starts collapsed with an empty host.
+ *
+ * Both panels send from processing@, which is the mailbox a va is permitted, so
+ * this is readable by Rene and Aubrey alike. The gate is server-side in
+ * gmail-inbox; nothing here decides access.
+ */
+const _lpThreadOpen = {};   // hostId -> true while expanded
+
+function _lpThreadBlockHtml(hostId, threadId, label){
+  if(!threadId){
+    return '<div style="margin-top:6px;font-size:10.5px;color:#7a7a7a;">'
+         +   'No email thread stored for this ' + lpEsc(label) + ' &mdash; nothing to read yet.'
+         + '</div>';
+  }
+  return '<div style="margin-top:6px;">'
+    +  '<button type="button" id="' + lpEsc(hostId) + '-btn" '
+    +    'onclick="_lpThreadToggle(\'' + lpEsc(hostId) + '\',\'' + lpEsc(threadId) + '\')" '
+    +    'style="background:transparent;border:1px solid rgba(201,168,76,.35);color:#C9A84C;'
+    +    'font-size:10.5px;font-weight:600;padding:3px 10px;border-radius:6px;cursor:pointer;'
+    +    'font-family:inherit;">&#9662; Show conversation</button>'
+    +  '<div id="' + lpEsc(hostId) + '" style="margin-top:6px;"></div>'
+    + '</div>';
+}
+
+function _lpThreadToggle(hostId, threadId){
+  const host = document.getElementById(hostId);
+  const btn  = document.getElementById(hostId + '-btn');
+  if(!host) return;
+  if(_lpThreadOpen[hostId]){
+    _lpThreadOpen[hostId] = false;
+    host.innerHTML = '';
+    if(btn) btn.innerHTML = '&#9662; Show conversation';
+    return;
+  }
+  if(!window.GmailInbox || typeof window.GmailInbox.openThread !== 'function'){
+    host.innerHTML = '<div style="font-size:11px;color:#E5484D;">Thread reader unavailable.</div>';
+    return;
+  }
+  _lpThreadOpen[hostId] = true;
+  if(btn) btn.innerHTML = '&#9652; Hide conversation';
+  /* host: render inline. This is the only place get_thread is reached from
+     these panels — see the note above. */
+  window.GmailInbox.openThread({
+    client: _authClient(),
+    mailbox: 'processing@ratesandrealty.com',
+    threadId: threadId,
+    host: host
+  });
+}
+
+/* ── HOI reply, per agent ────────────────────────────────────────────────
+ * HOI had no reply affordance at all: a quote came back and the only way to
+ * answer it was to leave the record and find the mail. Same composer and the
+ * same send path as the VOE follow-up, keyed per QUOTE ROW — three quotes are
+ * three agents and three threads, so a reply must name which one it answers.
+ * The thread state is stated NEXT TO the button, not discovered after sending,
+ * for the same reason it is on VOE. */
+function _lpHoiReplyBtnHtml(r){
+  const to=String((r&&r.agent_email)||'').trim();
+  if(!to) return '<div style="margin-top:6px;font-size:10.5px;color:#7a7a7a;">'
+                +  'No agent email on this quote &mdash; nothing to reply to.</div>';
+  const threaded=!!(r&&r.gmail_thread_id);
+  return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:7px;font-size:10px;">'
+    +  '<button type="button" onclick="lpHoiReply(\''+lpEsc(String(r.id||''))+'\')" '
+    +    'style="background:rgba(201,168,76,.12);border:1px solid rgba(201,168,76,.4);color:#C9A84C;'
+    +    'border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;'
+    +    'font-family:inherit;">Reply to agent</button>'
+    +  (threaded
+        ? '<span style="color:#9fd0a8;">&#8617; replies in the original thread</span>'
+        : '<span style="color:#E0B84C;">&#9888; no original thread stored &mdash; this starts a NEW email</span>')
+    + '</div>';
+}
+
+/* _lpHoiList is the same array lpHoiRenderList painted from, so a reply can
+   never target a row the card list does not show. */
+function _lpHoiFind(id){
+  return (_lpHoiList||[]).find(function(x){ return String(x.id)===String(id); }) || null;
+}
+
+async function lpHoiReply(id){
+  const r=_lpHoiFind(id);
+  if(!r){ showToast('No quote request selected', true); return; }
+  const to=String(r.agent_email||'').trim();
+  if(!to){ showToast('No agent email on this quote request.', true); return; }
+  const threaded=!!r.gmail_thread_id;
+  const who=String(r.company_name||r.agent_name||'').trim();
+  const base='Homeowners Insurance Quote Request';
+  await openEmailComposer({
+    to: to,
+    /* 'Re:' only when it really is a reply — see the VOE note. */
+    subject: threaded ? ('Re: '+base) : base,
+    bodyHtml: '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'
+      + 'Hello'+(r.agent_first_name?(' '+lpEsc(String(r.agent_first_name))):'')+',<br><br>'
+      + 'Following up on the homeowners insurance quote request'
+      + (who?(' with '+lpEsc(who)):'')+'. Could you let me know where it stands?<br><br>'
+      + 'Thank you.</div>',
+    title: threaded ? '📨 Reply — stays in the existing thread'
+                    : '📨 Reply — ⚠ starts a NEW thread',
+    sendLabel: 'Send reply &#10148;',
+    hideDraftSchedule: true,
+    onSend: function(){ return _lpHoiReplySend(r); }
+  });
+}
+
+async function _lpHoiReplySend(r){
+  const to=(getChipEmails('toChips')[0]||'').trim();
+  if(!to){ showToast('Agent email required', true); return; }
+  const subject=(document.getElementById('subjectInput')?.value||'').trim();
+  const editor=document.getElementById('emailEditor');
+  const bodyHtml='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'
+    + stripMarkdownFences(editor?.innerHTML?.trim()||'') + '</div>';
+  const btn=document.getElementById('ecSendBtn');
+  const restore=()=>{ if(btn){ btn.disabled=false; btn.innerHTML='Send reply &#10148;'; } };
+  if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
+  try{
+    const body={ action:'send', mailbox:'processing@ratesandrealty.com',
+      to:to, subject:subject, body_html:bodyHtml };
+    const cc=getChipEmails('ccChips');
+    if(cc && cc.length) body.cc=Array.isArray(cc)?cc.join(', '):cc;
+    /* thread_id, NOT threadId — every gmail-inbox parameter is snake_case, and
+       the VOE follow-up shipped with the camelCase spelling silently ignored,
+       opening a new conversation while claiming otherwise. `references` is not
+       sent: the server chains it off the thread's last message itself. */
+    if(r.gmail_thread_id) body.thread_id=r.gmail_thread_id;
+    if(r.rfc_message_id)  body.in_reply_to=r.rfc_message_id;
+    const resp=await _authClient().functions.invoke('gmail-inbox',{ body:body });
+    const data=resp&&resp.data, error=resp&&resp.error;
+    if(error||!data||data.ok!==true) throw new Error(await _lpFnError(error, data, 'send failed'));
+    showToast('Reply sent to '+to+(r.gmail_thread_id?' (in the original thread) ✓':' (new thread) ✓'));
+    closeEmailComposer();
+    lpHoiLoadList(lpCid());
+  }catch(e){
+    restore(); showToast('Reply failed: '+((e&&e.message)||e), true);
+  }
+}
+
 function _lpHoiActivityHtml(r){
   const evs = (r && Array.isArray(r.activity)) ? r.activity : [];
   if(!evs.length) return '';
@@ -13317,6 +13467,12 @@ function lpHoiRenderList(rows){
            than 'in_reply_to', and whoever reads a quote off this card should be
            able to see how confident the match was. */
         +_lpHoiActivityHtml(r)
+        /* One thread per AGENT. hoi_quote_requests is already one row per
+           agent, each with its own gmail_thread_id, so three quotes are three
+           independent conversations and the host id is keyed on the row id —
+           expanding one cannot paint into another. */
+        +_lpThreadBlockHtml('lpHoiThread-'+lpEsc(String(r.id||'')), r.gmail_thread_id, 'quote request')
+        +_lpHoiReplyBtnHtml(r)
       +'</div>'
       +'</div>';
   }).join('');
@@ -13733,6 +13889,12 @@ function lpVoeCardHtml(v){
         +'font-weight:600;padding:3px 10px;cursor:pointer;">Follow up by email</button>'
       +_lpVoeThreadNote(v)
     +'</div>'
+    /* One thread per ORDER, and an order is already per-employer: the unique
+       index on (contact_id, order_type) deliberately exempts 'voe', so a
+       borrower with two employers has two orders, each with its own
+       gmail_thread_id and its own HR contact. Keying the host on the order id
+       is what keeps those conversations apart. */
+    +_lpThreadBlockHtml('lpVoeThread-'+lpEsc(String(v.id||k)), v.gmail_thread_id, 'VOE order')
     +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">'
       +'<select id="lpVoeBor-'+k+'" onchange="lpVoeBorrowerChange(\''+k+'\',this.value)" style="'+sel+'flex:1;min-width:0;">'+bopts+'</select>'
       +'<select onchange="lpVoeStatusChange(\''+k+'\',this.value)" style="'+sel+'">'+stOpts+'</select>'

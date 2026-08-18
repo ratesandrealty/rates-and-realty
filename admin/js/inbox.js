@@ -4030,6 +4030,26 @@
     injectStyles();
     var cl = resolveClient(opts);
     if (!cl || !opts.threadId || !opts.mailbox) return;
+
+    /* HOST TARGET. With `host` the thread renders INTO that element; without it
+       the original full-screen overlay is created, unchanged. Added so the
+       HOI/VOE order cards can show a conversation inline instead of throwing an
+       overlay over the record you are reading it against — the comparison IS
+       the point on those panels.
+       `modal` stays tied to whether an overlay was created, because it is what
+       selects back-button vs close-button chrome inside renderThread; an inline
+       thread has neither. */
+    var host = opts.host || null;
+    if (host) {
+      renderThread(host, {
+        client: cl, mailbox: opts.mailbox, threadId: opts.threadId, modal: false,
+        allowTag: opts.allowTag === true,   // inline: opt IN, the card owns filing
+        onClose: null,
+        onChanged: opts.onChanged || null
+      });
+      return;
+    }
+
     var ov = document.createElement('div'); ov.className = 'gm-modal';
     ov.innerHTML = '<div class="gm-modal-card"><div class="gm-pane" style="flex:1"></div></div>';
     document.body.appendChild(ov);

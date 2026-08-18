@@ -1216,6 +1216,168 @@ const SPECS = [
     ],
   },
   {
+    /* Per-counterparty threads, and the expand-on-demand rule.
+     *
+     * get_thread is NOT a read: it matches a contact, persists messages into
+     * email_log and runs the escrow suggester. Firing it while painting a panel
+     * would write rows every time the page opened, once per counterparty. So
+     * the assertion that matters is a COUNT: zero on render, one per expand.
+     *
+     * openThread is counted rather than get_thread itself because inbox.js's
+     * invoke is module-private and cannot be intercepted from here. That is
+     * sound: renderThread issues exactly one get_thread per call, and
+     * openThread is the only route from these cards to it — the panels call
+     * nothing else. The counter replaces openThread outright, so nothing
+     * touches Gmail during this spec.
+     *
+     * Three agents must give three INDEPENDENT hosts. If the host id were not
+     * keyed per row, expanding one would paint into another, which is the
+     * failure that makes "3 quotes = 3 threads" untrue while looking fine. */
+    name: 'HOI: three agents, three separate threads, expand-on-demand',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          if (typeof lpHoiRenderList !== 'function')   return 'HARNESS: lpHoiRenderList missing';
+          if (typeof _lpThreadToggle !== 'function')   return 'HARNESS: _lpThreadToggle missing';
+          if (typeof lpHoiReply !== 'function')        return 'HARNESS: lpHoiReply missing';
+          if (!window.GmailInbox)                      return 'HARNESS: GmailInbox not loaded';
+
+          var calls = [];
+          window.GmailInbox.openThread = function(o){ calls.push(o); };
+
+          _lpHoiList = [
+            { id:'aaa', company_name:'Agent A', agent_email:'a@x.invalid', agent_first_name:'A',
+              status:'sent', gmail_thread_id:'TH_A', rfc_message_id:'<a@mail>' },
+            { id:'bbb', company_name:'Agent B', agent_email:'b@x.invalid', agent_first_name:'B',
+              status:'sent', gmail_thread_id:'TH_B', rfc_message_id:'<b@mail>' },
+            { id:'ccc', company_name:'Agent C', agent_email:'c@x.invalid', agent_first_name:'C',
+              status:'sent', gmail_thread_id:null, rfc_message_id:null }
+          ];
+          lpHoiRenderList(_lpHoiList);
+
+          /* 1. NOTHING fetched while rendering. */
+          var zeroOnRender = calls.length === 0;
+
+          /* 2. one host per agent, distinct ids */
+          var hA = document.getElementById('lpHoiThread-aaa');
+          var hB = document.getElementById('lpHoiThread-bbb');
+          var threeHosts = !!hA && !!hB && hA !== hB;
+
+          /* 3. the agent with no stored thread offers no toggle, and says so */
+          var noBtnForC = !document.getElementById('lpHoiThread-ccc-btn');
+
+          /* 4. expanding A fetches ONCE, for A's thread only */
+          _lpThreadToggle('lpHoiThread-aaa','TH_A');
+          var oneAfterExpand = calls.length === 1 && calls[0].threadId === 'TH_A';
+          var intoOwnHost    = calls.length === 1 && calls[0].host === hA;
+          var rightMailbox   = calls.length === 1 && calls[0].mailbox === 'processing@ratesandrealty.com';
+
+          /* 5. expanding B is a SECOND, separate fetch into B's own host */
+          _lpThreadToggle('lpHoiThread-bbb','TH_B');
+          var bSeparate = calls.length === 2 && calls[1].threadId === 'TH_B' && calls[1].host === hB;
+
+          /* 6. collapsing empties only that host */
+          _lpThreadToggle('lpHoiThread-aaa','TH_A');
+          var collapseIsolated = calls.length === 2 && hA.innerHTML === '';
+
+          /* 7. every agent gets a reply affordance */
+          var replyBtns = document.querySelectorAll('#lpHoiQuotes button[onclick^="lpHoiReply("]').length;
+
+          return 'zeroOnRender=' + zeroOnRender + ' hosts=' + threeHosts
+               + ' noThreadNoBtn=' + noBtnForC + ' oneAfterExpand=' + oneAfterExpand
+               + ' ownHost=' + intoOwnHost + ' mailbox=' + rightMailbox
+               + ' bSeparate=' + bSeparate + ' collapse=' + collapseIsolated
+               + ' replyBtns=' + replyBtns;
+        })()`,
+       'zeroOnRender=true hosts=true noThreadNoBtn=true oneAfterExpand=true ownHost=true mailbox=true bSeparate=true collapse=true replyBtns=3'],
+    ],
+  },
+  {
+    /* The VOE half: a borrower with TWO orders must get two threads.
+     * The unique index on (contact_id, order_type) deliberately exempts 'voe',
+     * so this is a real shape, not a hypothetical -- one contact already has
+     * two orders in production. */
+    name: 'VOE: two orders, two separate threads',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          if (typeof lpRenderVoe !== 'function')     return 'HARNESS: lpRenderVoe missing';
+          if (typeof _lpThreadToggle !== 'function') return 'HARNESS: _lpThreadToggle missing';
+          if (!window.GmailInbox)                    return 'HARNESS: GmailInbox not loaded';
+          var calls = [];
+          window.GmailInbox.openThread = function(o){ calls.push(o); };
+
+          _lpVoes = [
+            { key:'v1', id:'ord-1', status:'ordered', employer_name:'Amazon',
+              hr_contact_email:'hr1@x.invalid', gmail_thread_id:'TH_1', rfc_message_id:'<1@mail>' },
+            { key:'v2', id:'ord-2', status:'ordered', employer_name:'Starbucks',
+              hr_contact_email:'hr2@x.invalid', gmail_thread_id:'TH_2', rfc_message_id:'<2@mail>' }
+          ];
+          _lpVoeOpen = { v1:true, v2:true };
+          lpRenderVoe();
+
+          var zeroOnRender = calls.length === 0;
+          var h1 = document.getElementById('lpVoeThread-ord-1');
+          var h2 = document.getElementById('lpVoeThread-ord-2');
+          var twoHosts = !!h1 && !!h2 && h1 !== h2;
+
+          _lpThreadToggle('lpVoeThread-ord-1','TH_1');
+          _lpThreadToggle('lpVoeThread-ord-2','TH_2');
+          var twoFetches = calls.length === 2
+                        && calls[0].threadId === 'TH_1' && calls[0].host === h1
+                        && calls[1].threadId === 'TH_2' && calls[1].host === h2;
+
+          return 'zeroOnRender=' + zeroOnRender + ' twoHosts=' + twoHosts + ' twoFetches=' + twoFetches;
+        })()`,
+       'zeroOnRender=true twoHosts=true twoFetches=true'],
+    ],
+  },
+  {
+    /* AS A VA. Aubrey works these orders, and the whole point of sending from
+     * processing@ was that her role may reach it. This asserts the panels give
+     * her the same reader and the same reply button -- the refusal, if there
+     * were one, would come from gmail-inbox server-side, not from hiding a
+     * button. Role gating on this page must not quietly take the feature away
+     * from the person who uses it. */
+    name: 'VA sees the thread reader and the reply button (HOI + VOE)',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'va',
+    evals: [
+      [`(function(){
+          if (typeof lpHoiRenderList !== 'function') return 'HARNESS: lpHoiRenderList missing';
+          if (typeof lpRenderVoe !== 'function')     return 'HARNESS: lpRenderVoe missing';
+          if (typeof lpHoiReply !== 'function')      return 'HARNESS: lpHoiReply missing';
+          var calls = [];
+          if (window.GmailInbox) window.GmailInbox.openThread = function(o){ calls.push(o); };
+
+          _lpHoiList = [{ id:'aaa', company_name:'Agent A', agent_email:'a@x.invalid',
+                          status:'sent', gmail_thread_id:'TH_A' }];
+          lpHoiRenderList(_lpHoiList);
+          _lpVoes = [{ key:'v1', id:'ord-1', status:'ordered', employer_name:'Amazon',
+                       hr_contact_email:'hr1@x.invalid', gmail_thread_id:'TH_1' }];
+          _lpVoeOpen = { v1:true };
+          lpRenderVoe();
+
+          var hoiToggle = !!document.getElementById('lpHoiThread-aaa-btn');
+          var voeToggle = !!document.getElementById('lpVoeThread-ord-1-btn');
+          var hoiReply  = document.querySelectorAll('button[onclick^="lpHoiReply("]').length === 1;
+          var voeReply  = document.querySelectorAll('button[onclick^="lpVoeFollowUp("]').length === 1;
+          /* still on demand for her too */
+          var zeroOnRender = calls.length === 0;
+          _lpThreadToggle('lpHoiThread-aaa','TH_A');
+          var opensForVa = calls.length === 1
+                        && calls[0].mailbox === 'processing@ratesandrealty.com';
+
+          return 'hoiToggle=' + hoiToggle + ' voeToggle=' + voeToggle
+               + ' hoiReply=' + hoiReply + ' voeReply=' + voeReply
+               + ' zeroOnRender=' + zeroOnRender + ' opensForVa=' + opensForVa;
+        })()`,
+       'hoiToggle=true voeToggle=true hoiReply=true voeReply=true zeroOnRender=true opensForVa=true'],
+    ],
+  },
+  {
     /* The Loan Snapshot editor must OPEN WITH THE CURRENT VALUE.
      *
      * It read its value only from an element named by cfg.src. For the
