@@ -379,23 +379,44 @@ serve(async (req) => {
       '1040':            'Tax Return',
       purchase_contract: 'Purchase Contract',
     }
-    const mapped = (docTypeKey && docTypeKey !== 'other' && docTypeKey !== 'unknown')
-      ? (DOC_TYPE_LABELS[docTypeKey]
-         || (docTypeKey.charAt(0).toUpperCase() + docTypeKey.slice(1).replace(/_/g, ' ')))
-      : ''
-    if (mapped) {
-      docType = mapped
-    } else if (nameLower.includes('id') || nameLower.includes('license') || nameLower.includes('dl')) {
-      docType = "Driver's License"
-    } else if (nameLower.includes('w2') || nameLower.includes('w-2')) {
-      docType = 'W-2'
-    } else if (nameLower.includes('pay') || nameLower.includes('stub')) {
-      docType = 'Pay Stub'
-    } else if (nameLower.includes('bank')) {
-      docType = 'Bank Statement'
-    } else if (nameLower.includes('tax') || nameLower.includes('1040')) {
-      docType = 'Tax Return'
+    /* ONE key decides BOTH the label and the extraction template.
+     *
+     * It used to be two variables that could disagree, and they did. The
+     * template chain below branched on `docTypeKey`, set ONLY from the request's
+     * doc_type, while the filename heuristic set `docType` -- the prose label
+     * interpolated into the prompt sentence. The main "Scan Doc -> Auto-fill"
+     * button and the batch Doc Scan Picker send no doc_type at all, so every
+     * scan from them fell through to the DEFAULT branch and asked for driver's
+     * licence fields while the sentence read "Extract fields from this Bank
+     * Statement". The caller even carried a comment promising "the edge fn falls
+     * back to its filename heuristic" -- true of the label, never of the template.
+     *
+     * Nothing errored. A bank statement came back carrying first_name and
+     * date_of_birth, which reads as a document the model could not parse rather
+     * than as the wrong question having been asked.
+     *
+     * ORDER AND WORD BOUNDARIES MATTER NOW IN A WAY THEY DID NOT BEFORE.
+     * Promoting this heuristic from "picks a label" to "picks the template"
+     * raises the cost of a loose match. includes('id') was tested FIRST and
+     * matches dav[id], pa[id], [id]entity -- so "davids-bank-stmt.pdf" would
+     * have resolved to a licence. Specific tokens are tested first now, and the
+     * generic id/dl test is word-bounded and last. Bare 'pay' is gone for the
+     * same reason: it matched "payoff" and "payment". Anything unmatched still
+     * falls to the default ID template, exactly as before. */
+    let resolvedKey = (docTypeKey && docTypeKey !== 'other' && docTypeKey !== 'unknown') ? docTypeKey : ''
+    if (!resolvedKey) {
+      if (/\bw-?2\b/.test(nameLower))                                    resolvedKey = 'w2'
+      else if (nameLower.includes('stub'))                               resolvedKey = 'pay_stub'
+      else if (nameLower.includes('bank'))                               resolvedKey = 'bank_statement'
+      else if (nameLower.includes('1040') || nameLower.includes('tax'))  resolvedKey = 'tax_return'
+      else if (nameLower.includes('license') || nameLower.includes('licence')
+               || /\b(id|dl)\b/.test(nameLower))                         resolvedKey = 'drivers_license'
     }
+    const mapped = resolvedKey
+      ? (DOC_TYPE_LABELS[resolvedKey]
+         || (resolvedKey.charAt(0).toUpperCase() + resolvedKey.slice(1).replace(/_/g, ' ')))
+      : ''
+    if (mapped) docType = mapped
 
     // Doc-type-branched extraction template + hint. The downstream parse,
     // filter (null/N/A drop), and ocr_jobs insert are source-agnostic — they
@@ -405,10 +426,10 @@ serve(async (req) => {
     // tax_returns, unknown, and any unmapped doc_type.
     let extractionTemplate: string
     let extractionHint: string
-    if (docTypeKey === 'bank_statements' || docTypeKey === 'bank_statement') {
+    if (resolvedKey === 'bank_statements' || resolvedKey === 'bank_statement') {
       extractionTemplate = '{"bank_name":"","account_type":"","account_number":"","total_balance":"","statement_start_date":"MM/DD/YYYY","statement_end_date":"MM/DD/YYYY","account_holder_first_name":"","account_holder_last_name":"","street_address":"","city":"","state":"","zip_code":""}'
       extractionHint = 'total_balance digits only (no $, no commas). Dates MM/DD/YYYY. account_holder name identifies which borrower the statement belongs to. Proper-case names.'
-    } else if (docTypeKey === 'w2' || docTypeKey === 'w-2') {
+    } else if (resolvedKey === 'w2' || resolvedKey === 'w-2') {
       extractionTemplate = '{"employer_name":"","employee_first_name":"","employee_last_name":"","wages":"","federal_tax_withheld":"","tax_year":"","ssn":""}'
       extractionHint = `IMPORTANT W-2 box-mapping (lender standard):
 - wages = Box 1 ("Wages, tips, other compensation") — federal taxable wages. NOT Box 3 (Social Security wages, capped) and NOT Box 5 (Medicare wages).
@@ -420,7 +441,7 @@ serve(async (req) => {
 If the document contains multiple W-2 copies of the SAME W-2 (Copy A, Copy 1, Copy 2, Copy B, Copy C), they have IDENTICAL data — just pick one.
 If the document contains DIFFERENT employers (multiple jobs), extract from the FIRST employer only (caller will re-scan for the second).
 All money fields digits only (no $, no commas, no decimals if whole-dollar).`
-    } else if (docTypeKey === 'pay_stubs' || docTypeKey === 'pay_stub' || docTypeKey === 'paystub') {
+    } else if (resolvedKey === 'pay_stubs' || resolvedKey === 'pay_stub' || resolvedKey === 'paystub') {
       extractionTemplate = '{"employer_name":"","first_name":"","last_name":"","gross_pay":"","net_pay":"","pay_period_start":"MM/DD/YYYY","pay_period_end":"MM/DD/YYYY","ytd_gross":""}'
       extractionHint = `IMPORTANT paystub field-mapping (lender standard):
 - gross_pay = THIS PAY PERIOD gross earnings (not YTD). Usually labeled "Current Gross", "Period Gross", "Gross Pay", or "Total Earnings" for this paycheck.
