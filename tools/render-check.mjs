@@ -1238,7 +1238,12 @@ const SPECS = [
     role: 'admin',
     evals: [
       [`(function(){
+          /* lpRenderOrders() MOUNTS the panels. Without it #lpHoiQuotes does not
+             exist, lpHoiRenderList returns early, and every count below reads
+             zero -- which looks like a passing expand-on-demand check. */
+          if (typeof lpRenderOrders === 'function') { try { lpRenderOrders(); } catch (e) {} }
           if (typeof lpHoiRenderList !== 'function')   return 'HARNESS: lpHoiRenderList missing';
+          if (!document.getElementById('lpHoiQuotes'))  return 'HARNESS: #lpHoiQuotes never mounted';
           if (typeof _lpThreadToggle !== 'function')   return 'HARNESS: _lpThreadToggle missing';
           if (typeof lpHoiReply !== 'function')        return 'HARNESS: lpHoiReply missing';
           if (!window.GmailInbox)                      return 'HARNESS: GmailInbox not loaded';
@@ -1254,6 +1259,11 @@ const SPECS = [
             { id:'ccc', company_name:'Agent C', agent_email:'c@x.invalid', agent_first_name:'C',
               status:'sent', gmail_thread_id:null, rfc_message_id:null }
           ];
+          /* Cards default CLOSED when there is more than one, and the thread block
+             lives in the card body -- so open all three first. Rendering with
+             them closed would report zero hosts and pass the count checks
+             vacuously, which is the shape this suite exists to catch. */
+          _lpHoiOpen = { aaa:true, bbb:true, ccc:true };
           lpHoiRenderList(_lpHoiList);
 
           /* 1. NOTHING fetched while rendering. */
@@ -1303,7 +1313,9 @@ const SPECS = [
     role: 'admin',
     evals: [
       [`(function(){
+          if (typeof lpRenderOrders === 'function') { try { lpRenderOrders(); } catch (e) {} }
           if (typeof lpRenderVoe !== 'function')     return 'HARNESS: lpRenderVoe missing';
+          if (!document.getElementById('lpVoeCards')) return 'HARNESS: #lpVoeCards never mounted';
           if (typeof _lpThreadToggle !== 'function') return 'HARNESS: _lpThreadToggle missing';
           if (!window.GmailInbox)                    return 'HARNESS: GmailInbox not loaded';
           var calls = [];
@@ -1346,6 +1358,7 @@ const SPECS = [
     role: 'va',
     evals: [
       [`(function(){
+          if (typeof lpRenderOrders === 'function') { try { lpRenderOrders(); } catch (e) {} }
           if (typeof lpHoiRenderList !== 'function') return 'HARNESS: lpHoiRenderList missing';
           if (typeof lpRenderVoe !== 'function')     return 'HARNESS: lpRenderVoe missing';
           if (typeof lpHoiReply !== 'function')      return 'HARNESS: lpHoiReply missing';
@@ -1354,6 +1367,7 @@ const SPECS = [
 
           _lpHoiList = [{ id:'aaa', company_name:'Agent A', agent_email:'a@x.invalid',
                           status:'sent', gmail_thread_id:'TH_A' }];
+          _lpHoiOpen = { aaa:true };
           lpHoiRenderList(_lpHoiList);
           _lpVoes = [{ key:'v1', id:'ord-1', status:'ordered', employer_name:'Amazon',
                        hr_contact_email:'hr1@x.invalid', gmail_thread_id:'TH_1' }];
