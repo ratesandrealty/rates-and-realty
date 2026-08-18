@@ -1,6 +1,6 @@
 -- loan_order_set(p_contact_id uuid, p_order_type text, p_status text, p_vendor_id uuid, p_reference text, p_notes text, p_employer_name text, p_hr_contact_name text, p_hr_contact_phone text, p_hr_contact_email text, p_order_id uuid, p_borrower_contact_id uuid, p_label text, p_follow_up_at timestamp with time zone, p_follow_up_owner text, p_hr_contact_first_name text, p_hr_contact_last_name text)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-11. This layer had NO git history:
+-- Captured from production 2026-08-18. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -88,14 +88,14 @@ begin
                     || coalesce(' (' || coalesce(p_employer_name, v_vendor_name) || ')', '');
     if v_task_id is null then
       insert into public.tasks(lead_id, contact_id, title, description, due_date, status, priority,
-                               related_table, related_id, created_at, updated_at)
+                               related_table, related_id, origin, created_at, updated_at)
       values(p_contact_id, p_contact_id, v_task_title,
              'Follow up on ' || upper(p_order_type)
                || coalesce(' for ' || v_borrower_name, '')
                || coalesce(' with ' || coalesce(p_employer_name, v_vendor_name), ''),
              p_follow_up_at, 'open',
              case when p_follow_up_owner='both' then 'high' else 'normal' end,
-             'loan_orders', v_id, now(), now())
+             'loan_orders', v_id, 'system', now(), now())
       returning id into v_task_id;
       update public.loan_orders set follow_up_task_id = v_task_id where id = v_id;
     else

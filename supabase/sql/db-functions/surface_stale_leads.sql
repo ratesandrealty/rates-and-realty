@@ -96,11 +96,11 @@ begin
       v_preview := v_preview || jsonb_build_object('contact_id', r.id, 'name', r.name,
                                                    'stage', r.pipeline_status, 'days_quiet', v_days);
     else
-      insert into tasks(title, status, priority, contact_id, related_table, related_id, description, created_at, updated_at)
+      insert into tasks(title, status, priority, contact_id, related_table, related_id, description, origin, created_at, updated_at)
       values ('Follow up: ' || coalesce(r.name,'lead') || ' (' || r.pipeline_status || ')' ||
                 case when v_days is null then ' — no activity logged' else ' — quiet ' || v_days || 'd' end,
               'open', 'high', r.id, 'auto_followup_lead', r.id,
-              'Auto-surfaced: this active deal has gone quiet. Reach out and update the file.', now(), now());
+              'Auto-surfaced: this active deal has gone quiet. Reach out and update the file.', 'system', now(), now());
       v_created := v_created + 1;
     end if;
   end loop;
