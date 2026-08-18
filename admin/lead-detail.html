@@ -13624,12 +13624,22 @@ async function _lpVoeFollowUpSend(v){
       to:to, subject:subject, body_html:bodyHtml };
     const cc=getChipEmails('ccChips');
     if(cc && cc.length) body.cc=Array.isArray(cc)?cc.join(', '):cc;
-    /* Thread it when we can. threadId puts it in the same Gmail conversation;
-       in_reply_to/references are what make the RECIPIENT's client thread it and
-       what makes their reply carry a header we can correlate on. Both, or the
-       reply comes back looking like a fresh message. */
-    if(v.gmail_thread_id) body.threadId=v.gmail_thread_id;
-    if(v.rfc_message_id){ body.in_reply_to=v.rfc_message_id; body.references=v.rfc_message_id; }
+    /* Thread it when we can. thread_id puts it in the same GMAIL conversation;
+       in_reply_to is what makes the RECIPIENT's client thread it and what makes
+       their reply carry a header we can correlate on. Both, or the reply comes
+       back looking like a fresh message.
+
+       THE PARAMETER IS thread_id, NOT threadId. It was threadId, and every
+       param gmail-inbox reads is snake_case, so it was silently dropped: the
+       follow-up opened a NEW Gmail conversation while this card and its toast
+       both announced "replies in the original thread". in_reply_to was spelled
+       correctly, so the recipient's client still threaded it and correlation
+       still worked — which is exactly why nothing looked wrong from here.
+       `references` is deliberately NOT sent: gmail-inbox ignores a client value
+       and chains References off the thread's last message itself, which is more
+       reliable than us guessing the chain. */
+    if(v.gmail_thread_id) body.thread_id=v.gmail_thread_id;
+    if(v.rfc_message_id) body.in_reply_to=v.rfc_message_id;
     /* No plus-token reply_to here on purpose. The original request already
        emitted one, and a reply to THIS message threads on In-Reply-To, which is
        the primary correlation rung anyway. Adding a second token would put two
