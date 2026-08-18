@@ -7453,10 +7453,15 @@ let _tkMyUid = null;
 async function _tkLoadAssignees(){
   if (_tkAssignees) return _tkAssignees;
   try {
-    const r = await sb.from('auth_user_roles')
-      .select('user_id,role,display_name,service_account')
-      .not('service_account','is',true)
-      .order('role', { ascending: true });
+    /* task_assignees(), NOT a direct read of auth_user_roles. That table has one
+       policy — auth_user_roles_self_select: (user_id = auth.uid()) — so a direct
+       select returns ONLY the caller's own row, which is why this picker showed
+       one person however it was filtered. The query and its service_account
+       filter were both correct; the table never returned anybody else.
+       The function is SECURITY DEFINER with a fixed narrow shape (user_id,
+       display_name, role) and excludes service accounts itself, so the bot
+       cannot be handed work regardless of what the caller asks for. */
+    const r = await sb.rpc('task_assignees');
     if (r.error) throw r.error;
     _tkAssignees = (r.data || []).filter(function(x){ return x && x.user_id; });
     /* Resolve who "me" is here rather than depending on a page global — there

@@ -28,7 +28,26 @@
   'use strict';
 
   var _loading = null;
-  var _bound = Object.create(null);   // elementId -> true, so re-init is a no-op
+  /* KEYED ON THE ELEMENT, NOT ITS ID.
+   *
+   * This was `elementId -> true`, and it is only ever cleared in the catch — so
+   * on success an id stayed latched for the life of the page. Any input that is
+   * DESTROYED AND REBUILT WITH THE SAME ID therefore attached exactly once:
+   * the first open bound it, and every open after that hit the latch, returned
+   * null, and left the new element as plain text. Silently, because returning
+   * null is also what a legitimate re-init does.
+   *
+   * That is what killed the Loan Snapshot's Property Address popup (#lpSpAddr),
+   * which rebuilds its markup on every open. Suggestions appeared once per page
+   * load and never again.
+   *
+   * Clearing on teardown was the alternative and is worse: it needs every caller
+   * to remember to call it, and the callers that need it most are the ones
+   * assembling innerHTML strings, which have no teardown hook to hang it on. A
+   * WeakSet is correct by construction — a rebuilt element is a different object
+   * and is simply not in the set — and it cannot leak, because entries vanish
+   * with the elements. Re-attaching the SAME element is still a no-op. */
+  var _bound = new WeakSet();
 
   function key() {
     var cfg = w.APP_CONFIG || {};
@@ -223,8 +242,8 @@
   function attachSplit(streetId, cityId, stateId, zipId, opts) {
     opts = opts || {};
     var input = document.getElementById(streetId);
-    if (!input || _bound[streetId]) return null;
-    _bound[streetId] = true;
+    if (!input || _bound.has(input)) return null;
+    _bound.add(input);
     return load().then(function () {
       styleOnce();
       var ac = autocompleteOn(input, ['address_components', 'formatted_address', 'place_id']);
@@ -252,7 +271,7 @@
       /* No key, or Places blocked. The input stays an ordinary text box and
          typing a full address by hand still works — autocomplete assists, it
          never gates. Logged rather than silent so a dead key is findable. */
-      _bound[streetId] = false;
+      _bound.delete(input);
       console.warn('[places] ' + streetId + ' stays plain text:', e.message);
       return null;
     });
@@ -263,8 +282,8 @@
   function attachCombined(inputId, opts) {
     opts = opts || {};
     var input = document.getElementById(inputId);
-    if (!input || _bound[inputId]) return null;
-    _bound[inputId] = true;
+    if (!input || _bound.has(input)) return null;
+    _bound.add(input);
     return load().then(function () {
       styleOnce();
       var ac = autocompleteOn(input, ['address_components', 'formatted_address', 'place_id']);
@@ -292,7 +311,7 @@
       });
       return ac;
     }).catch(function (e) {
-      _bound[inputId] = false;
+      _bound.delete(input);
       console.warn('[places] ' + inputId + ' stays plain text:', e.message);
       return null;
     });

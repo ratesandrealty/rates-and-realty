@@ -1730,6 +1730,62 @@ const SPECS = [
     ],
   },
   {
+    /* THE SECOND OPEN IS THE TEST. The first open always worked -- that is the
+     * current behaviour and proves nothing. The guard was keyed on element ID
+     * and cleared only on failure, so an input rebuilt with the same id was
+     * refused for the life of the page: attach returned null and the new
+     * element stayed plain text, silently, because null is also what a
+     * legitimate re-init returns.
+     *
+     * Asserted on RRPlaces directly with a real element that is destroyed and
+     * rebuilt, because that is the exact shape of the defect. Maps itself never
+     * loads here (no key in the harness), so attach() rejects and the catch
+     * runs -- which is fine: what is under test is whether the GUARD lets the
+     * second element through, not whether Google answers. The first-open case
+     * is asserted alongside so a guard that never blocks anything cannot pass
+     * this by accident. */
+    name: 'Places re-attaches an input that was destroyed and rebuilt',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          if (!window.RRPlaces || typeof window.RRPlaces.attachCombined !== 'function')
+            return 'HARNESS: RRPlaces.attachCombined missing';
+
+          function mk(){
+            var old = document.getElementById('rrLatchProbe');
+            if (old) old.remove();
+            var i = document.createElement('input');
+            i.id = 'rrLatchProbe'; i.type = 'text';
+            document.body.appendChild(i);
+            return i;
+          }
+
+          /* first element with this id */
+          var a = mk();
+          var r1 = window.RRPlaces.attachCombined('rrLatchProbe', {});
+          var firstAccepted = r1 !== null;
+
+          /* SAME element again -- must still be refused, or the guard is gone */
+          var r2 = window.RRPlaces.attachCombined('rrLatchProbe', {});
+          var sameRefused = r2 === null;
+
+          /* destroy and rebuild with the SAME id -- this is what lpSpAddr does
+             on every open, and what used to be refused for the rest of the
+             page's life */
+          var b = mk();
+          var rebuilt = b !== a;
+          var r3 = window.RRPlaces.attachCombined('rrLatchProbe', {});
+          var secondOpenAccepted = r3 !== null;
+
+          b.remove();
+          return 'first=' + firstAccepted + ' sameRefused=' + sameRefused
+               + ' rebuilt=' + rebuilt + ' secondOpen=' + secondOpenAccepted;
+        })()`,
+       'first=true sameRefused=true rebuilt=true secondOpen=true'],
+    ],
+  },
+  {
     /* The fallback must do the two things it could not do before: collapse the
      * quoted history and list attachments. Both come from the reader's own
      * exported helpers, so this also asserts the export exists -- if inbox.js
