@@ -11609,14 +11609,28 @@ async function lpLoadConditions(cid){
     body.innerHTML = data.map(c=>'<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.05);"><span style="font-size:12px;color:#ddd;">'+lpEsc(c.condition_text||'')+(c.category?' <span style="color:#777;">· '+lpEsc(c.category)+'</span>':'')+'</span>'+badge(c.status)+'</div>').join('');
   }catch(e){ body.innerHTML='<div style="color:#E5484D;font-size:12px;padding:8px;">Could not load conditions.</div>'; }
 }
+/* LABELS ARE ALSO WRITTEN TO THE ROW. This array is no longer the only place a
+   date's name exists: lpSaveDate stores `label` alongside the value, and the
+   20260817n migration backfilled all 28 existing rows from this same list.
+   Reason: every consumer outside the browser reads the name from the DATABASE.
+   critical-date-reminders renders `r.label || r.date_key`, so with a null label
+   its ClickUp tasks read "appraisal_due"; loan_health falls back to
+   initcap(date_key) and its banner read "Appraisal Due". Renaming here alone
+   produced three names for one date. Keep this list and the migration's canon
+   list identical.
+
+   NEVER RENAME A KEY, ONLY A LABEL. loan_date_nudge_scan filters on
+   date_key in ('close_of_escrow','loan_contingency','appraisal_due',
+   'inspection_deadline'); a renamed key matches nothing, raises nothing, and
+   the SMS nudge just stops. */
 const LP_KEY_DATES = [
   {key:'contract_acceptance',label:'Contract Acceptance'},
-  {key:'emd_due',label:'Earnest Money Due'},
+  {key:'emd_due',label:'Earnest Money Due',amount:'EMD Amount'},
   {key:'inspection_deadline',label:'Inspection Deadline'},
-  {key:'appraisal_due',label:'Appraisal Due'},
+  {key:'appraisal_due',label:'Appraisal Contingency'},
   {key:'loan_contingency',label:'Loan Contingency'},
-  {key:'disclosures_due',label:'Disclosures Due'},
-  {key:'cd_out',label:'CD Out'},
+  {key:'disclosures_due',label:'Disclosure Contingency'},
+  {key:'cd_out',label:'Need CD Out By'},
   {key:'signing',label:'Signing'},
   {key:'funding',label:'Funding'},
   {key:'close_of_escrow',label:'Close of Escrow'},
@@ -11776,7 +11790,8 @@ async function lpSaveApOrder(){
 async function lpLoadKeyDates(cid){
   const el = document.getElementById('lpDatesBody'); if(!el) return;
   let map = {};
-  try{ const { data } = await _authClient().from('loan_key_dates').select('date_key,date_value').eq('contact_id',cid); (data||[]).forEach(r=>{ map[r.date_key]=r.date_value; }); }catch(_){}
+  let amt = {};
+  try{ const { data } = await _authClient().from('loan_key_dates').select('date_key,date_value,amount').eq('contact_id',cid); (data||[]).forEach(r=>{ map[r.date_key]=r.date_value; if(r.amount!=null) amt[r.date_key]=r.amount; }); }catch(_){}
   // App-backed dates live on mortgage_applications — the daily proactive-followups cron watches them there.
   try{ const app = await _fetchAppRowForContact(cid); if(app){ if(app.preapproval_expiry) map['preapproval_expiry']=String(app.preapproval_expiry).slice(0,10); if(app.credit_report_pulled_date) map['credit_pulled']=String(app.credit_report_pulled_date).slice(0,10); } }catch(_){}
   // Legacy fallback: Close of Escrow was historically stored under date_key 'coe'. Read it
@@ -11789,6 +11804,18 @@ async function lpLoadKeyDates(cid){
     return '<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:4px;">'+d.label+'</div>'
       + '<input type="date" data-lp-datekey="'+hk+'" value="'+(map[d.key]||'')+'" onchange="lpSaveDate(\''+d.key+'\',this.value,\''+(d.app||'')+'\')" style="'+inp+'">'
       + '<button type="button" data-lp-metbtn="'+hk+'" data-met="0" onclick="lpToggleMet(\''+hk+'\')" style="'+metBtn+'">Mark met</button>'
+      /* An amount stored on the same row as the date. Only emd_due declares one.
+         type=number, not a formatted text box: the value goes to a numeric
+         column, and a "$1,500" string silently becomes null on the way in. */
+      + (d.amount
+          ? '<div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin:7px 0 4px;">'+lpEsc(d.amount)+'</div>'
+            + '<div style="position:relative;">'
+            + '<span style="position:absolute;left:7px;top:50%;transform:translateY(-50%);font-size:12px;color:rgba(255,255,255,.4);pointer-events:none;">$</span>'
+            + '<input type="number" step="0.01" min="0" inputmode="decimal" data-lp-amtkey="'+d.key+'"'
+            + ' value="'+(amt[d.key]!=null?String(amt[d.key]):'')+'"'
+            + ' onchange="lpSaveAmount(\''+d.key+'\',this.value)" style="'+inp+'padding-left:16px;">'
+            + '</div>'
+          : '')
       + '</div>';
   }).join('');
   lpApplyDateGlow();   // paint urgency + met-toggle state from the cached loan_health
@@ -11805,8 +11832,37 @@ async function lpSaveDate(key, value, appcol){
     lpLoadHealth(cid);   // re-run loan_health so the banner/urgent/glow reflect the new date
     return;
   }
-  try{ await _authClient().from('loan_key_dates').upsert({contact_id:cid,date_key:key,date_value:value||null,updated_at:new Date().toISOString()}, {onConflict:'contact_id,date_key'}); }catch(e){ console.warn('[lpSaveDate]', e.message); }
+  /* Write the label with the value. Without it the row keeps whatever name the
+     DB fallbacks invent -- ClickUp shows the raw date_key, the health banner
+     shows initcap(date_key) -- while this panel shows the real one. */
+  const _lbl = (LP_KEY_DATES.find(d=>d.key===key)||{}).label || null;
+  try{ await _authClient().from('loan_key_dates').upsert({contact_id:cid,date_key:key,date_value:value||null,label:_lbl,updated_at:new Date().toISOString()}, {onConflict:'contact_id,date_key'}); }catch(e){ console.warn('[lpSaveDate]', e.message); }
   lpLoadHealth(cid);   // re-run loan_health so the banner/urgent/glow reflect the new date
+}
+
+/* An amount on a key-date row (today: earnest money on emd_due).
+   Upserts the same (contact_id,date_key) row the date lives on, so the deposit
+   and the date it is due are one record rather than two things to keep in step.
+   A cleared box stores null, not 0 -- "no amount recorded" and "a deposit of
+   zero" are different claims and only one of them is true here.
+   It does NOT re-run loan_health: an amount has no due date and no urgency, so
+   there is nothing for the banner or the glow to recompute. */
+async function lpSaveAmount(key, value){
+  const cid = lpCid(); if(!cid) return;
+  const raw = String(value==null?'':value).trim();
+  const num = raw === '' ? null : Number(raw);
+  if(num !== null && !isFinite(num)){ if(typeof toast==='function') toast('Enter a number'); return; }
+  const _lbl = (LP_KEY_DATES.find(d=>d.key===key)||{}).label || null;
+  try{
+    await _authClient().from('loan_key_dates').upsert(
+      {contact_id:cid,date_key:key,label:_lbl,amount:num,updated_at:new Date().toISOString()},
+      {onConflict:'contact_id,date_key'});
+  }catch(e){
+    console.warn('[lpSaveAmount]', e.message);
+    /* Loud, because the panel's other inputs are fire-and-forget and a silently
+       dropped dollar figure reads as a saved one. */
+    alert('Could not save the amount.' + String.fromCharCode(10,10) + (e && e.message ? e.message : e));
+  }
 }
 
 // ── Loan health: one fetch → status banner + urgent list + Critical Dates glow ──

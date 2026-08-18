@@ -1062,6 +1062,54 @@ const SPECS = [
     ],
   },
   {
+    /* The renames, and the amount that rides with a date.
+     *
+     * Asserting the NEW labels appear is not enough on its own — a panel that
+     * failed to render at all would also contain none of the old ones. So the
+     * absent-checks are paired with present-checks on the same node, and the
+     * count of rendered date rows is asserted too: if #lpDatesBody never
+     * mounted, `rows` is 0 and the whole thing fails rather than passing
+     * vacuously on three absences.
+     *
+     * EMD Amount is asserted to exist on emd_due AND to exist nowhere else —
+     * it is declared per-key, and a renderer that emitted it for every row
+     * would still satisfy a presence-only check. */
+    name: 'Critical Dates: renamed labels and the EMD amount field',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          var body = document.getElementById('lpDatesBody');
+          if (!body) return 'HARNESS: #lpDatesBody never mounted';
+          if (typeof LP_KEY_DATES === 'undefined') return 'HARNESS: LP_KEY_DATES missing';
+          if (typeof lpSaveAmount !== 'function') return 'HARNESS: lpSaveAmount missing';
+          var t = body.textContent;
+          var rows = body.querySelectorAll('input[type=date][data-lp-datekey]').length;
+          /* new names present */
+          var newNames = ['Appraisal Contingency','Disclosure Contingency','Need CD Out By']
+                           .every(function(n){ return t.indexOf(n) !== -1; });
+          /* old names gone — textContent, so a hidden-but-present label still fails */
+          var oldGone = ['Appraisal Due','Disclosures Due'].every(function(n){ return t.indexOf(n) === -1; });
+          /* 'CD Out' is a SUBSTRING of 'Need CD Out By', so it cannot be
+             absence-checked directly. Assert no label is exactly 'CD Out'. */
+          var noBareCdOut = LP_KEY_DATES.every(function(d){ return d.label !== 'CD Out'; });
+          /* keys must NOT have been renamed — loan_date_nudge_scan filters on them */
+          var keys = LP_KEY_DATES.map(function(d){ return d.key; });
+          var keysIntact = ['appraisal_due','disclosures_due','cd_out','close_of_escrow',
+                            'loan_contingency','inspection_deadline']
+                             .every(function(k){ return keys.indexOf(k) !== -1; });
+          /* the amount input: exactly one, and it belongs to emd_due */
+          var amts = body.querySelectorAll('input[data-lp-amtkey]');
+          var amtOnEmdOnly = amts.length === 1 && amts[0].getAttribute('data-lp-amtkey') === 'emd_due';
+          var amtIsNumber  = amts.length === 1 && amts[0].type === 'number';
+          return 'rows=' + (rows >= 10) + ' newNames=' + newNames + ' oldGone=' + oldGone
+               + ' noBareCdOut=' + noBareCdOut + ' keysIntact=' + keysIntact
+               + ' amtOnEmdOnly=' + amtOnEmdOnly + ' amtIsNumber=' + amtIsNumber;
+        })()`,
+       'rows=true newNames=true oldGone=true noBareCdOut=true keysIntact=true amtOnEmdOnly=true amtIsNumber=true'],
+    ],
+  },
+  {
     /* The e-sign workspace's Send is legitimately disabled with no signer, and
      * that is fine — what was not fine is that it said nothing, so a refusal
      * and a dead button looked identical. Assert the reason is ON SCREEN and

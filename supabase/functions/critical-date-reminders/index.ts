@@ -55,8 +55,15 @@ Deno.serve(async (req: Request) => {
     const d3 = addDays(today, 3);
     const targets: Record<string, number> = { [today]: 0, [d1]: 1, [d3]: 3 };
 
+    /* completed = false is a FILTER, not a nicety. Without it a date somebody
+       had already marked met still produced a ClickUp task at 3 days, 1 day and
+       day-of. loan_date_nudge_scan has always excluded them
+       (coalesce(kd.completed,false) = false); this engine never did, so the two
+       reminder paths disagreed about the same row.
+       The column is NOT NULL default false, so eq() needs no coalesce. */
     const { data: rows, error } = await sb.from("loan_key_dates")
       .select("id,contact_id,date_key,label,date_value,reminders_sent, contacts(first_name,last_name)")
+      .eq("completed", false)
       .in("date_value", [today, d1, d3]);
     if (error) throw error;
 
