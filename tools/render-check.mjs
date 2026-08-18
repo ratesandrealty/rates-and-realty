@@ -1078,7 +1078,15 @@ const SPECS = [
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,
     role: 'admin',
     evals: [
-      [`(function(){
+      [`(async function(){
+          /* The panel lives behind a tab and paints when its loader runs, so an
+             assertion at page-load time sees an empty container — which is the
+             #shell break-test shape: present, empty, passing. Drive the renderer
+             first. It builds every row from LP_KEY_DATES whether or not the
+             stubbed client returns any dates, so this asserts the MARKUP, not
+             the data. */
+          if (typeof lpLoadKeyDates !== 'function') return 'HARNESS: lpLoadKeyDates missing';
+          try { await lpLoadKeyDates('${FIXTURE}'); } catch (e) { return 'HARNESS: loader threw ' + e.message; }
           var body = document.getElementById('lpDatesBody');
           if (!body) return 'HARNESS: #lpDatesBody never mounted';
           if (typeof LP_KEY_DATES === 'undefined') return 'HARNESS: LP_KEY_DATES missing';
@@ -1102,11 +1110,25 @@ const SPECS = [
           var amts = body.querySelectorAll('input[data-lp-amtkey]');
           var amtOnEmdOnly = amts.length === 1 && amts[0].getAttribute('data-lp-amtkey') === 'emd_due';
           var amtIsNumber  = amts.length === 1 && amts[0].type === 'number';
+          /* NEGATIVE CONTROL, run every time rather than once by hand.
+             The pre-deploy break test refused at the lpSaveAmount guard, so the
+             label checks above never actually saw a failure — and a check that
+             has only ever passed proves nothing. Feed the SAME predicates text
+             carrying the old names and require them to report a problem. If
+             someone later loosens the matching, this goes false while the real
+             assertions stay true, and the spec still fails. */
+          var oldText = 'Appraisal Due Disclosures Due CD Out';
+          var ctlNew  = ['Appraisal Contingency','Disclosure Contingency','Need CD Out By']
+                          .every(function(n){ return oldText.indexOf(n) !== -1; });
+          var ctlOld  = ['Appraisal Due','Disclosures Due']
+                          .every(function(n){ return oldText.indexOf(n) === -1; });
+          var control = (ctlNew === false) && (ctlOld === false);
           return 'rows=' + (rows >= 10) + ' newNames=' + newNames + ' oldGone=' + oldGone
                + ' noBareCdOut=' + noBareCdOut + ' keysIntact=' + keysIntact
-               + ' amtOnEmdOnly=' + amtOnEmdOnly + ' amtIsNumber=' + amtIsNumber;
+               + ' amtOnEmdOnly=' + amtOnEmdOnly + ' amtIsNumber=' + amtIsNumber
+               + ' control=' + control;
         })()`,
-       'rows=true newNames=true oldGone=true noBareCdOut=true keysIntact=true amtOnEmdOnly=true amtIsNumber=true'],
+       'rows=true newNames=true oldGone=true noBareCdOut=true keysIntact=true amtOnEmdOnly=true amtIsNumber=true control=true'],
     ],
   },
   {
