@@ -1569,7 +1569,7 @@ const SPECS = [
      *
      * Unassigned is asserted separately because it is a real destination, not
      * the absence of one: 34 of the 35 live tasks are unassigned. */
-    name: 'Assignee picker reads auth_user_roles and excludes the bot',
+    name: 'Assignee picker calls task_assignees(), never the table',
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,
     role: 'admin',
     evals: [
@@ -1578,50 +1578,42 @@ const SPECS = [
           var sel = document.getElementById('task-assignee-input');
           if (!sel) return 'HARNESS: #task-assignee-input never mounted';
 
-          /* Intercept the query and record that the filter was actually asked
-             for -- a client that fetched all three and filtered in JS would
-             still be reading the bot's row. */
-          var asked = { table: null, notCalled: false };
-          var realFrom = sb.from;
+          /* THIS SPEC PREVIOUSLY STUBBED sb.from('auth_user_roles') AND PASSED
+             WHILE THE FEATURE WAS BROKEN. The table has one policy --
+             (user_id = auth.uid()) -- so a direct read returns only the caller's
+             own row, and a stub that hands back three rows cannot see that.
+             What is asserted here is therefore the ROUTE: the picker must call
+             task_assignees() and must NOT read the table. Whether the function
+             returns real people is proven by a live call, which a stub can never
+             do. */
+          var usedRpc = null, touchedTable = false;
+          var realRpc = sb.rpc, realFrom = sb.from;
+          sb.rpc = function(name){
+            if (name !== 'task_assignees') return realRpc.apply(sb, arguments);
+            usedRpc = name;
+            return Promise.resolve({ data: [
+              { user_id:'u-rene',   display_name:'Rene Duarte',  role:'admin' },
+              { user_id:'u-aubrey', display_name:'Aubrey Ayson', role:'va' }
+            ], error: null });
+          };
           sb.from = function(t){
-            if (t !== 'auth_user_roles') return realFrom.call(sb, t);
-            asked.table = t;
-            var rows = [
-              { user_id:'u-rene',   role:'admin', display_name:'Rene Duarte',       service_account:false },
-              { user_id:'u-aubrey', role:'va',    display_name:'Aubrey Ayson',      service_account:false },
-              { user_id:'u-bot',    role:'admin', display_name:'[bot] RR Automation', service_account:true  }
-            ];
-            var q = {
-              select: function(){ return q; },
-              order:  function(){ return Promise.resolve({ data: q._rows, error: null }); },
-              not: function(col, op, val){
-                asked.notCalled = (col === 'service_account' && String(val) === 'true');
-                q._rows = rows.filter(function(r){ return r.service_account !== true; });
-                return q;
-              },
-              _rows: rows
-            };
-            return q;
+            if (t === 'auth_user_roles') touchedTable = true;
+            return realFrom.call(sb, t);
           };
 
-          _tkAssignees = null;                 // force a reload
+          _tkAssignees = null;
           await _tkFillAssignees();
-          sb.from = realFrom;
+          sb.rpc = realRpc; sb.from = realFrom;
 
           var vals = Array.prototype.map.call(sel.options, function(o){ return o.value; });
-          var text = sel.textContent;
-          var unassignedFirst = sel.options.length > 0 && sel.options[0].value === '';
-          var hasPeople = vals.indexOf('u-rene') !== -1 && vals.indexOf('u-aubrey') !== -1;
-          var botExcluded = vals.indexOf('u-bot') === -1 && text.indexOf('[bot]') === -1;
-          var namesFromData = text.indexOf('Rene Duarte') !== -1 && text.indexOf('Aubrey Ayson') !== -1;
-
-          return 'queried=' + (asked.table === 'auth_user_roles')
-               + ' filteredServerSide=' + asked.notCalled
-               + ' unassignedFirst=' + unassignedFirst
-               + ' people=' + hasPeople + ' botExcluded=' + botExcluded
-               + ' namesFromData=' + namesFromData;
+          var txt  = sel.textContent;
+          return 'rpc=' + (usedRpc === 'task_assignees')
+               + ' tableUntouched=' + (touchedTable === false)
+               + ' unassignedFirst=' + (sel.options.length > 0 && sel.options[0].value === '')
+               + ' people=' + (vals.indexOf('u-rene') !== -1 && vals.indexOf('u-aubrey') !== -1)
+               + ' names=' + (txt.indexOf('Rene Duarte') !== -1 && txt.indexOf('Aubrey Ayson') !== -1);
         })()`,
-       'queried=true filteredServerSide=true unassignedFirst=true people=true botExcluded=true namesFromData=true'],
+       'rpc=true tableUntouched=true unassignedFirst=true people=true names=true'],
     ],
   },
   {
