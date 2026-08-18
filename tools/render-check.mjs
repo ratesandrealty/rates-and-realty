@@ -1047,14 +1047,17 @@ const SPECS = [
           var b2 = document.getElementById('lpVoeBody-t2');
           if (!b1 || !b2) return 'HARNESS: fixture cards did not render';
           var threadedSays = /replies in the original thread/.test(b1.innerText);
-          var newSays      = /starts a NEW email/.test(b2.innerText);
+          /* Wording changed when VOE was aligned to HOI: the no-thread card now says
+             the conversation starts from your reply AND is saved from then on,
+             because since reply-and-adopt that is what actually happens. */
+          var newSays      = /conversation starts from your reply/.test(b2.innerText);
           /* Neither card may claim the other's behaviour. textContent, so a
              collapsed card cannot pass this vacuously. */
-          var crossed = /starts a NEW email/.test(b1.textContent)
+          var crossed = /conversation starts from your reply/.test(b1.textContent)
                      || /replies in the original thread/.test(b2.textContent);
           // Both must still offer the action.
-          var buttons = b1.innerText.indexOf('Follow up by email') >= 0
-                     && b2.innerText.indexOf('Follow up by email') >= 0;
+          var buttons = b1.innerText.indexOf('Reply to HR') >= 0
+                     && b2.innerText.indexOf('Reply to HR') >= 0;
           return 'threaded=' + threadedSays + ' new=' + newSays
                + ' crossed=' + crossed + ' buttons=' + buttons;
         })()`,
