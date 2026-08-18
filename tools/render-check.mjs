@@ -1132,6 +1132,57 @@ const SPECS = [
     ],
   },
   {
+    /* The Loan Snapshot editor must OPEN WITH THE CURRENT VALUE.
+     *
+     * It read its value only from an element named by cfg.src. For the
+     * app-backed dates that element (#docPreapprovalExpiry) was deleted when
+     * they moved to Critical Dates, so srcEl was null, the input opened EMPTY
+     * on a populated field, and saving wrote null over a real preapproval
+     * expiry -- the column proactive-followups sends its urgent SMS from.
+     * Destructive, silent, and invisible to any check that only asked whether
+     * the editor appeared.
+     *
+     * So this asserts the VALUE, not the presence of the input. It seeds _app
+     * directly rather than relying on the stub, because the defect is in how
+     * the editor reads the row it already has. */
+    name: 'Loan Snapshot preapproval editor opens with the stored value',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          if (typeof lpSnapEdit !== 'function') return 'HARNESS: lpSnapEdit missing';
+          if (typeof LP_SNAP_FIELDS === 'undefined') return 'HARNESS: LP_SNAP_FIELDS missing';
+          var cfg = LP_SNAP_FIELDS['preapproval_expiry'];
+          if (!cfg) return 'HARNESS: no preapproval_expiry field definition';
+          if (cfg.table !== 'app') return 'HARNESS: expected an app-backed field, got ' + cfg.table;
+
+          /* The element the old code read from must really be absent, or this
+             spec would pass for the wrong reason -- it would be exercising the
+             srcEl path that was never broken. */
+          var deadSrcAbsent = !document.getElementById(cfg.src);
+
+          window._app = window._app || {};
+          window._app.preapproval_expiry = '2026-07-11';
+
+          var old = document.getElementById('lpSnapEditPanel');
+          if (old) old.remove();
+          try { lpSnapEdit('preapproval_expiry', null); } catch (e) { return 'HARNESS: editor threw ' + e.message; }
+
+          var inp = document.getElementById('lpSnapIn');
+          if (!inp) return 'HARNESS: editor did not open an input';
+          var val = inp.value || '';
+          /* Tidy up so the panel does not sit over the rest of the run. */
+          var panel = inp.closest ? inp.closest('div') : null;
+          document.querySelectorAll('#lpSnapIn').forEach(function(n){
+            var p = n.parentElement; while (p && p.parentElement !== document.body) p = p.parentElement;
+            if (p && p.parentElement === document.body) p.remove();
+          });
+          return 'deadSrcAbsent=' + deadSrcAbsent + ' opensWithValue=' + (val === '2026-07-11') + ' blank=' + (val === '');
+        })()`,
+       'deadSrcAbsent=true opensWithValue=true blank=false'],
+    ],
+  },
+  {
     /* The e-sign workspace's Send is legitimately disabled with no signer, and
      * that is fine — what was not fine is that it said nothing, so a refusal
      * and a dead button looked identical. Assert the reason is ON SCREEN and
