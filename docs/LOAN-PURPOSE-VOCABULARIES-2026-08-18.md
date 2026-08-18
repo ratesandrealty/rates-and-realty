@@ -48,6 +48,53 @@ value, and nothing breaks, so nobody notices.
 The last two rows of `generate-1003` are live defects independent of any change
 made this pass — see the Transaction Type report.
 
+## The cash-out distinction IS stored. The form cannot print it.
+
+`refi_rate_term` and `refi_cash_out` are distinct codes, on the contact, today.
+**Both render as "Refinance"** on every generated 1003, because neither template
+has a Cash-Out box — each offers only `Purchase / Refinance / Other`:
+
+- `urla/index.html` → `cb-purchase`, `cb-refinance`, `cb-purpose-other`
+- `generate-1003/index.ts:608-609` → two `checkbox()` calls, Purchase and Refinance
+
+This is accepted, not overlooked. Adding a box changes a legal form and gets its
+own pass.
+
+**When somebody does that pass, the data is already there.** No migration or
+backfill is needed — read it with `purposeCashOut()` from
+`supabase/functions/_shared/loan-purpose.ts`, which deliberately returns THREE
+states:
+
+| return | meaning |
+|---|---|
+| `true` | cash-out |
+| `false` | not cash-out (rate & term, no-cash-out, `LimitedCashOut`) |
+| `null` | a refinance whose kind was never stated, or not a refinance |
+
+`null` must not be rendered as an unticked "Cash-Out" box: "we were never told"
+and "no" are different answers, and only one of them is a fact. The real URLA
+(2020) has this field, so the gap is genuine — it is a missing box, not missing
+data.
+
+## The top-level urla.js / urla.html / urla.css are DEAD
+
+`generate-1003-pdf/` contains two copies of the form. Only one ships:
+
+    urla/index.html, urla/style.css, urla/script.js   ->  urla/embed.ts  ->  LIVE
+    urla.html,       urla.css,       urla.js          ->  nothing        ->  DEAD
+
+`index.ts` imports `URLA_CSS, URLA_HTML, URLA_JS` from `./urla/embed.ts`, which
+is generated from the `urla/` directory. The top-level trio is imported by
+nothing.
+
+They are not identical, and that is the trap: the dead `urla.js` carries a
+`handleCheckboxes()` with `loan_purpose_purchase` / `_refinance` / `_other`
+flags that **exist nowhere in the shipping form** (the live one uses `setCb` on
+`cb-purchase` etc. and reads `l.purpose`). Anyone editing loan-purpose behaviour
+by grepping for `loan_purpose` lands in the dead copy first, changes it, deploys,
+and sees nothing happen. Delete them or regenerate from them — but do not leave
+two copies where the stale one is the one grep finds.
+
 ## Why these three are being left
 
 They write to `mortgage_applications` and `commercial_intakes`, which are
