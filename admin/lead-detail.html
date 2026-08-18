@@ -7148,6 +7148,92 @@ function _tkBucket(t) {
   return { key: 'u:' + t.assigned_to, label: who, cls: 'is-other' };
 }
 
+/* Delete is admin-only, matching task_delete's own gate and the VA card's
+   hideDelete. Hidden rather than shown-and-refused: a control that always errors
+   for a VA teaches her to ignore controls. */
+function _tkCanDelete(){
+  return !(typeof _ldNonAdmin === 'function' && _ldNonAdmin());
+}
+
+/* THE TASKS TAB HAD NO DELETE AT ALL. The only delete on this page was the trash
+   can on the VA Daily Tasks card -- a different card, calling va_task_delete,
+   which hard-deletes the CRM row, returns a bare boolean its caller ignores,
+   tells ClickUp nothing and writes no audit. A task deleted that way leaves its
+   ClickUp counterpart behind.
+
+   This path refuses out loud, snapshots the row to audit_log BEFORE deleting
+   (task_activity cannot hold it -- its FK is ON DELETE CASCADE, so the record
+   would be erased along with the task), and removes the ClickUp task after. */
+async function tkDelete(id){
+  /* The title comes off the rendered row. loadTasks() does not keep the list in
+     a variable, and naming the task in the confirm is the whole point of the
+     confirm — "Delete this task?" is not a question anyone can answer. */
+  let label = 'this task';
+  try {
+    const btn = document.querySelector('.tk-del[onclick*="' + id + '"]');
+    const row = btn && btn.closest ? btn.closest('.task-row') : null;
+    const ttl = row ? row.querySelector('.task-title') : null;
+    if (ttl && ttl.textContent.trim()) label = '"' + ttl.textContent.trim() + '"';
+  } catch (e) { /* fall back to the generic label */ }
+  if (!window.confirm('Delete ' + label + '?\n\nThis cannot be undone. The ClickUp task will be deleted too.')) return;
+
+  let res;
+  try {
+    res = await _authClient().rpc('task_delete', { p_id: id, p_force: false });
+    if (res.error) throw res.error;
+  } catch (e) {
+    showToast('Could not delete: ' + ((e && e.message) || e), true);
+    return;
+  }
+  let d = res.data || {};
+
+  /* A machine-made task comes back, so say so and let the user choose rather
+     than deleting something that reappears on the next sweep. */
+  if (d.ok === false && d.reason === 'will_recreate') {
+    if (!window.confirm((d.message || 'This task will be recreated automatically.') + '\n\nDelete it anyway?')) {
+      showToast('Left in place.');
+      return;
+    }
+    try {
+      const forced = await _authClient().rpc('task_delete', { p_id: id, p_force: true });
+      if (forced.error) throw forced.error;
+      d = forced.data || {};
+    } catch (e) {
+      showToast('Could not delete: ' + ((e && e.message) || e), true);
+      return;
+    }
+  }
+
+  if (d.ok !== true) {
+    /* Visible refusal. A delete that matched nothing must not look like one that
+       worked -- that is the trap this replaces. */
+    showToast(d.message || ('Nothing was deleted (' + (d.reason || 'unknown') + ').'), true);
+    return;
+  }
+
+  /* ClickUp second, and loudly on failure: the CRM row is already gone, so a
+     silent failure here is exactly the orphan this exists to prevent. The id is
+     in audit_log either way, so the orphan stays recoverable. */
+  if (d.clickup_task_id) {
+    try {
+      /* The route is a URL PATH — clickup-bridge reads url.pathname[2], not a
+         body field — so the sub-path goes in the function name, exactly as the
+         dashboard's ClickUp panel calls it. */
+      const r = await _authClient().functions.invoke('clickup-bridge/task/delete', {
+        body: { clickup_task_id: d.clickup_task_id }
+      });
+      if (r.error) throw r.error;
+    } catch (e) {
+      showToast('Task deleted, but its ClickUp task ' + d.clickup_task_id
+              + ' could not be removed -- delete it in ClickUp. (' + ((e && e.message) || e) + ')', true);
+      if (typeof loadTasks === 'function') loadTasks();
+      return;
+    }
+  }
+  showToast('Deleted' + (d.clickup_task_id ? ' (ClickUp task removed too)' : '') + ' ✓');
+  if (typeof loadTasks === 'function') loadTasks();
+}
+
 function _tkRow(t) {
   const done = t.status === 'completed';
   /* _rrD, not new Date(): tasks.due_date is `timestamp WITHOUT time zone` and
@@ -7167,6 +7253,7 @@ function _tkRow(t) {
         </div>
         <span class="tk-chip ${b.cls}" title="Assignee">${esc(b.label)}</span>
         <span class="task-priority tp-${t.priority || 'normal'}">${t.priority || 'normal'}</span>
+        ${_tkCanDelete() ? `<button class="tk-del" onclick="tkDelete('${t.id}')" title="Delete this task" style="background:transparent;border:none;color:#7a7a7a;font-size:13px;cursor:pointer;line-height:1;padding:2px 4px;flex-shrink:0;">&#128465;</button>` : ''}
       </div>`;
 }
 

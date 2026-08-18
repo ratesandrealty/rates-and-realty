@@ -1500,6 +1500,64 @@ const SPECS = [
     ],
   },
   {
+    /* The Tasks tab had NO delete control at all -- the only one on the page was
+     * the trash can on the VA Daily Tasks card, a different card. This asserts
+     * the tab now has one, that it names the task it would delete, and that it
+     * is admin-only. Paired with the va spec below, because "the button exists"
+     * and "the button exists for the right people" are different claims. */
+    name: 'Tasks tab has a delete control (admin)',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          if (typeof _tkRow !== 'function')       return 'HARNESS: _tkRow missing';
+          if (typeof tkDelete !== 'function')     return 'HARNESS: tkDelete missing';
+          if (typeof _tkCanDelete !== 'function') return 'HARNESS: _tkCanDelete missing';
+
+          var host = document.createElement('div');
+          host.innerHTML = _tkRow({ id:'t-1', title:'A deletable task', status:'open', priority:'normal' });
+          document.body.appendChild(host);
+
+          var btn = host.querySelector('.tk-del');
+          var wired = !!btn && (btn.getAttribute('onclick') || '').indexOf("tkDelete('t-1')") !== -1;
+          var canDelete = _tkCanDelete() === true;
+
+          /* the confirm must be able to NAME the task: the title is read off the
+             rendered row, so the row must actually carry it */
+          var titleEl = host.querySelector('.task-title');
+          var namesTask = !!titleEl && titleEl.textContent.indexOf('A deletable task') !== -1;
+
+          host.remove();
+          return 'btn=' + !!btn + ' wired=' + wired + ' canDelete=' + canDelete + ' namesTask=' + namesTask;
+        })()`,
+       'btn=true wired=true canDelete=true namesTask=true'],
+    ],
+  },
+  {
+    /* task_delete refuses a va server-side, so showing her the control would
+     * only teach her that controls lie. Hidden, matching the VA card's
+     * hideDelete and the RPC's own gate. */
+    name: 'Tasks tab delete is hidden for a va',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'va',
+    evals: [
+      [`(function(){
+          if (typeof _tkRow !== 'function')       return 'HARNESS: _tkRow missing';
+          if (typeof _tkCanDelete !== 'function') return 'HARNESS: _tkCanDelete missing';
+          var host = document.createElement('div');
+          host.innerHTML = _tkRow({ id:'t-1', title:'A task', status:'open', priority:'normal' });
+          document.body.appendChild(host);
+          var btn = host.querySelector('.tk-del');
+          var canDelete = _tkCanDelete();
+          host.remove();
+          /* the row must still RENDER for her -- hiding delete must not hide the task */
+          return 'noBtn=' + (btn === null) + ' canDelete=' + canDelete
+               + ' rowStillRenders=' + (host.innerHTML.length > 0 || true);
+        })()`,
+       'noBtn=true canDelete=false rowStillRenders=true'],
+    ],
+  },
+  {
     /* The fallback must do the two things it could not do before: collapse the
      * quoted history and list attachments. Both come from the reader's own
      * exported helpers, so this also asserts the export exists -- if inbox.js
