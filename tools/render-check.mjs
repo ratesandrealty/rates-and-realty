@@ -1497,11 +1497,11 @@ const SPECS = [
 
           var bodyEl = document.getElementById('lpVoeEmailBody');
           if (!bodyEl) return 'HARNESS: modal body never mounted';
-          var hasQuoteToggle = !!document.getElementById('lpVoeQuoteTog');
-          var quoteHidden    = (function(){ var f=document.getElementById('lpVoeQuoteFrame');
+          var hasQuoteToggle = !!document.getElementById('lpVoeEmailFrame-qtog');
+          var quoteHidden    = (function(){ var f=document.getElementById('lpVoeEmailFrame-quote');
                                             return !!f && f.style.display === 'none'; })();
           var attListed      = bodyEl.textContent.indexOf('VOE signed.pdf') !== -1;
-          var attOpenable    = bodyEl.querySelectorAll('button[onclick^="_lpVoeAttOpen("]').length === 1;
+          var attOpenable    = bodyEl.querySelectorAll('button[onclick^="_lpEmailAttOpen("]').length === 1;
           if (typeof lpVoeEmailClose === 'function') lpVoeEmailClose();
 
           return 'exported=' + exported + ' splits=' + splits + ' keepsMain=' + keepsMain
@@ -1571,6 +1571,109 @@ const SPECS = [
           });
         })()`,
        'rows=true distinct=true names=true notOurMailbox=true'],
+    ],
+  },
+  {
+    /* ONE rendering logic across every entry point on this page.
+     *
+     * Four surfaces render an email body here. Three grew their own way of
+     * doing it and all three agreed on the same two failures: no quote
+     * collapsing, so a reply showed signature-first with the real message
+     * buried, and no attachments. They now all call _lpRenderEmailBody, which
+     * is a thin wrapper over inbox.js's OWN splitQuoted/wrapBody.
+     *
+     * Asserted PAIRED, on the same renderer in the same eval: a signature-first
+     * body collapses its trailer AND lists attachments; a plain body with no
+     * trailer renders normally and emits NO toggle. Either alone is passable by
+     * a broken implementation — a renderer that always emits a toggle passes the
+     * first, and one that never splits passes the second. */
+    name: 'One email-body renderer: quotes collapsed, no empty toggle',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          if (typeof _lpRenderEmailBody !== 'function') return 'HARNESS: _lpRenderEmailBody missing';
+          var GI = window.GmailInbox || {};
+          if (typeof GI.splitQuoted !== 'function' || typeof GI.wrapBody !== 'function')
+            return 'HARNESS: inbox.js does not export splitQuoted/wrapBody';
+
+          var host = document.createElement('div');
+          document.body.appendChild(host);
+
+          /* (a) signature-first, with an attachment — the real complaint. */
+          var sigFirst = '<div>Please see the attached quote.</div>'
+                       + '<div>Best,<br>Michelle<br><small>CONFIDENTIALITY NOTICE</small></div>'
+                       + '<div class="gmail_quote">On Tue, Aug 11, 2026 Rene wrote:'
+                       + '<blockquote>the original request</blockquote></div>';
+          _lpRenderEmailBody(host, { frameId:'specA', html:sigFirst, text:'',
+            attachments:[{ path:'processing/x/quote.pdf', name:'Quote.pdf', size:41000 }] });
+
+          var aFrame   = document.getElementById('specA');
+          var aToggle  = !!document.getElementById('specA-qtog');
+          var aQuote   = document.getElementById('specA-quote');
+          var aHidden  = !!aQuote && aQuote.style.display === 'none';
+          var aMain    = aFrame ? String(aFrame.srcdoc || '') : '';
+          /* the real message survives, the quoted original is NOT in the main frame */
+          var aKeepsMsg = aMain.indexOf('see the attached quote') !== -1;
+          var aDropsQuote = aMain.indexOf('the original request') === -1;
+          var aAtt     = host.textContent.indexOf('Quote.pdf') !== -1;
+          var aAttBtn  = host.querySelectorAll('button[onclick^="_lpEmailAttOpen("]').length === 1;
+
+          /* (b) plain message, no trailer, no attachments — no empty toggle. */
+          _lpRenderEmailBody(host, { frameId:'specB',
+            html:'<div>Quick note with no quoted history at all.</div>', text:'' });
+          var bToggle = !!document.getElementById('specB-qtog');
+          var bFrame  = document.getElementById('specB');
+          var bRenders = !!bFrame && String(bFrame.srcdoc||'').indexOf('no quoted history') !== -1;
+          var bNoAtt  = host.querySelectorAll('button[onclick^="_lpEmailAttOpen("]').length === 0;
+
+          host.remove();
+          return 'toggle=' + aToggle + ' collapsed=' + aHidden
+               + ' keepsMsg=' + aKeepsMsg + ' dropsQuote=' + aDropsQuote
+               + ' att=' + aAtt + ' attBtn=' + aAttBtn
+               + ' plainNoToggle=' + (bToggle === false) + ' plainRenders=' + bRenders
+               + ' plainNoAtt=' + bNoAtt;
+        })()`,
+       'toggle=true collapsed=true keepsMsg=true dropsQuote=true att=true attBtn=true plainNoToggle=true plainRenders=true plainNoAtt=true'],
+    ],
+  },
+  {
+    /* Every entry point must go THROUGH that renderer. Asserting the renderer
+     * works proves nothing if a surface still writes its own srcdoc, which is
+     * exactly the state this fold removes — so this counts the call. */
+    name: 'All four entry points use the shared email-body renderer',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          if (typeof _lpRenderEmailBody !== 'function') return 'HARNESS: _lpRenderEmailBody missing';
+          if (typeof previewPriorEmail !== 'function')  return 'HARNESS: previewPriorEmail missing';
+
+          var calls = [];
+          var real = _lpRenderEmailBody;
+          _lpRenderEmailBody = function(h, o){ calls.push((o && o.frameId) || '?'); };
+
+          /* the Prior Emails preview */
+          _emailCache = _emailCache || {};
+          _emailCache['e1'] = { id:'e1', subject:'Re: Quote', direction:'inbound',
+            from_email:'agent@x.invalid', to_email:'processing@ratesandrealty.com',
+            body_html:'<div>hi</div><div class="gmail_quote">On ... wrote:</div>',
+            status:'sent', created_at:'2026-08-11T00:00:00Z',
+            attachments:[{ path:'p/q.pdf', name:'Q.pdf' }] };
+          try { previewPriorEmail('e1'); } catch(e) { _lpRenderEmailBody = real; return 'HARNESS: preview threw ' + e.message; }
+          if (typeof closeEmailPreviewPanel === 'function') { try { closeEmailPreviewPanel(); } catch(e){} }
+
+          _lpRenderEmailBody = real;
+
+          var usedPreview = calls.indexOf('prevEmailFrame') !== -1;
+          /* and no surface may still be writing its own frame */
+          var noStaticPrevFrame = !document.getElementById('prevIframe');
+          var prevHostExists    = !!document.getElementById('prevBodyHost');
+
+          return 'preview=' + usedPreview + ' oldFrameGone=' + noStaticPrevFrame
+               + ' host=' + prevHostExists;
+        })()`,
+       'preview=true oldFrameGone=true host=true'],
     ],
   },
   {

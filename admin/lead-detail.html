@@ -14791,37 +14791,128 @@ function lpVoeEmailEnsureModal(){
 }
 function lpVoeEmailClose(){ const ov=document.getElementById('lpVoeEmailOverlay'); if(ov) ov.style.display='none'; }
 
-/* State for the fallback modal's quoted trailer and attachments. Module-level
-   rather than per-open because the modal is a singleton — one overlay, reused. */
-let _lpVoeQuotedSrc = '';
-let _lpVoeAtts = [];
+/* ── ONE EMAIL BODY RENDERER FOR THIS PAGE ────────────────────────────────
+ *
+ * Four surfaces on lead-detail render an email body. Three of them each grew
+ * their own way of doing it, and they disagreed about the two things that
+ * actually matter: none collapsed quoted history, so an agent's reply rendered
+ * signature-first with the real message buried under it, and none listed
+ * attachments, so a VOE PDF was invisible. The fourth — the inline thread
+ * reader in inbox.js — already did both.
+ *
+ * So this is not a fourth implementation. splitQuoted and wrapBody ARE the
+ * reader's functions, exported from inbox.js; everything below is the small
+ * amount of chrome around them (a lazily-loaded quoted frame and attachment
+ * chips) shared by every entry point on this page.
+ *
+ * State is keyed per FRAME rather than module-global, because these surfaces
+ * can be open at once and a single shared variable would let one modal's
+ * quoted text load into another's frame.
+ */
+const _lpEmailBody = {};   // frameId -> { quoted, atts }
 
-function _lpVoeQuoteToggle(){
-  const f=document.getElementById('lpVoeQuoteFrame');
-  const b=document.getElementById('lpVoeQuoteTog');
+/* Renders into `host`. Returns nothing; the caller owns the surrounding chrome
+   (subject, meta, reply buttons), which is why folding these together changes
+   no behaviour outside the body itself. */
+function _lpRenderEmailBody(host, o){
+  if(!host) return;
+  o = o || {};
+  const frameId = o.frameId || ('lpEmailFrame-' + Math.random().toString(36).slice(2));
+  const html = String(o.html || '').trim();
+  const text = String(o.text || '');
+  const atts = Array.isArray(o.attachments) ? o.attachments : [];
+  const h    = o.height || '56vh';
+
+  const GI = window.GmailInbox || {};
+  /* Degraded, never blank: if the export ever disappears we still show the body
+     rather than an empty frame. */
+  const split = (typeof GI.splitQuoted === 'function') ? GI.splitQuoted(html) : { main: html, quoted: '' };
+  const wrap  = (typeof GI.wrapBody === 'function')
+                  ? function(x){ return GI.wrapBody(x, text); }
+                  : function(x){ return x; };
+
+  const attHtml = atts.length
+    ? ('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">'
+       + atts.map(function(a, i){
+           const nm = String((a && (a.name || a.filename)) || ('attachment ' + (i+1)));
+           const sz = (a && a.size) ? (' · ' + Math.max(1, Math.round(a.size/1024)) + ' KB') : '';
+           return '<button type="button" onclick="_lpEmailAttOpen(\'' + lpEsc(frameId) + '\',' + i + ')" '
+             + 'style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.32);'
+             + 'color:#C9A84C;border-radius:6px;font-size:11px;padding:4px 9px;cursor:pointer;'
+             + 'font-family:inherit;max-width:100%;overflow:hidden;text-overflow:ellipsis;'
+             + 'white-space:nowrap;">&#128206; ' + lpEsc(nm) + lpEsc(sz) + '</button>';
+         }).join('')
+       + '</div>')
+    : '';
+
+  if(!html && !text){
+    host.innerHTML = attHtml + '<div style="font-size:11px;color:#888;">No email body.</div>';
+    return;
+  }
+
+  if(!html){
+    host.innerHTML = attHtml
+      + '<div style="white-space:pre-wrap;font-size:12px;line-height:1.55;color:#e8e8e8;">'
+      + lpEsc(text) + '</div>';
+    return;
+  }
+
+  /* The toggle is emitted ONLY when there is a trailer to show. A control that
+     opens an empty frame is worse than no control. */
+  host.innerHTML = attHtml
+    + '<iframe id="' + lpEsc(frameId) + '" sandbox="allow-same-origin allow-popups" '
+    +   'style="width:100%;height:' + lpEsc(h) + ';border:1px solid rgba(255,255,255,.12);'
+    +   'border-radius:8px;background:#fff;"></iframe>'
+    + (split.quoted
+        ? '<div style="margin-top:8px;">'
+          + '<button type="button" id="' + lpEsc(frameId) + '-qtog" '
+          +   'onclick="_lpEmailQuoteToggle(\'' + lpEsc(frameId) + '\')" '
+          +   'style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);'
+          +   'color:#aaa;border-radius:6px;font-size:11px;padding:2px 10px;cursor:pointer;'
+          +   'font-family:inherit;" title="Show quoted text">&#8943;</button>'
+          + '<iframe id="' + lpEsc(frameId) + '-quote" sandbox="allow-same-origin allow-popups" '
+          +   'style="display:none;width:100%;height:40vh;margin-top:6px;'
+          +   'border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#fff;"></iframe>'
+          + '</div>'
+        : '');
+
+  const f = document.getElementById(frameId);
+  if(f) f.srcdoc = wrap(split.main || html);
+  _lpEmailBody[frameId] = { quoted: split.quoted ? wrap(split.quoted) : '', atts: atts };
+}
+
+function _lpEmailQuoteToggle(frameId){
+  const f = document.getElementById(frameId + '-quote');
+  const b = document.getElementById(frameId + '-qtog');
   if(!f) return;
-  const showing = f.style.display !== 'none';
-  if(showing){ f.style.display='none'; if(b) b.title='Show quoted text'; return; }
-  /* srcdoc set on FIRST open only. */
-  if(!f.getAttribute('data-loaded')){ f.srcdoc=_lpVoeQuotedSrc||''; f.setAttribute('data-loaded','1'); }
+  if(f.style.display !== 'none'){ f.style.display='none'; if(b) b.title='Show quoted text'; return; }
+  /* srcdoc on FIRST open only — a long chain is often the bulk of the message
+     and most opens never look at it. */
+  if(!f.getAttribute('data-loaded')){
+    f.srcdoc = (_lpEmailBody[frameId] && _lpEmailBody[frameId].quoted) || '';
+    f.setAttribute('data-loaded','1');
+  }
   f.style.display='block';
   if(b) b.title='Hide quoted text';
 }
 
-/* Attachments on email_log are storage paths in the mailbox bucket, so opening
-   one means signing a URL — never a public link. Failure is announced rather
-   than leaving a chip that does nothing when clicked. */
-async function _lpVoeAttOpen(i){
-  const a=(_lpVoeAtts||[])[i];
+/* email_log.attachments holds storage PATHS in the mailbox bucket, so opening
+   one means signing a URL — never a public link. A failure says so rather than
+   leaving a chip that does nothing when clicked. */
+async function _lpEmailAttOpen(frameId, i){
+  const st = _lpEmailBody[frameId] || {};
+  const a = (st.atts || [])[i];
   if(!a || !a.path){ showToast('That attachment has no stored path.', true); return; }
   try{
-    const r=await _authClient().storage.from('email-attachments').createSignedUrl(a.path, 300);
+    const r = await _authClient().storage.from('email-attachments').createSignedUrl(a.path, 300);
     if(r.error || !r.data || !r.data.signedUrl) throw new Error((r.error&&r.error.message)||'could not sign a URL');
     window.open(r.data.signedUrl, '_blank', 'noopener');
   }catch(e){
     showToast('Could not open '+((a&&(a.name||a.filename))||'attachment')+': '+((e&&e.message)||e), true);
   }
 }
+
+
 async function lpVoeEmailOpen(emailId){
   const ov=lpVoeEmailEnsureModal();
   const subjEl=document.getElementById('lpVoeEmailSubject'), metaEl=document.getElementById('lpVoeEmailMeta'), bodyEl=document.getElementById('lpVoeEmailBody');
@@ -14839,65 +14930,15 @@ async function lpVoeEmailOpen(emailId){
   if(d.cc) metaBits.push('CC: '+lpEsc(d.cc));
   if(d.at) metaBits.push(lpEsc(_lpFmtDT(d.at)));
   metaEl.innerHTML=metaBits.join(' &nbsp;·&nbsp; ');
-  /* ── ATTACHMENTS ───────────────────────────────────────────────────────
-     voe_email_get returns them as of the 20260818 migration; before that the
-     column was never selected, so this modal could not show a PDF at all — and
-     a verification of employment IS a PDF. email_log.attachments holds storage
-     PATHS, not bytes, so a click signs a URL from the bucket gmail-inbox wrote
-     to. */
-  const atts = Array.isArray(d.attachments) ? d.attachments : [];
-  _lpVoeAtts = atts;
-  const attHtml = atts.length
-    ? ('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">'
-       + atts.map(function(a, i){
-           const nm = String((a && (a.name || a.filename)) || ('attachment ' + (i+1)));
-           const sz = (a && a.size) ? (' · ' + Math.max(1, Math.round(a.size/1024)) + ' KB') : '';
-           return '<button type="button" onclick="_lpVoeAttOpen(' + i + ')" '
-             + 'style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.32);'
-             + 'color:#C9A84C;border-radius:6px;font-size:11px;padding:4px 9px;cursor:pointer;'
-             + 'font-family:inherit;max-width:100%;overflow:hidden;text-overflow:ellipsis;'
-             + 'white-space:nowrap;">&#128206; ' + lpEsc(nm) + lpEsc(sz) + '</button>';
-         }).join('')
-       + '</div>')
-    : '';
-
-  const html=(d.body_html||'').trim();
-  if(html){
-    /* ── QUOTED HISTORY ──────────────────────────────────────────────────
-       splitQuoted and wrapBody are the SAME functions the inline thread reader
-       uses, exported from inbox.js rather than copied. Without them this modal
-       dumped the reply and the whole quoted chain into one frame, which is why
-       an agent's answer rendered signature-first with the real message buried:
-       their client puts the signature above the quote and nothing here
-       separated the two.
-       If the export is ever missing we render the raw body instead of nothing —
-       degraded, never blank. */
-    const GI = window.GmailInbox || {};
-    const split = (typeof GI.splitQuoted === 'function') ? GI.splitQuoted(html) : { main: html, quoted: '' };
-    const wrap  = (typeof GI.wrapBody === 'function')
-                    ? function(h){ return GI.wrapBody(h, d.body_text || ''); }
-                    : function(h){ return h; };
-    bodyEl.innerHTML = attHtml
-      + '<iframe id="lpVoeEmailFrame" sandbox="allow-same-origin allow-popups" style="width:100%;height:56vh;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#fff;"></iframe>'
-      + (split.quoted
-          ? '<div style="margin-top:8px;">'
-            + '<button type="button" id="lpVoeQuoteTog" onclick="_lpVoeQuoteToggle()" '
-            +   'style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);'
-            +   'color:#aaa;border-radius:6px;font-size:11px;padding:2px 10px;cursor:pointer;'
-            +   'font-family:inherit;" title="Show quoted text">&#8943;</button>'
-            + '<iframe id="lpVoeQuoteFrame" sandbox="allow-same-origin allow-popups" style="display:none;'
-            +   'width:100%;height:40vh;margin-top:6px;border:1px solid rgba(255,255,255,.12);'
-            +   'border-radius:8px;background:#fff;"></iframe>'
-            + '</div>'
-          : '');
-    const f=document.getElementById('lpVoeEmailFrame'); if(f) f.srcdoc=wrap(split.main||html);
-    /* Lazy, like the thread reader: a long chain is often the bulk of the
-       message and most opens never look at it. */
-    _lpVoeQuotedSrc = split.quoted ? wrap(split.quoted) : '';
-  } else {
-    const txt=(d.body_text||'').trim();
-    bodyEl.innerHTML=txt?('<div style="white-space:pre-wrap;font-size:12px;line-height:1.55;color:#e8e8e8;">'+lpEsc(txt)+'</div>'):'<div style="font-size:11px;color:#888;">No email body.</div>';
-  }
+  /* The body, quoted trailer and attachment chips all come from the page's one
+     email-body renderer — see _lpRenderEmailBody. This modal owns only the
+     subject and meta line above it. */
+  _lpRenderEmailBody(bodyEl, {
+    frameId: 'lpVoeEmailFrame',
+    html: d.body_html || '',
+    text: d.body_text || '',
+    attachments: d.attachments
+  });
 }
 function lpVoeField(k,field,val){ const v=_lpVoeFind(k); if(!v) return; v[field]=(val||'').trim(); lpVoeSave(k); }
 function lpVoeBorrowerChange(k,cid){
@@ -38736,7 +38777,7 @@ async function loadEmailHistory(contactId) {
   try {
     var sbUrl = window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co';
     var sbKey = window.APP_CONFIG?.SUPABASE_ANON_KEY || '';
-    var res = await fetch(sbUrl + '/rest/v1/email_log?contact_id=eq.' + contactId + '&select=id,subject,body_html,body_text,from_email,to_email,to_emails,direction,status,created_at,sent_at&order=created_at.desc&limit=20', {
+    var res = await fetch(sbUrl + '/rest/v1/email_log?contact_id=eq.' + contactId + '&select=id,subject,body_html,body_text,from_email,to_email,to_emails,direction,status,created_at,sent_at,attachments&order=created_at.desc&limit=20', {
       headers: losHeaders()
     });
     var records = await res.json();
@@ -38800,13 +38841,18 @@ function previewPriorEmail(emailId) {
     '<div><strong style="color:#888;">To:</strong> <span style="color:#C8C5BC;">' + (toStr || '\u2014') + '</span></div>' +
     '<div><strong style="color:#888;">Status:</strong> <span style="color:' + (email.status === 'sent' ? '#52C87A' : '#888') + ';">' + (email.status || 'unknown').toUpperCase() + '</span></div>';
 
-  // Body in iframe
-  var iframe = document.getElementById('prevIframe');
-  var body = email.body_html || (email.body_text ? '<pre style="font-family:sans-serif;padding:20px;font-size:14px;color:#333;">' + email.body_text + '</pre>' : '<p style="padding:20px;color:#999;">No content</p>');
-  var iDoc = iframe.contentDocument || iframe.contentWindow.document;
-  iDoc.open();
-  iDoc.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{margin:0;padding:20px;font-family:Arial,sans-serif;font-size:14px;color:#1a1a1a;background:#fff;line-height:1.6;}img{max-width:100%;height:auto;}a{color:#C9A84C;}</style></head><body>' + body + '</body></html>');
-  iDoc.close();
+  /* Body via the page's ONE email-body renderer. This used to be an
+     iDoc.write() into a static iframe with its own inline <style> and no quote
+     or attachment handling, so a reply rendered signature-first exactly as the
+     VOE modal did. Everything this surface owns — subject, the From/To/Status
+     strip, and the Reply button — lives outside the body and is unchanged. */
+  _lpRenderEmailBody(document.getElementById('prevBodyHost'), {
+    frameId: 'prevEmailFrame',
+    html: email.body_html || '',
+    text: email.body_text || '',
+    attachments: email.attachments,
+    height: '58vh'
+  });
 
   modal.style.display = 'flex';
 }
@@ -38814,8 +38860,10 @@ function previewPriorEmail(emailId) {
 function closeEmailPreviewPanel() {
   var m = document.getElementById('emailPreviewPanel');
   if (m) m.style.display = 'none';
-  var iframe = document.getElementById('prevIframe');
-  if (iframe) { var d = iframe.contentDocument || iframe.contentWindow.document; d.open(); d.write(''); d.close(); }
+  /* Teardown: emptying the host drops the frame and its document with it, which
+     is what the old d.write('') was for. */
+  var host = document.getElementById('prevBodyHost');
+  if (host) host.innerHTML = '';
   _previewCurrentEmail = null;
 }
 
@@ -41246,9 +41294,11 @@ document.getElementById('canvaPickerModal')?.addEventListener('click', function(
       </div>
     </div>
     <div id="prevMetaStrip" style="padding:10px 16px;border-bottom:1px solid rgba(255,255,255,0.04);background:#0E0E10;font-size:11px;color:#555;flex-shrink:0;"></div>
-    <div style="flex:1;overflow:hidden;background:#fff;">
-      <iframe id="prevIframe" style="width:100%;height:100%;border:none;" sandbox="allow-same-origin"></iframe>
-    </div>
+    <!-- The body is rendered by _lpRenderEmailBody, the page's one email-body
+         renderer, which creates its own sandboxed frame. The static iframe that
+         used to live here was written into with iDoc.write() and had no quote
+         collapsing and no attachment handling. -->
+    <div id="prevBodyHost" style="flex:1;overflow:auto;background:#141310;padding:12px 16px;"></div>
   </div>
 </div>
 
@@ -42227,7 +42277,13 @@ async function recordNewVoicemail() {
       if (meta.open_count) chip('Opens', meta.open_count);
       var summary = e.description ? '<div style="color:#c9c9c9;font-size:12.5px;margin-bottom:12px;line-height:1.5;">'+_txt(e.description)+'</div>' : '';
       if (emailHtml) {
-        body = summary + '<iframe id="actEmailFrame" sandbox="allow-same-origin allow-popups" style="width:100%;height:52vh;border:1px solid rgba(255,255,255,0.12);border-radius:8px;background:#fff;"></iframe>';
+        /* Host only — the body itself is rendered by _lpRenderEmailBody, the
+           page's one email-body renderer, so this modal collapses quoted
+           history and lists attachments like every other surface. It used to
+           set a raw srcdoc, which is why a reply here showed the signature
+           first. The chips above (To, CC, Opens, When, status) are this
+           modal's own and are untouched. */
+        body = summary + '<div id="actEmailHost"></div>';
       } else {
         body = '<div style="white-space:pre-wrap;color:#ececec;">'+_txt(e.description || e.title || 'No email content recorded.')+'</div>';
       }
@@ -42263,7 +42319,18 @@ async function recordNewVoicemail() {
 
     m.querySelector('#actDetailMeta').innerHTML = chips.join('');
     bodyEl.innerHTML = body;
-    if (isEmail && emailHtml) { var f = bodyEl.querySelector('#actEmailFrame'); if (f) f.srcdoc = emailHtml; }
+    if (isEmail && emailHtml) {
+      _lpRenderEmailBody(bodyEl.querySelector('#actEmailHost'), {
+        frameId: 'actEmailFrame',
+        html: emailHtml,
+        text: e.email_body_text || '',
+        /* The activity feed does not currently carry attachment metadata; this
+           reads whatever it has so chips appear the day it does, rather than
+           needing a second change then. */
+        attachments: e.email_attachments || e.attachments,
+        height: '52vh'
+      });
+    }
     m.style.display = 'flex';
   }
 
