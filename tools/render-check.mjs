@@ -1392,6 +1392,179 @@ const SPECS = [
     ],
   },
   {
+    /* The activity row must stop being a parallel path.
+     *
+     * The inline reader shipped alongside the old per-message modal and the
+     * modal stayed bound to every row, so the more obvious thing to click was
+     * the worse one. A row on a THREADED order must now open the reader; only
+     * an order with no thread may fall back to the modal. Both directions are
+     * asserted in one eval, because "opens the reader" proves nothing on its
+     * own if the fallback silently opened it too. */
+    name: 'VOE row click: reader when threaded, modal only when not',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          if (typeof lpRenderOrders === 'function') { try { lpRenderOrders(); } catch (e) {} }
+          if (typeof lpVoeRenderActivity !== 'function') return 'HARNESS: lpVoeRenderActivity missing';
+          if (typeof lpVoeEmailOpen !== 'function')      return 'HARNESS: lpVoeEmailOpen missing';
+          if (!window.GmailInbox)                        return 'HARNESS: GmailInbox not loaded';
+
+          var opened = [], modals = [];
+          window.GmailInbox.openThread = function(o){ opened.push(o); };
+          lpVoeEmailOpen = function(id){ modals.push(id); };
+
+          _lpVoes = [
+            { key:'t1', id:'ord-threaded',  status:'ordered', employer_name:'Threaded Co',
+              hr_contact_email:'hr1@x.invalid', gmail_thread_id:'TH_1' },
+            { key:'t2', id:'ord-legacy',    status:'ordered', employer_name:'Legacy Co',
+              hr_contact_email:'hr2@x.invalid', gmail_thread_id:null }
+          ];
+          _lpVoeOpen = { t1:true, t2:true };
+          lpRenderVoe();
+
+          var ev = { events: [ { id:'em-1', direction:'outbound', subject:'VOE request',
+                                to:'hr@x.invalid', at:'2026-08-11T00:00:00Z', status:'sent' } ] };
+
+          /* threaded order -> reader, not modal */
+          var b1 = document.getElementById('lpVoeAct-t1');
+          if (!b1) return 'HARNESS: no activity box for t1';
+          lpVoeRenderActivity(b1, ev, 't1');
+          var r1 = b1.querySelector('.lpVoeEvRow');
+          if (!r1) return 'HARNESS: no activity row rendered for t1';
+          r1.click();
+          var threadedOpensReader = opened.length === 1 && opened[0].threadId === 'TH_1';
+          var threadedSkipsModal  = modals.length === 0;
+
+          /* legacy order -> modal, not reader */
+          var b2 = document.getElementById('lpVoeAct-t2');
+          if (!b2) return 'HARNESS: no activity box for t2';
+          lpVoeRenderActivity(b2, ev, 't2');
+          var r2 = b2.querySelector('.lpVoeEvRow');
+          if (!r2) return 'HARNESS: no activity row rendered for t2';
+          r2.click();
+          var legacyOpensModal   = modals.length === 1 && modals[0] === 'em-1';
+          var legacyAddsNoReader = opened.length === 1;
+
+          return 'threadedReader=' + threadedOpensReader + ' threadedNoModal=' + threadedSkipsModal
+               + ' legacyModal=' + legacyOpensModal + ' legacyNoReader=' + legacyAddsNoReader;
+        })()`,
+       'threadedReader=true threadedNoModal=true legacyModal=true legacyNoReader=true'],
+    ],
+  },
+  {
+    /* The fallback must do the two things it could not do before: collapse the
+     * quoted history and list attachments. Both come from the reader's own
+     * exported helpers, so this also asserts the export exists -- if inbox.js
+     * stops exporting splitQuoted the modal silently reverts to raw HTML, which
+     * is the regression this spec is here to catch. */
+    name: 'VOE fallback modal: quotes collapsed, attachments listed',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(async function(){
+          var GI = window.GmailInbox || {};
+          var exported = typeof GI.splitQuoted === 'function' && typeof GI.wrapBody === 'function';
+          if (!exported) return 'HARNESS: inbox.js does not export splitQuoted/wrapBody';
+
+          /* The splitter itself, on a body shaped like the real complaint:
+             signature first, then the quoted original. */
+          var sample = '<div>Thanks &mdash; see attached.</div>'
+                     + '<div>Best,<br>Michelle</div>'
+                     + '<div class="gmail_quote">On Tue, Aug 11, 2026 Rene wrote:'
+                     + '<blockquote>original request text</blockquote></div>';
+          var sp = GI.splitQuoted(sample);
+          var splits    = !!sp.quoted && sp.main.indexOf('gmail_quote') === -1;
+          var keepsMain = sp.main.indexOf('see attached') !== -1;
+          var quotedHasOriginal = sp.quoted.indexOf('original request text') !== -1;
+
+          /* Now the modal end to end, with a stubbed RPC so no mail is read. */
+          if (typeof lpVoeEmailOpen !== 'function') return 'HARNESS: lpVoeEmailOpen missing';
+          var cl = _authClient();
+          var realRpc = cl.rpc;
+          cl.rpc = function(name, args){
+            if (name === 'voe_email_get') {
+              return Promise.resolve({ data: { found:true, direction:'inbound',
+                from:'hr@x.invalid', to:'processing@ratesandrealty.com',
+                subject:'Re: VOE', body_html: sample, body_text:'',
+                at:'2026-08-11T00:00:00Z',
+                attachments:[{ path:'processing/abc/voe.pdf', name:'VOE signed.pdf', mime:'application/pdf', size: 52000 }] } });
+            }
+            return realRpc.apply(cl, arguments);
+          };
+          await lpVoeEmailOpen('em-1');
+          cl.rpc = realRpc;
+
+          var bodyEl = document.getElementById('lpVoeEmailBody');
+          if (!bodyEl) return 'HARNESS: modal body never mounted';
+          var hasQuoteToggle = !!document.getElementById('lpVoeQuoteTog');
+          var quoteHidden    = (function(){ var f=document.getElementById('lpVoeQuoteFrame');
+                                            return !!f && f.style.display === 'none'; })();
+          var attListed      = bodyEl.textContent.indexOf('VOE signed.pdf') !== -1;
+          var attOpenable    = bodyEl.querySelectorAll('button[onclick^="_lpVoeAttOpen("]').length === 1;
+          if (typeof lpVoeEmailClose === 'function') lpVoeEmailClose();
+
+          return 'exported=' + exported + ' splits=' + splits + ' keepsMain=' + keepsMain
+               + ' quotedHasOriginal=' + quotedHasOriginal
+               + ' toggle=' + hasQuoteToggle + ' collapsed=' + quoteHidden
+               + ' att=' + attListed + ' attOpenable=' + attOpenable;
+        })()`,
+       'exported=true splits=true keepsMain=true quotedHasOriginal=true toggle=true collapsed=true att=true attOpenable=true'],
+    ],
+  },
+  {
+    /* The Prior Emails rail. Three quote requests to three agents rendered as
+     * three identical lines because the rail drew from_email -- our own mailbox
+     * -- on outbound rows. to_email was already fetched and cached. This asserts
+     * the three are DISTINGUISHABLE, not merely that a field is present. */
+    name: 'Prior Emails rail names the recipient on outbound rows',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          var list = document.getElementById('historyList');
+          if (!list) return 'HARNESS: #historyList never mounted';
+          if (typeof loadEmailHistory !== 'function') return 'HARNESS: loadEmailHistory missing';
+
+          /* Render the rail's row markup directly from three same-day, same-subject
+             sends -- the real Aug-11 shape. */
+          var recs = [
+            { id:'1', subject:'Homeowners Insurance Quote Request', body_text:'x',
+              from_email:'processing@ratesandrealty.com', to_email:'johnle.agency@gmail.com',
+              direction:'outbound', created_at:'2026-08-11T18:43:26Z' },
+            { id:'2', subject:'Homeowners Insurance Quote Request', body_text:'x',
+              from_email:'processing@ratesandrealty.com', to_email:'jesus@ezinsurance123.com',
+              direction:'outbound', created_at:'2026-08-11T18:43:28Z' },
+            { id:'3', subject:'Homeowners Insurance Quote Request', body_text:'x',
+              from_email:'processing@ratesandrealty.com', to_email:'Rodriguez.Michelle1@ace.aaa.com',
+              direction:'outbound', created_at:'2026-08-11T18:43:30Z' }
+          ];
+          var realFetch = window.fetch;
+          window.fetch = function(){ return Promise.resolve({ json: function(){ return Promise.resolve(recs); } }); };
+          var done = loadEmailHistory('${FIXTURE}');
+          return Promise.resolve(done).then(function(){
+            window.fetch = realFetch;
+            var items = list.querySelectorAll('.ec-hist-item');
+            var metas = [];
+            for (var i=0;i<items.length;i++){
+              var m = items[i].querySelector('.ec-hist-meta');
+              metas.push(m ? m.textContent : '');
+            }
+            var three = items.length === 3;
+            /* the point: the three meta lines differ from each other */
+            var distinct = three && metas[0] !== metas[1] && metas[1] !== metas[2] && metas[0] !== metas[2];
+            var namesAgents = metas.join(' | ').indexOf('johnle.agency@gmail.com') !== -1
+                           && metas.join(' | ').indexOf('Rodriguez.Michelle1@ace.aaa.com') !== -1;
+            /* and it must NOT be showing our own mailbox as the identity */
+            var notOurMailbox = metas.join(' | ').indexOf('processing@ratesandrealty.com') === -1;
+            return 'rows=' + three + ' distinct=' + distinct + ' names=' + namesAgents
+                 + ' notOurMailbox=' + notOurMailbox;
+          });
+        })()`,
+       'rows=true distinct=true names=true notOurMailbox=true'],
+    ],
+  },
+  {
     /* The Loan Snapshot editor must OPEN WITH THE CURRENT VALUE.
      *
      * It read its value only from an element named by cfg.src. For the

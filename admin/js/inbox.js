@@ -4077,8 +4077,23 @@
    * ("mailbox not permitted for role va") instead of a bare "Edge Function
    * returned a non-2xx status code". The role check itself stays server-side in
    * resolveMailbox; nothing here decides access, it only reports the refusal. */
+  /* `splitQuoted` and `wrapBody` are exported for the SAME reason as `sanitize`:
+   * so a second surface reuses this logic instead of growing its own copy that
+   * drifts. lead-detail's VOE fallback modal reads legacy mail that has no
+   * gmail_thread_id and therefore cannot go through renderThread at all — but
+   * it must still collapse quoted history and render inside a controlled
+   * document, which is exactly these two functions. One renderer's logic, two
+   * entry points; not a second renderer.
+   *
+   * splitQuoted(html) -> { main, quoted }. Cuts at the first of: a gmail_quote
+   * div, a blockquote type="cite", #appendonsend, or a bare "On ... wrote:"
+   * trailer — and refuses a cut inside the first 24 characters, because a body
+   * that IS a quote from its first byte has no main part to show.
+   * wrapBody(html, text) -> a full document with a reset, img{max-width:100%}
+   * and blockquote styling, for use as an iframe srcdoc. */
   window.GmailInbox = {
     mount: mount, openThread: openThread, openCompose: openCompose, call: invoke,
-    sanitize: sanitize, sanitizerReady: sanitizerReady, PURIFY_CFG: PURIFY_CFG
+    sanitize: sanitize, sanitizerReady: sanitizerReady, PURIFY_CFG: PURIFY_CFG,
+    splitQuoted: splitQuoted, wrapBody: wrapBody
   };
 })();

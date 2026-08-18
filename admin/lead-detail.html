@@ -1831,7 +1831,7 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
           integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
           crossorigin="anonymous" defer></script>
     <script src="/admin/js/attachment-viewer.js?v=e8f2b14c9f"></script>
-  <script src="/admin/js/inbox.js?v=bfff3638e8" defer></script>
+  <script src="/admin/js/inbox.js?v=d7a262a088" defer></script>
   <!-- Places loads its own Maps bundle ON DEMAND, when a field is attached — not
        on every lead-detail open. This tag is only the ~4KB helper. -->
   <script src="/public/js/mi-factors.js"></script>
@@ -13302,7 +13302,11 @@ function _lpHoiReplyBtnHtml(r){
     +    'font-family:inherit;">Reply to agent</button>'
     +  (threaded
         ? '<span style="color:#9fd0a8;">&#8617; replies in the original thread</span>'
-        : '<span style="color:#E0B84C;">&#9888; no original thread stored &mdash; this starts a NEW email</span>')
+        /* Said plainly, because it is not the same as "we lost the thread":
+           these were sent before the Gmail rewire and have no gmail_message_id
+           anywhere, so the original exchange cannot be rejoined by anything.
+           The reply starts the record rather than continuing it. */
+        : '<span style="color:#E0B84C;">&#9888; sent before email threading &mdash; the conversation starts from your reply, not the original request</span>')
     + '</div>';
 }
 
@@ -13330,7 +13334,7 @@ async function lpHoiReply(id){
       + (who?(' with '+lpEsc(who)):'')+'. Could you let me know where it stands?<br><br>'
       + 'Thank you.</div>',
     title: threaded ? '📨 Reply — stays in the existing thread'
-                    : '📨 Reply — ⚠ starts a NEW thread',
+                    : '📨 Reply — starts the conversation here (the original predates threading)',
     sendLabel: 'Send reply &#10148;',
     hideDraftSchedule: true,
     onSend: function(){ return _lpHoiReplySend(r); }
@@ -13361,7 +13365,31 @@ async function _lpHoiReplySend(r){
     const resp=await _authClient().functions.invoke('gmail-inbox',{ body:body });
     const data=resp&&resp.data, error=resp&&resp.error;
     if(error||!data||data.ok!==true) throw new Error(await _lpFnError(error, data, 'send failed'));
-    showToast('Reply sent to '+to+(r.gmail_thread_id?' (in the original thread) ✓':' (new thread) ✓'));
+    /* ADOPT THE THREAD. Six quote rows were sent before the Gmail rewire and
+       carry no gmail_message_id at all, so there is no original conversation to
+       rejoin — they can never thread backwards. What they CAN do is start one
+       here: store the ids this send just returned and every later reply threads
+       into it. hoi_quote_set_thread coalesces, so it only ever fills blanks and
+       cannot overwrite a row that already had a thread.
+       Best-effort: the mail is already gone, so a failure to record the id must
+       not read as a failure to send. It is logged and surfaced quietly. */
+    let _adopted=false;
+    if(!r.gmail_thread_id && data && data.thread_id){
+      try{
+        const _sr=await _authClient().rpc('hoi_quote_set_thread',{
+          p_id:r.id, p_gmail_message_id:data.message_id||null,
+          p_gmail_thread_id:data.thread_id||null, p_rfc_message_id:data.rfc_message_id||null });
+        if(_sr && _sr.error) throw _sr.error;
+        _adopted=true;
+      }catch(te){
+        console.warn('[hoi_quote_set_thread]', te&&te.message);
+        showToast('Reply sent, but the thread id could not be stored — the next reply will start another new thread.', true);
+      }
+    }
+    showToast('Reply sent to '+to+(r.gmail_thread_id
+      ? ' (in the original thread) ✓'
+      : (_adopted ? ' — new thread started and saved; replies from here stay together ✓'
+                  : ' (new thread) ✓')));
     closeEmailComposer();
     lpHoiLoadList(lpCid());
   }catch(e){
@@ -14645,10 +14673,13 @@ async function _voeComposerSend(st){
 // 3. ACTIVITY — status/ordered/HR + events[] (inbound replies render distinctly for Phase 2).
 async function lpVoeLoadActivity(orderId, k){
   const box=document.getElementById('lpVoeAct-'+k); if(!box || !orderId) return;
-  try{ const r=await _authClient().rpc('voe_activity',{ p_order_id:orderId }); if(r.error) throw r.error; lpVoeRenderActivity(box, r.data||{}); }
+  try{ const r=await _authClient().rpc('voe_activity',{ p_order_id:orderId }); if(r.error) throw r.error; lpVoeRenderActivity(box, r.data||{}, k); }
   catch(e){ console.warn('[voe_activity]', e&&e.message); }
 }
-function lpVoeRenderActivity(box, a){
+/* `k` is the card key, threaded through from lpVoeLoadActivity so the row
+   click can find the OWNING order and its gmail_thread_id. It was not passed
+   before because nothing here needed to know which order it belonged to. */
+function lpVoeRenderActivity(box, a, k){
   const ev=Array.isArray(a.events)?a.events:[];
   const head=[];
   if(a.status) head.push('Status: <b style="color:#C9A84C;">'+lpEsc(a.status)+'</b>');
@@ -14709,9 +14740,33 @@ function lpVoeRenderActivity(box, a){
     }
   }
   box.innerHTML=html+'</div>';
-  // Row click → open the full email (voe_email_get). data-attr + listener avoids inline-onclick escaping of ids.
+  /* ROW CLICK -> THE THREAD READER WHEN THERE IS A THREAD.
+     The inline reader was added alongside this click-through and the old
+     per-message modal was left bound to every row, so the more obvious thing to
+     click was still the worse one. It is now a FALLBACK, not a parallel path:
+     an order carrying a gmail_thread_id opens the whole conversation (quotes
+     collapsed, attachments, inline images, reply); only an order with no thread
+     — 5 of 6 today, all sent before the Gmail rewire — falls back to reading
+     one message, and that fallback now shares the reader's own splitQuoted and
+     wrapBody rather than dumping raw HTML. */
+  const _ownerKey = String(k || '');
+  const _owner = (typeof _lpVoeFind === 'function') ? _lpVoeFind(_ownerKey) : null;
+  const _threadId = _owner && _owner.gmail_thread_id ? String(_owner.gmail_thread_id) : '';
   const rows=box.querySelectorAll('.lpVoeEvRow');
-  for(let i=0;i<rows.length;i++){ rows[i].addEventListener('click', function(){ const id=this.getAttribute('data-email-id'); if(id) lpVoeEmailOpen(id); }); }
+  for(let i=0;i<rows.length;i++){
+    rows[i].addEventListener('click', function(){
+      if(_threadId){
+        const hostId='lpVoeThread-'+String((_owner && _owner.id) || _ownerKey);
+        const host=document.getElementById(hostId);
+        /* Expand rather than toggle: clicking a row means "show me this", and a
+           second click on another row must not collapse what the first opened. */
+        if(host && !_lpThreadOpen[hostId]) _lpThreadToggle(hostId, _threadId);
+        if(host && typeof host.scrollIntoView==='function') host.scrollIntoView({block:'nearest'});
+        return;
+      }
+      const id=this.getAttribute('data-email-id'); if(id) lpVoeEmailOpen(id);
+    });
+  }
 }
 function lpVoeEmailEnsureModal(){
   let ov=document.getElementById('lpVoeEmailOverlay'); if(ov) return ov;
@@ -14729,6 +14784,38 @@ function lpVoeEmailEnsureModal(){
   return ov;
 }
 function lpVoeEmailClose(){ const ov=document.getElementById('lpVoeEmailOverlay'); if(ov) ov.style.display='none'; }
+
+/* State for the fallback modal's quoted trailer and attachments. Module-level
+   rather than per-open because the modal is a singleton — one overlay, reused. */
+let _lpVoeQuotedSrc = '';
+let _lpVoeAtts = [];
+
+function _lpVoeQuoteToggle(){
+  const f=document.getElementById('lpVoeQuoteFrame');
+  const b=document.getElementById('lpVoeQuoteTog');
+  if(!f) return;
+  const showing = f.style.display !== 'none';
+  if(showing){ f.style.display='none'; if(b) b.title='Show quoted text'; return; }
+  /* srcdoc set on FIRST open only. */
+  if(!f.getAttribute('data-loaded')){ f.srcdoc=_lpVoeQuotedSrc||''; f.setAttribute('data-loaded','1'); }
+  f.style.display='block';
+  if(b) b.title='Hide quoted text';
+}
+
+/* Attachments on email_log are storage paths in the mailbox bucket, so opening
+   one means signing a URL — never a public link. Failure is announced rather
+   than leaving a chip that does nothing when clicked. */
+async function _lpVoeAttOpen(i){
+  const a=(_lpVoeAtts||[])[i];
+  if(!a || !a.path){ showToast('That attachment has no stored path.', true); return; }
+  try{
+    const r=await _authClient().storage.from('email-attachments').createSignedUrl(a.path, 300);
+    if(r.error || !r.data || !r.data.signedUrl) throw new Error((r.error&&r.error.message)||'could not sign a URL');
+    window.open(r.data.signedUrl, '_blank', 'noopener');
+  }catch(e){
+    showToast('Could not open '+((a&&(a.name||a.filename))||'attachment')+': '+((e&&e.message)||e), true);
+  }
+}
 async function lpVoeEmailOpen(emailId){
   const ov=lpVoeEmailEnsureModal();
   const subjEl=document.getElementById('lpVoeEmailSubject'), metaEl=document.getElementById('lpVoeEmailMeta'), bodyEl=document.getElementById('lpVoeEmailBody');
@@ -14746,10 +14833,61 @@ async function lpVoeEmailOpen(emailId){
   if(d.cc) metaBits.push('CC: '+lpEsc(d.cc));
   if(d.at) metaBits.push(lpEsc(_lpFmtDT(d.at)));
   metaEl.innerHTML=metaBits.join(' &nbsp;·&nbsp; ');
+  /* ── ATTACHMENTS ───────────────────────────────────────────────────────
+     voe_email_get returns them as of the 20260818 migration; before that the
+     column was never selected, so this modal could not show a PDF at all — and
+     a verification of employment IS a PDF. email_log.attachments holds storage
+     PATHS, not bytes, so a click signs a URL from the bucket gmail-inbox wrote
+     to. */
+  const atts = Array.isArray(d.attachments) ? d.attachments : [];
+  _lpVoeAtts = atts;
+  const attHtml = atts.length
+    ? ('<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">'
+       + atts.map(function(a, i){
+           const nm = String((a && (a.name || a.filename)) || ('attachment ' + (i+1)));
+           const sz = (a && a.size) ? (' · ' + Math.max(1, Math.round(a.size/1024)) + ' KB') : '';
+           return '<button type="button" onclick="_lpVoeAttOpen(' + i + ')" '
+             + 'style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.32);'
+             + 'color:#C9A84C;border-radius:6px;font-size:11px;padding:4px 9px;cursor:pointer;'
+             + 'font-family:inherit;max-width:100%;overflow:hidden;text-overflow:ellipsis;'
+             + 'white-space:nowrap;">&#128206; ' + lpEsc(nm) + lpEsc(sz) + '</button>';
+         }).join('')
+       + '</div>')
+    : '';
+
   const html=(d.body_html||'').trim();
   if(html){
-    bodyEl.innerHTML='<iframe id="lpVoeEmailFrame" sandbox="allow-same-origin allow-popups" style="width:100%;height:56vh;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#fff;"></iframe>';
-    const f=document.getElementById('lpVoeEmailFrame'); if(f) f.srcdoc=html;
+    /* ── QUOTED HISTORY ──────────────────────────────────────────────────
+       splitQuoted and wrapBody are the SAME functions the inline thread reader
+       uses, exported from inbox.js rather than copied. Without them this modal
+       dumped the reply and the whole quoted chain into one frame, which is why
+       an agent's answer rendered signature-first with the real message buried:
+       their client puts the signature above the quote and nothing here
+       separated the two.
+       If the export is ever missing we render the raw body instead of nothing —
+       degraded, never blank. */
+    const GI = window.GmailInbox || {};
+    const split = (typeof GI.splitQuoted === 'function') ? GI.splitQuoted(html) : { main: html, quoted: '' };
+    const wrap  = (typeof GI.wrapBody === 'function')
+                    ? function(h){ return GI.wrapBody(h, d.body_text || ''); }
+                    : function(h){ return h; };
+    bodyEl.innerHTML = attHtml
+      + '<iframe id="lpVoeEmailFrame" sandbox="allow-same-origin allow-popups" style="width:100%;height:56vh;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#fff;"></iframe>'
+      + (split.quoted
+          ? '<div style="margin-top:8px;">'
+            + '<button type="button" id="lpVoeQuoteTog" onclick="_lpVoeQuoteToggle()" '
+            +   'style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);'
+            +   'color:#aaa;border-radius:6px;font-size:11px;padding:2px 10px;cursor:pointer;'
+            +   'font-family:inherit;" title="Show quoted text">&#8943;</button>'
+            + '<iframe id="lpVoeQuoteFrame" sandbox="allow-same-origin allow-popups" style="display:none;'
+            +   'width:100%;height:40vh;margin-top:6px;border:1px solid rgba(255,255,255,.12);'
+            +   'border-radius:8px;background:#fff;"></iframe>'
+            + '</div>'
+          : '');
+    const f=document.getElementById('lpVoeEmailFrame'); if(f) f.srcdoc=wrap(split.main||html);
+    /* Lazy, like the thread reader: a long chain is often the bulk of the
+       message and most opens never look at it. */
+    _lpVoeQuotedSrc = split.quoted ? wrap(split.quoted) : '';
   } else {
     const txt=(d.body_text||'').trim();
     bodyEl.innerHTML=txt?('<div style="white-space:pre-wrap;font-size:12px;line-height:1.55;color:#e8e8e8;">'+lpEsc(txt)+'</div>'):'<div style="font-size:11px;color:#888;">No email body.</div>';
@@ -38611,11 +38749,17 @@ async function loadEmailHistory(contactId) {
       var badge = isSent ? '<span class="ec-hist-dir ec-hist-sent">SENT</span>' : '<span class="ec-hist-dir ec-hist-recv">RECV</span>';
       var preview = (r.body_text || '').substring(0, 60);
       var date = r.created_at ? _rrD(r.created_at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month:'short',day:'numeric' }) : '';
-      var from = r.from_email || '';
+      /* Show the RECIPIENT on outbound rows. from_email is our own mailbox, so
+         three quote requests to three different agents rendered as three
+         identical lines — same sender, same subject, same day. to_email was
+         already fetched and cached here and simply never drawn. Inbound still
+         shows the sender, which is the counterparty in that direction. */
+      var toStr = r.to_email || (Array.isArray(r.to_emails) ? r.to_emails.join(', ') : '') || '';
+      var who = isSent ? (toStr ? ('to ' + toStr) : '') : (r.from_email || '');
       return '<div class="ec-hist-item" onclick="previewPriorEmail(\'' + r.id + '\')">' + badge +
         '<div class="ec-hist-subject">' + (r.subject || '(no subject)') + '</div>' +
         '<div class="ec-hist-preview">' + preview + '</div>' +
-        '<div class="ec-hist-meta"><span>' + from + '</span><span>' + date + '</span></div></div>';
+        '<div class="ec-hist-meta"><span>' + who + '</span><span>' + date + '</span></div></div>';
     }).join('');
   } catch(e) {
     console.error('Email history error:', e);

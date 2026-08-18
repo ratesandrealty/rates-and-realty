@@ -1,6 +1,6 @@
 -- voe_email_get(p_email_log_id uuid)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-18. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -45,6 +45,8 @@ begin
     'body_html', e.body_html,
     'body_text', e.body_text,
     'status', e.status,
-    'at', e.created_at
+    'at', e.created_at,
+    -- attachments: [] rather than null, so the caller has one shape to render.
+    'attachments', coalesce(e.attachments, '[]'::jsonb)
   );
 end; $function$;
