@@ -265,12 +265,35 @@ async function syncPull() {
         }, { onConflict: "clickup_task_id" });
         if (!error) upserted++; else errors.push({ task: t.id, error: error.message });
       }
-      const { data: cachedRows } = await sb.from("clickup_task_cache").select("clickup_task_id").eq("list_id", listId);
-      const stale = (cachedRows || []).map((r: any) => r.clickup_task_id).filter((id: string) => !liveIds.has(id));
-      if (stale.length > 0) {
-        await sb.from("clickup_task_cache").delete().in("clickup_task_id", stale);
-        await sb.from("tasks").update({ status: "completed", updated_at: new Date().toISOString() }).in("clickup_task_id", stale);
-        pruned += stale.length;
+      /* RECONCILE THROUGH clickup_prune_missing, not inline here.
+       *
+       * The inline version this replaces got three things wrong, and all three
+       * were designed out of the SQL function that already existed and had never
+       * been called:
+       *
+       *   - it set status 'completed'. A CRM task whose ClickUp counterpart has
+       *     vanished is not DONE, it is unaccounted for. Completed work does not
+       *     look like a problem, so the mistake hid itself.
+       *   - no CRM-origin exemption: a task WE created and pushed out would be
+       *     closed by its own copy disappearing. 25 live tasks are in that class.
+       *   - no audit, so nothing recorded why a task closed itself.
+       *
+       * And `complete` was already computed here and never read. The pager stops
+       * at 1000, so a partial fetch made every unread task look deleted. The
+       * function refuses on an incomplete fetch AND raises a CRM notification --
+       * the difference between a skip a person sees and one only a log would
+       * have. That is why the flag is passed rather than assumed true. */
+      const { data: pruneRes, error: pruneErr } = await sb.rpc("clickup_prune_missing", {
+        p_list_id: listId,
+        p_live_ids: Array.from(liveIds),
+        p_fetch_complete: complete === true,
+      });
+      if (pruneErr) {
+        errors.push({ listId, error: `prune: ${pruneErr.message}` });
+      } else if (pruneRes) {
+        reconciled.push({ list_id: listId, ...pruneRes });
+        if (pruneRes.ran === false) skipped++;
+        else pruned += Number(pruneRes.cancelled || 0);
       }
     } catch (e: any) { errors.push({ listId, error: e.message }); }
   }
