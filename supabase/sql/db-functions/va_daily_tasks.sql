@@ -72,27 +72,17 @@ begin
          case when t.assigned_to is null then 'unassigned'
               when t.assigned_to = auth.uid() then 'mine'
               else 'other' end as assignee_state,
-         /* PROVENANCE FROM THE LOG, not from a proxy.
-            The previous rule was `clickup_url is not null or assigned_by is not
-            null` -> human. Every automation-created task carries a clickup_url,
-            so it labelled 201 of 297 machine-made tasks as coming from Rene.
-            The comment here used to cite "Follow up with Anita" as one of his
-            manual tasks; clickup_automation_log records it as the `new_lead`
-            rule firing on 2026-08-05 07:08. Four of the five open tasks that
-            looked hand-written are that same rule.
-            clickup_automation_log.clickup_task_id is the positive record of a
-            machine having created the row, and related_table marks the two SQL
-            creators (order_reminders_run, surface_stale_leads).
-            KNOWN RESIDUAL, measured rather than assumed: two rate_lock_5d rows
-            from 2026-06-18 have no log entry carrying their task id, so they
-            still read 'human'. Both are completed and no OPEN task is affected;
-            739 of 740 log rows since then do record the id. Wrong on 2 rows
-            instead of 201, and the 2 are named rather than left to be found. */
-         case when t.related_table is not null
-                or (t.clickup_task_id is not null
-                    and exists (select 1 from clickup_automation_log l
-                                 where l.clickup_task_id = t.clickup_task_id))
-              then 'auto' else 'human' end as provenance,
+         /* ONE PROVENANCE MECHANISM, NOT TWO.
+            This was a compound rule -- related_table, OR a clickup_automation_log
+            entry -- because related_table alone misclassified 210 machine-created
+            rows as human. tasks.origin now holds the answer directly, backfilled
+            from exactly that rule, so the two cannot drift apart.
+            It also retires the residual the old rule documented: the two
+            rate_lock_5d rows from 2026-06-18 with no log entry carrying their
+            task id read 'human' under the compound rule and are 'clickup' in the
+            column, because they do exist in ClickUp. Wrong on 0 rows now rather
+            than 2, and on 201 before either rule existed. */
+         case when t.origin = 'user' then 'human' else 'auto' end as provenance,
          (coalesce(t.status,'open') = 'question') as question_pending
   from tasks t
   left join contacts c on c.id = t.contact_id

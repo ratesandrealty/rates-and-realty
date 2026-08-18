@@ -1,6 +1,6 @@
 -- task_list(p_scope text, p_filters jsonb)
 -- language: plpgsql
--- Captured from production 2026-08-14.
+-- Captured from production 2026-08-18.
 
 CREATE OR REPLACE FUNCTION public.task_list(p_scope text DEFAULT 'all'::text, p_filters jsonb DEFAULT '{}'::jsonb)
  RETURNS TABLE(id uuid, title text, description text, status text, priority text, due_date timestamp without time zone, contact_id uuid, lead_id uuid, contact_name text, contact_phone text, assigned_to uuid, assignee_email text, assigned_by uuid, clickup_url text, related_table text, related_id uuid, bucket text, assignee_state text, provenance text, question_pending boolean, created_at timestamp without time zone)
@@ -46,11 +46,14 @@ begin
          case when t.assigned_to is null then 'unassigned'
               when t.assigned_to = v_uid then 'mine'
               else 'other' end as assignee_state,
-         case when t.related_table is not null
-                or (t.clickup_task_id is not null
-                    and exists (select 1 from clickup_automation_log l
-                                 where l.clickup_task_id = t.clickup_task_id))
-              then 'auto' else 'human' end as provenance,
+         /* ONE provenance mechanism, not two. This was a compound rule --
+            related_table, OR a clickup_automation_log entry -- because
+            related_table alone misclassified 210 machine-created rows as human.
+            tasks.origin now holds the answer directly, backfilled from exactly
+            that rule, so the two cannot drift apart. It also retires the known
+            residual the old rule documented: the 2 rate_lock_5d rows with no log
+            entry are 'clickup' in the column. */
+         case when t.origin = 'user' then 'human' else 'auto' end as provenance,
          (coalesce(t.status,'open') = 'question') as question_pending,
          t.created_at
   from tasks t

@@ -73,3 +73,58 @@ If it is built, it should be **one RPC taking `uuid[]`** that:
 
 The failure mode to design against is not the happy path. It is the caller that
 deletes 20 rows, removes 14 from ClickUp, and reports success.
+
+---
+
+# RESOLVED 2026-08-18: the conflation is gone
+
+`tasks.origin` (`'system' | 'clickup' | 'user'`, NOT NULL) now holds provenance.
+`related_table` means only what its name says.
+
+**Backfilled from the compound rule, never from `related_table`** — which alone
+would have marked 210 machine-created rows as human:
+
+| | rows | origin |
+|---|---|---|
+| A `related_table` set | 74 | `system` |
+| B `clickup_automation_log` entry | 210 | `clickup` |
+| C ClickUp id, no log entry | 30 | `clickup` (recorded judgement; all finished, none live) |
+| D no id, no related_table | 11 | `user` |
+
+**`clickup_enqueue` moved in the same migration.** Before:
+
+```sql
+if v_t.related_table is null then return false; end if;   -- not a SQL-created task
+```
+
+after:
+
+```sql
+if coalesce(v_t.origin,'') <> 'system' then return false; end if;
+```
+
+**New rows** get `origin` from `tg_tasks_set_origin`: an explicit value wins,
+else `clickup_task_id` present → `clickup`, else **`auth.uid()` null → `system`**,
+else `user`. The `auth.uid()` signal is the same one `tg_tasks_stamp_completion`
+already uses for `completed_source`, not a second convention. Consequence, stated:
+a sweep a **person** triggers by hand produces `origin='user'`, so those tasks are
+not pushed to ClickUp — the safe direction, and identical to how `completed_source`
+already behaves for that action.
+
+**`task_list` and `va_daily_tasks` now read the column** instead of recomputing
+the compound rule, so two mechanisms cannot disagree. Verified: the collapsed rule
+differs from the old compound one on exactly 30 rows — all class C, **none live**.
+
+## What this unblocks, and the one thing still to decide
+
+Tagging is now **safe to build**: a human tagging a task gets `origin='user'`
+whatever `related_table` says, so it is not enqueued to ClickUp. Proven with a
+task carrying `related_table='referral_partners'` — `origin=user`, not enqueued,
+while a `system` control was.
+
+Still open: whether tagging uses `related_table`/`related_id` (now free to mean
+subject) or dedicated columns. `related_table` is a single slot, so a task cannot
+be tagged to both a partner and an order. That is the remaining design question,
+and it is no longer entangled with provenance.
+
+**Bulk actions remain held**; the design below is unchanged.
