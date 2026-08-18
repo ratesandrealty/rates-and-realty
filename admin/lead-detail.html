@@ -2390,11 +2390,12 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
           <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Loan Purpose</label>
             <select id="pricingLoanPurpose" onchange="savePricingMeta()" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;">
+              <!-- Options come from lpFillTransactionTypes() / the transaction_types
+                   table. Deliberately NOT a hardcoded list: contacts.loan_purpose
+                   has an FK to that table, and a literal list here is exactly how
+                   the five disagreeing vocabularies in
+                   docs/LOAN-PURPOSE-VOCABULARIES-2026-08-18.md came about. -->
               <option value="">Select…</option>
-              <option value="purchase">Purchase</option>
-              <option value="refinance">Refinance</option>
-              <option value="construction">Construction</option>
-              <option value="other">Other</option>
             </select></div>
           <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Loan Type</label>
             <select id="pricingLoanType" onchange="savePricingMeta()" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;">
@@ -3734,11 +3735,8 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px;">
           <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Loan Purpose</label>
             <select id="f_loan_purpose" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;">
+              <!-- Populated by lpFillTransactionTypes() -- see #pricingLoanPurpose. -->
               <option value="">Select...</option>
-              <option value="purchase">Purchase</option>
-              <option value="refinance">Refinance</option>
-              <option value="construction">Construction</option>
-              <option value="other">Other</option>
             </select></div>
           <div><label style="font-size:11px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:5px;">Loan Type</label>
             <select id="f_loan_type_app" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;padding:9px 12px;font-size:13px;outline:none;box-sizing:border-box;">
@@ -6621,7 +6619,8 @@ async function populateUI() {
   // PRICING LOAN TYPE binds to the shared working loan_type (kept in sync with the Add-Person
   // modal, 1003 qualifier, fee sheet, etc.). closing_loan_type is a legacy read-fallback only.
   setSelectVal('pricingLoanType', contactData.loan_type || contactData.closing_loan_type || '');
-  setSelectVal('pricingLoanPurpose', contactData.loan_purpose || '');
+  /* Options come from transaction_types; this both fills and selects. */
+  lpFillTransactionTypes(contactData.loan_purpose || '');
   { const _pls = document.getElementById('pricingLenderSearch'); if (_pls && contactData.closing_lender) _pls.value = contactData.closing_lender; }
   // Reflect current lender_submission_status + loan_number (shown only when a lender is set).
   if (typeof lpUpdateSubmissionUI === 'function') lpUpdateSubmissionUI();
@@ -11623,6 +11622,46 @@ async function lpLoadConditions(cid){
    date_key in ('close_of_escrow','loan_contingency','appraisal_due',
    'inspection_deadline'); a renamed key matches nothing, raises nothing, and
    the SMS nudge just stops. */
+/* TRANSACTION TYPE — one vocabulary, read from the table that constrains it.
+   contacts.loan_purpose has an FK to transaction_types, so a hardcoded option
+   list here could offer a value the database refuses. It is populated by query
+   instead, and it FAILS CLOSED: if the query fails the select keeps only
+   "Select…", so nothing can be written rather than something wrong.
+
+   INACTIVE CODES ARE STILL RENDERED WHEN A RECORD HOLDS ONE. 'other' and
+   'construction' are legacy — not offered for new selections, but one contact
+   really is 'other', and a picker that cannot display the value already on the
+   record turns a save on any other field into a silent erasure of it. */
+let _lpTxnTypes = null;
+async function lpLoadTransactionTypes(){
+  if(_lpTxnTypes) return _lpTxnTypes;
+  try{
+    const r = await _authClient().from('transaction_types')
+      .select('code,label,active').order('sort_order',{ascending:true});
+    if(r.error) throw r.error;
+    _lpTxnTypes = r.data || [];
+  }catch(e){ console.warn('[transaction_types]', e.message); _lpTxnTypes = null; }
+  return _lpTxnTypes;
+}
+async function lpFillTransactionTypes(current){
+  const types = await lpLoadTransactionTypes();
+  const ids = ['pricingLoanPurpose','f_loan_purpose'];
+  ids.forEach(function(id){
+    const sel = document.getElementById(id); if(!sel) return;
+    const cur = (current != null && current !== '') ? String(current) : (sel.value || '');
+    const keep = sel.querySelector('option[value=""]');
+    sel.innerHTML = '';
+    if(keep) sel.appendChild(keep); else sel.insertAdjacentHTML('beforeend','<option value="">Select…</option>');
+    if(!types) return;                       // fail closed: only the blank option
+    types.filter(function(t){ return t.active; }).forEach(function(t){
+      sel.insertAdjacentHTML('beforeend','<option value="'+lpEsc(t.code)+'">'+lpEsc(t.label)+'</option>');
+    });
+    const legacy = types.find(function(t){ return !t.active && t.code === cur; });
+    if(legacy) sel.insertAdjacentHTML('beforeend','<option value="'+lpEsc(legacy.code)+'">'+lpEsc(legacy.label)+'</option>');
+    sel.value = cur;
+  });
+}
+
 const LP_KEY_DATES = [
   {key:'contract_acceptance',label:'Contract Acceptance'},
   {key:'emd_due',label:'Earnest Money Due',amount:'EMD Amount'},
@@ -19955,7 +19994,19 @@ function lpSnapEdit(key, ev){
     const cfg=LP_SNAP_FIELDS[key]; if(!cfg){ return; }
     const srcEl=cfg.src?document.getElementById(cfg.src):null;
     let cur='';
-    if(cfg.table==='contacts'){ cur=(c[cfg.col]!=null?c[cfg.col]:''); } else if(srcEl){ cur=srcEl.value||''; }
+    /* App-backed fields used to read their current value ONLY from a hidden
+       input named by cfg.src. #docPreapprovalExpiry no longer exists — it was
+       removed when these dates moved to Critical Dates — so srcEl was null,
+       `cur` stayed '', and the editor opened BLANK on a field that already had
+       a value. Saving from that state wrote null over a real preapproval expiry:
+       the column proactive-followups sends its urgent "preapproval expires"
+       SMS from. Destructive and silent.
+       The application row is the authority; the hidden input is only a mirror,
+       so read the row first and fall back to the element. */
+    if(cfg.table==='contacts'){ cur=(c[cfg.col]!=null?c[cfg.col]:''); }
+    else { const _appRow = (typeof _app!=='undefined' && _app) ? _app : null;
+           if(_appRow && _appRow[cfg.col]!=null && _appRow[cfg.col]!=='') cur=_appRow[cfg.col];
+           else if(srcEl) cur=srcEl.value||''; }
     if(cfg.type==='select'){
       bodyHtml='<div style="'+lbl+'">'+cfg.label+'</div><select id="lpSnapIn" style="'+inStyle+'">'+(srcEl?srcEl.innerHTML:'<option value=\"\">—</option>')+'</select>';
     } else if(cfg.type==='date'){
@@ -27828,7 +27879,9 @@ async function load1003(overrideCid) {
       if (_coActive) _LP_1A_NOTWIN.forEach(function(m) { svc(m[0], ''); });
     })();
     sv('f_loan_amount', data.loan_amount);
-    sv('f_loan_purpose', data.loan_purpose);
+    /* Fill from transaction_types before selecting, or the value has no
+       matching <option> yet and the select silently shows blank. */
+    lpFillTransactionTypes(data.loan_purpose || '');
     sv('f_loan_type_app', data.loan_type);
     sv('f_prop_street', data.property_address_street);
     sv('f_prop_unit', data.property_address_unit);

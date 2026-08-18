@@ -12,6 +12,7 @@ const cors = {
 const hdrs = { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` };
 
 import { URLA_CSS, URLA_HTML, URLA_JS } from './urla/embed.ts';
+import { purposeFamily } from "../_shared/loan-purpose.ts";
 
 const BODY_MATCH = URLA_HTML.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
 const URLA_BODY = (BODY_MATCH ? BODY_MATCH[1] : URLA_HTML)
@@ -257,7 +258,17 @@ function buildUrlaData(app: any, c: any, loanAssets: any[] = [], loanLiabs: any[
     },
     loan: {
       amount: app.loan_amount || app.requested_loan_amount || c.loan_amount || 0,
-      purpose: app.loan_purpose || '',
+      /* Resolved to a FAMILY server-side, so the template does no vocabulary
+         work of its own. urla/script.js already compares against exactly
+         'purchase' / 'refinance' / 'other', so passing the family through needs
+         no change there -- and means the mapping table exists once, in
+         _shared/loan-purpose.ts, rather than in both a Deno module and an
+         embedded browser script that can silently drift apart.
+         The contact's code is the FALLBACK because it is the constrained one:
+         mortgage_applications.loan_purpose is free text and is frequently null
+         (Josue Ramos is a refinance on the contact and blank on the app row).
+         Unknown stays '' and ticks nothing -- see the shared module. */
+      purpose: purposeFamily(app.loan_purpose || c.loan_purpose) || '',
       type: app.loan_type || c.loan_type || '',
       interestRate: app.current_interest_rate || '',
       termMonths: app.loan_term_months || '',

@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { PDFDocument, rgb, StandardFonts, PDFFont, PDFPage } from 'npm:pdf-lib@1.17.1';
+import { purposeFamily } from "../_shared/loan-purpose.ts";
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -168,7 +169,17 @@ async function build1003PDF(d: any): Promise<Uint8Array> {
   const loanType = v(d.loan_type||d.mortgage_type,'Conventional');
   const occ = v(d.occupancy_type||d.occupancy,'PrimaryResidence');
   const isPrimary = occ==='PrimaryResidence'||occ==='Primary Residence';
-  const isPurchase = v(d.loan_purpose,'Purchase')==='Purchase';
+  /* BEHAVIOUR CHANGE, DELIBERATE: a blank loan purpose now ticks NOTHING.
+     This was v(d.loan_purpose,'Purchase')==='Purchase', which had two faults.
+     It defaulted an ABSENT purpose to Purchase, so a 1003 for any of the 1032
+     contacts with no stated purpose printed Purchase ticked -- asserting
+     something nobody said, on a legal document. And it compared
+     case-sensitively while the CRM pickers write lowercase, so a real
+     'purchase' ticked NEITHER box.
+     Unknown is now unknown: purposeFamily() returns null and both boxes stay
+     empty. An incomplete form is better than a wrong one. */
+  const purposeFam = purposeFamily(d.loan_purpose);
+  const isPurchase = purposeFam === 'purchase';
 
   const totalInc = [d.base_income,d.overtime_income,d.bonus_income,d.commission_income,d.military_income,d.other_income]
     .reduce((s,x)=>s+(parseFloat(String(x||0))||0),0);
@@ -606,7 +617,7 @@ async function build1003PDF(d: any): Promise<Uint8Array> {
   text(ctx, $$(d.loan_amount||d.requested_loan_amount)||'___________', MARGIN+66, ctx.y, {font:bold, size:8});
   text(ctx, 'Loan Purpose', MARGIN+180, ctx.y, {font:bold, size:8});
   checkbox(ctx, MARGIN+240, ctx.y, isPurchase, 'Purchase');
-  checkbox(ctx, MARGIN+285, ctx.y, !isPurchase&&d.loan_purpose==='Refinance', 'Refinance');
+  checkbox(ctx, MARGIN+285, ctx.y, purposeFam==='refinance', 'Refinance');
   text(ctx, 'Other (specify)', MARGIN+340, ctx.y, {font:regular, size:7});
   blank(ctx, MARGIN+405, ctx.y, 90);
   ctx.y -= 12;
