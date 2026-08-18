@@ -1142,6 +1142,80 @@ const SPECS = [
     ],
   },
   {
+    /* A pay-stub scan must SHOW what the 1003 already holds before asking.
+     *
+     * The old behaviour wrote employer_name straight over
+     * mortgage_applications.employer_name, so a second job's stub silently
+     * replaced the first job and last year's stub silently replaced the
+     * current one. The fix is a choice, and a choice is only meaningful if
+     * the existing employers are on screen next to it.
+     *
+     * The employments are SEEDED rather than fetched: the stub owns the
+     * supabase client, so a real load would return the stub's plausible row
+     * and prove nothing about this block. What is asserted here is the
+     * rendering and the choice logic. The database round trip is proven
+     * separately against real data.
+     *
+     * The no-employer case is asserted in the SAME spec, because an
+     * absent-check on its own passes vacuously when the pane never renders. */
+    name: 'Pay-stub scan offers replace / add / current / previous',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          if (typeof _ocrReviewRenderDiffRows !== 'function') return 'HARNESS: renderer missing';
+          if (typeof _ocrReviewSetEmpChoice !== 'function')   return 'HARNESS: _ocrReviewSetEmpChoice missing';
+          if (typeof _ocrEmpNamesMatch !== 'function')        return 'HARNESS: _ocrEmpNamesMatch missing';
+          var pane = document.getElementById('ocrReviewFieldsList');
+          if (!pane) return 'HARNESS: #ocrReviewFieldsList never mounted';
+
+          /* Loose name matching is what stops a duplicate employer: a stub says
+             AMAZON.COM SERVICES LLC where the 1003 says Amazon. */
+          var matchLoose  = _ocrEmpNamesMatch('AMAZON.COM SERVICES LLC', 'Amazon');
+          var matchUnrel  = _ocrEmpNamesMatch('Amazon', 'Starbucks');
+
+          _ocrReviewIsAddNew = false;
+          _ocrReviewTargetId = '${FIXTURE}';
+          _ocrReviewFields = { employer_name: 'AMAZON.COM SERVICES LLC', gross_pay: '2400' };
+          _ocrReviewEmpMatch = {
+            existing: [ { employer: 'Amazon', type: 'current', title: 'Picker' },
+                        { employer: 'Old Job Inc', type: 'previous' } ],
+            matchIndex: 0, choice: 'replace', replaceIndex: 0,
+            type: 'current', loading: false, loaded: true
+          };
+          _ocrReviewRenderDiffRows();
+
+          var t = pane.textContent;
+          var shownExisting = t.indexOf('Amazon') !== -1 && t.indexOf('Old Job Inc') !== -1;
+          var shownScanned  = t.indexOf('AMAZON.COM SERVICES LLC') !== -1;
+          var sameEmployerFlagged = (t.match(/SAME EMPLOYER/g) || []).length === 1;
+          var choices = pane.querySelectorAll('input[name=ocrReviewEmpChoice]');
+          var vals = Array.prototype.map.call(choices, function(r){ return r.value; }).join(',');
+          var types = pane.querySelectorAll('input[name=ocrReviewEmpType]');
+          var currentDefault = types.length === 2 && types[0].checked && !types[1].checked;
+          /* replace preselected on the matching entry, not on 'add' */
+          var replacePreselected = false;
+          Array.prototype.forEach.call(choices, function(r){
+            if (r.value === 'replace0' && r.checked) replacePreselected = true;
+          });
+
+          /* Paired absent-check: no employer named -> no block at all. */
+          _ocrReviewFields = { gross_pay: '2400' };
+          _ocrReviewEmpMatch = { existing: [], matchIndex: -1, choice: 'add',
+                                 replaceIndex: -1, type: 'current', loading: false, loaded: true };
+          _ocrReviewRenderDiffRows();
+          var goneWhenNoEmployer = pane.querySelectorAll('input[name=ocrReviewEmpChoice]').length === 0;
+
+          return 'loose=' + matchLoose + ' unrelated=' + matchUnrel
+               + ' existing=' + shownExisting + ' scanned=' + shownScanned
+               + ' sameFlag=' + sameEmployerFlagged + ' choices=' + vals
+               + ' typeDefault=' + currentDefault + ' preselect=' + replacePreselected
+               + ' absent=' + goneWhenNoEmployer;
+        })()`,
+       'loose=true unrelated=false existing=true scanned=true sameFlag=true choices=replace0,replace1,add,skip typeDefault=true preselect=true absent=true'],
+    ],
+  },
+  {
     /* The Loan Snapshot editor must OPEN WITH THE CURRENT VALUE.
      *
      * It read its value only from an element named by cfg.src. For the

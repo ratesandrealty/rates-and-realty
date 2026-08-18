@@ -31718,6 +31718,7 @@ async function openOCRReviewModal(fields, docType, sourceFile) {
     });
   }
   _ocrReviewMaybeLoadBankMatch(_ocrReviewTargetId);
+  _ocrReviewMaybeLoadEmpMatch(_ocrReviewTargetId);
   _ocrReviewUpdateApplyLabel();
 
   const modal = document.getElementById('ocrReviewAssignModal');
@@ -31750,6 +31751,7 @@ function closeOCRReviewModal() {
   // (the user may have added/removed loan_assets rows between opens, or be
   // applying a different statement entirely).
   _ocrReviewResetBankMatch();
+  _ocrReviewResetEmpMatch();   // same lifecycle: a target switch invalidates both
 }
 
 function _ocrReviewSetVal(id, val) {
@@ -31907,6 +31909,7 @@ function _ocrReviewSelectTarget(targetId) {
   // Item 3 Pass 3 — reset bank match state on target switch. Each target
   // has its own loan_assets; a match for Aned doesn't carry over to Jose.
   _ocrReviewResetBankMatch();
+  _ocrReviewResetEmpMatch();   // same lifecycle: a target switch invalidates both
   _ocrReviewRenderTargetPicker();
   // Item 3 Pass 1 — re-render right pane via dispatcher (diff for existing
   // target, mini-form for add-new). Kick off existing-data fetch async for
@@ -31926,6 +31929,7 @@ function _ocrReviewSelectTarget(targetId) {
     });
   }
   _ocrReviewMaybeLoadBankMatch(targetId);
+  _ocrReviewMaybeLoadEmpMatch(targetId);
   _ocrReviewUpdateApplyLabel();
 }
 
@@ -32290,6 +32294,92 @@ function _ocrReviewRenderDiffRows() {
            +    'color:#fff;padding:7px 10px;font-size:13px;outline:none;">'
            +  '</div>';
     }).join('');
+  }
+
+  /* ── Employment block: show what the 1003 ALREADY holds, then choose ──
+     Rendered whenever the scan named an employer. Its whole purpose is that
+     the existing employers are ON SCREEN when the choice is made — a
+     "replace / add" question with nothing to compare against is the same
+     guess it replaces. */
+  if (_ocrIsEmploymentScan(_ocrReviewFields) && !_ocrReviewIsAddNew) {
+    const em = _ocrReviewEmpMatch || {};
+    const scanned = String(_ocrReviewFields.employer_name || '').trim();
+    const optS = 'display:flex;align-items:flex-start;gap:8px;padding:5px 0;'
+               + 'font-size:12px;color:rgba(255,255,255,0.85);cursor:pointer;';
+    const radS = 'width:15px;height:15px;cursor:pointer;accent-color:#c9a84c;flex-shrink:0;margin-top:1px;';
+
+    html += '<div style="margin-bottom:10px;padding:12px 14px;'
+         +  'background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.28);border-radius:10px;">'
+         +  '<div style="font-size:11px;font-weight:700;color:#818cf8;margin-bottom:8px;letter-spacing:0.3px;">'
+         +    '&#128188; Employment &mdash; scanned: ' + _ocrReviewEsc(scanned) + '</div>';
+
+    if (em.loading) {
+      html += '<div style="font-size:12px;color:rgba(255,255,255,0.5);">Checking what the 1003 already holds&hellip;</div>';
+    } else {
+      const list = Array.isArray(em.existing) ? em.existing : [];
+      if (!list.length) {
+        html += '<div style="font-size:12px;color:rgba(255,255,255,0.55);margin-bottom:8px;">'
+             +    'No employment on the 1003 yet &mdash; this will be added as the first.</div>';
+      } else {
+        html += '<div style="font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:6px;'
+             +    'text-transform:uppercase;letter-spacing:0.4px;">Already on the 1003</div>';
+        html += list.map(function(e, i) {
+          const nm = String((e && e.employer) || '').trim() || '(no employer name)';
+          const ty = String((e && e.type) || 'current');
+          const ti = String((e && e.title) || '').trim();
+          const isMatch = i === em.matchIndex;
+          return '<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;margin-bottom:4px;'
+               +  'background:rgba(255,255,255,0.03);border:1px solid '
+               +  (isMatch ? 'rgba(99,102,241,0.45)' : 'rgba(255,255,255,0.07)') + ';border-radius:8px;">'
+               +  '<span style="font-size:12px;color:#ddd;flex:1;min-width:0;overflow:hidden;'
+               +    'text-overflow:ellipsis;white-space:nowrap;">' + _ocrReviewEsc(nm)
+               +    (ti ? ' <span style="color:#777;">&middot; ' + _ocrReviewEsc(ti) + '</span>' : '') + '</span>'
+               +  '<span style="font-size:9px;text-transform:uppercase;letter-spacing:0.4px;padding:2px 7px;'
+               +    'border-radius:9px;background:' + (ty === 'previous' ? 'rgba(148,163,184,0.18)' : 'rgba(39,174,96,0.16)')
+               +    ';color:' + (ty === 'previous' ? '#94a3b8' : '#27AE60') + ';">' + _ocrReviewEsc(ty) + '</span>'
+               +  (isMatch ? '<span style="font-size:9px;color:#818cf8;font-weight:700;">SAME EMPLOYER</span>' : '')
+               +  '</div>';
+        }).join('');
+      }
+
+      /* Replace is offered per ENTRY, not as a single option, because "replace"
+         is meaningless without saying which one when there is more than one. */
+      list.forEach(function(e, i) {
+        const nm = String((e && e.employer) || '').trim() || '(no employer name)';
+        html += '<label style="' + optS + '">'
+             +    '<input type="radio" name="ocrReviewEmpChoice" value="replace' + i + '" '
+             +      (em.choice === 'replace' && em.replaceIndex === i ? 'checked ' : '')
+             +      'onchange="_ocrReviewSetEmpChoice(\'replace\',' + i + ')" style="' + radS + '">'
+             +    '<span>Replace <b>' + _ocrReviewEsc(nm) + '</b> with the scanned employer</span>'
+             +  '</label>';
+      });
+      html += '<label style="' + optS + '">'
+           +    '<input type="radio" name="ocrReviewEmpChoice" value="add" '
+           +      (em.choice === 'add' ? 'checked ' : '')
+           +      'onchange="_ocrReviewSetEmpChoice(\'add\')" style="' + radS + '">'
+           +    '<span>Add as <b>another employer</b>' + (list.length ? ' (keeps the ' + list.length + ' above)' : '') + '</span>'
+           +  '</label>'
+           +  '<label style="' + optS + '">'
+           +    '<input type="radio" name="ocrReviewEmpChoice" value="skip" '
+           +      (em.choice === 'skip' ? 'checked ' : '')
+           +      'onchange="_ocrReviewSetEmpChoice(\'skip\')" style="' + radS + '">'
+           +    '<span>Skip employment &mdash; leave the 1003 as it is</span>'
+           +  '</label>';
+
+      html += '<div style="margin-top:9px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.08);">'
+           +  '<div style="font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:4px;'
+           +    'text-transform:uppercase;letter-spacing:0.4px;">Mark this employment as</div>'
+           +  '<label style="' + optS + 'display:inline-flex;margin-right:14px;">'
+           +    '<input type="radio" name="ocrReviewEmpType" value="current" '
+           +      (em.type !== 'previous' ? 'checked ' : '')
+           +      'onchange="_ocrReviewSetEmpType(\'current\')" style="' + radS + '">Current</label>'
+           +  '<label style="' + optS + 'display:inline-flex;">'
+           +    '<input type="radio" name="ocrReviewEmpType" value="previous" '
+           +      (em.type === 'previous' ? 'checked ' : '')
+           +      'onchange="_ocrReviewSetEmpType(\'previous\')" style="' + radS + '">Previous</label>'
+           +  '</div>';
+    }
+    html += '</div>';
   }
 
   // Item 2c — Income Information block (W-2 / paystub side-write fields).
@@ -32878,6 +32968,57 @@ function _ocrStripBankAddressFields(fields) {
 // null if non-bank or unparseable balance, or throws on DB error. Caller is
 // responsible for try/catch — an asset failure must NOT roll back the
 // name/DOB/app writes that already succeeded.
+/* Apply the employment choice to mortgage_applications.employments.
+ *
+ * Reads the array back immediately before writing rather than trusting the copy
+ * loaded when the modal opened: the whole array is rewritten in one update, so
+ * a stale copy would silently drop an employment added in another tab between
+ * open and apply. Returns a short description of what it did, or null.
+ *
+ * The scanned stub only ever knows employer / title / income. It must NOT blank
+ * the address, phone and HR contact a human typed on an entry it is replacing,
+ * so replace MERGES onto the existing entry rather than overwriting it. */
+async function _ocrApplyEmploymentChoice(targetContactId, fields) {
+  const em = _ocrReviewEmpMatch || {};
+  if (!targetContactId || !_ocrIsEmploymentScan(fields)) return null;
+  if (em.choice === 'skip') return null;
+
+  const scanned = String(fields.employer_name || '').trim();
+  if (!scanned) return null;
+  const num = function (v) {
+    const n = parseFloat(String(v == null ? '' : v).replace(/[$,\s]/g, ''));
+    return isFinite(n) ? n : null;
+  };
+  const patch = { employer: scanned, type: em.type === 'previous' ? 'previous' : 'current' };
+  if (fields.position)   patch.title = String(fields.position).trim();
+  const base = num(fields.gross_pay);
+  if (base != null)      patch.base = String(base);
+
+  const r = await _authClient().from('mortgage_applications')
+    .select('id,employments').eq('contact_id', targetContactId)
+    .order('created_at', { ascending: false }).limit(1);
+  const row = (r.data || [])[0];
+  if (!row || !row.id) return null;
+  let list = row.employments;
+  if (typeof list === 'string') { try { list = JSON.parse(list); } catch (e) { list = null; } }
+  if (!Array.isArray(list)) list = [];
+
+  let what;
+  if (em.choice === 'replace' && em.replaceIndex >= 0 && em.replaceIndex < list.length) {
+    const prevName = String((list[em.replaceIndex] || {}).employer || '').trim();
+    list[em.replaceIndex] = Object.assign({}, list[em.replaceIndex], patch);
+    what = 'replaced ' + (prevName || 'an employment');
+  } else {
+    list.push(patch);
+    what = 'added as another employer';
+  }
+
+  const upd = await _authClient().from('mortgage_applications')
+    .update({ employments: list, updated_at: new Date().toISOString() }).eq('id', row.id);
+  if (upd && upd.error) throw new Error(upd.error.message);
+  return what + ' (' + patch.type + ')';
+}
+
 async function _ocrMaybeInsertBankAsset(targetContactId, fields) {
   if (!_ocrIsBankScan(fields)) return null;
   if (!targetContactId) throw new Error('targetContactId required for asset insert');
@@ -33284,6 +33425,117 @@ function _ocrReviewResetBankMatch() {
   _ocrReviewBankMatch = { existingRowId: null, existingRow: null, choice: 'add', loading: false };
 }
 
+/* ── EMPLOYMENT: what the 1003 already holds, and what to do with the scan ──
+ *
+ * A pay stub names an employer. Until now that name went straight into
+ * mortgage_applications.employer_name, overwriting whatever was there with no
+ * question asked — so scanning a second job's stub silently replaced the first
+ * job, and scanning last year's stub silently replaced the current one.
+ *
+ * The destination is `employments`, a jsonb ARRAY that already supports this:
+ * measured, 23 of 23 applications that have it hold real values, one already
+ * holds two entries, and every entry already carries `type` — 'current' (23) or
+ * 'previous' (1). So neither the array nor the current/previous distinction is
+ * new; what was missing was any way to say which one you meant.
+ *
+ * WHY 'add' IS NOT THE DEFAULT, unlike the bank block. Two bank statements are
+ * normally two accounts, so adding is the safe guess. Two pay stubs are usually
+ * the SAME job a fortnight apart, so adding is the guess that quietly creates a
+ * duplicate employer and doubles income. When the scanned employer matches one
+ * already on file the default is 'replace' THAT entry; only an unrecognised
+ * employer defaults to 'add'.
+ *
+ * `type` is chosen separately and deliberately defaults to 'current': it is
+ * what a stub almost always is, and getting it wrong is visible on the form
+ * rather than silent. */
+let _ocrReviewEmpMatch = {
+  existing:      [],      // the employments array as loaded
+  matchIndex:    -1,      // index of an entry whose employer matches the scan
+  choice:        'add',   // 'add' | 'replace' | 'skip'
+  replaceIndex:  -1,      // which entry 'replace' targets
+  type:          'current',
+  loading:       false,
+  loaded:        false
+};
+
+function _ocrReviewResetEmpMatch() {
+  _ocrReviewEmpMatch = { existing: [], matchIndex: -1, choice: 'add', replaceIndex: -1,
+                         type: 'current', loading: false, loaded: false };
+}
+
+/* A pay stub or W-2 is an employment scan only if it actually named an
+   employer. Income figures alone have nowhere to go on this block. */
+function _ocrIsEmploymentScan(fields) {
+  return !!(fields && String(fields.employer_name || '').trim());
+}
+
+function _ocrReviewSetEmpChoice(choice, idx) {
+  if (choice === 'add' || choice === 'replace' || choice === 'skip') {
+    _ocrReviewEmpMatch.choice = choice;
+    if (choice === 'replace' && typeof idx === 'number') _ocrReviewEmpMatch.replaceIndex = idx;
+  }
+}
+
+function _ocrReviewSetEmpType(t) {
+  if (t === 'current' || t === 'previous') _ocrReviewEmpMatch.type = t;
+}
+
+/* Names drift between a stub and what someone typed on the 1003 ("AMAZON.COM
+   SERVICES LLC" vs "Amazon"), so the match is deliberately loose: case- and
+   punctuation-insensitive, and one containing the other counts. A false match
+   costs a wrong radio PRESELECTED, which is visible and correctable. A missed
+   match costs a silent duplicate employer, which is not. */
+function _ocrEmpNameKey(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+function _ocrEmpNamesMatch(a, b) {
+  const x = _ocrEmpNameKey(a), y = _ocrEmpNameKey(b);
+  if (!x || !y) return false;
+  return x === y || x.indexOf(y) >= 0 || y.indexOf(x) >= 0;
+}
+
+async function _ocrReviewMaybeLoadEmpMatch(cid) {
+  if (!cid || _ocrReviewIsAddNew) return;
+  if (typeof cid === 'string' && cid.indexOf('cob:') === 0) return;
+  if (!_ocrIsEmploymentScan(_ocrReviewFields)) return;
+  _ocrReviewResetEmpMatch();
+  _ocrReviewEmpMatch.loading = true;
+  if (typeof _ocrReviewUpdateApplyLabel === 'function') _ocrReviewUpdateApplyLabel();
+  const targetAtFetch = cid;
+  let list = [];
+  try {
+    const r = await _authClient().from('mortgage_applications')
+      .select('id,employments').eq('contact_id', cid)
+      .order('created_at', { ascending: false }).limit(1);
+    const row = (r.data || [])[0];
+    let raw = row ? row.employments : null;
+    /* Tolerate a double-encoded value. bank_accounts on this same table is a
+       JSON string inside a jsonb column, written that way by the portal, so
+       the shape cannot be assumed just because the column type says jsonb. */
+    if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch (e) { raw = null; } }
+    if (Array.isArray(raw)) list = raw;
+  } catch (e) {
+    console.warn('[ocrReview] employments load failed:', e.message);
+  }
+  if (_ocrReviewTargetId !== targetAtFetch || _ocrReviewIsAddNew) return;
+  const scanned = _ocrReviewFields.employer_name;
+  let mi = -1;
+  for (let i = 0; i < list.length; i++) {
+    if (_ocrEmpNamesMatch(list[i] && list[i].employer, scanned)) { mi = i; break; }
+  }
+  _ocrReviewEmpMatch = {
+    existing:     list,
+    matchIndex:   mi,
+    choice:       mi >= 0 ? 'replace' : 'add',
+    replaceIndex: mi,
+    type:         'current',
+    loading:      false,
+    loaded:       true
+  };
+  if (typeof _ocrReviewRenderRightPane === 'function') _ocrReviewRenderRightPane();
+  if (typeof _ocrReviewUpdateApplyLabel === 'function') _ocrReviewUpdateApplyLabel();
+}
+
 // Fired by the choice block's radio inputs. State-only update — radios
 // manage their own checked state via shared `name`. Apply reads the
 // choice at click time.
@@ -33585,6 +33837,24 @@ async function _confirmExistingTargetAndApply(fields, fieldCount) {
       assetErrorSuffix = ' — but bank asset ' + verb + ' failed (' + (assetErr.message || 'unknown error') + ')';
     }
 
+    /* Employment — its own try/catch, like the bank and income writes, so a
+       failure here does not roll back the flat-column writes that already
+       succeeded. Reported in the same suffix style: a silent failure on a
+       write the user explicitly chose is the thing to avoid. */
+    let empApplied = null;
+    let empErrorSuffix = '';
+    try {
+      empApplied = await _ocrApplyEmploymentChoice(rowOwnerId, fields);
+      if (empApplied && typeof load1003 === 'function') {
+        try { await load1003(); }
+        catch (e) { console.warn('[ocrReview] load1003 after employment write failed:', e); }
+      }
+    } catch (empErr) {
+      console.error('[ocrReview] employment write failed:', empErr);
+      empErrorSuffix = ' — but employment save failed (' + (empErr.message || 'unknown error') + ')';
+    }
+
+
     // Item 2c — W-2 / paystub → loan_income INSERT. Independent try/catch
     // so an income write failure does NOT roll back flat-column writes (or
     // the bank-asset write) that already succeeded. INSERT-only this pass
@@ -33637,14 +33907,18 @@ async function _confirmExistingTargetAndApply(fields, fieldCount) {
           const suf = _ocrEmploymentMonthliesToastSuffix(monthliesPatch).replace(/^ \+ /, '');
           if (suf) parts.push(suf + ' for ' + targetName);
         }
-        toast(parts.join(' + ') + ' ✓');
+        /* Say WHICH employment happened. "Applied" alone cannot distinguish
+           replacing an employer from adding a second one, and those differ. */
+        if (empApplied) parts.push('Employment ' + empApplied);
+        toast(parts.join(' + ') + (empErrorSuffix || '') + ' ✓');
       } else {
         let bankSuffix;
         if (bankWritten) bankSuffix = _ocrBankAssetToastSuffix(bankWritten, !!bankUpdated);
         else             bankSuffix = assetErrorSuffix;   // possibly empty
         const incomeSuffix    = incomeWritten ? _ocrIncomeToastSuffix(incomeWritten) : incomeErrorSuffix;
         const monthliesSuffix = monthlyWriteKeys.length ? _ocrEmploymentMonthliesToastSuffix(monthliesPatch) : '';
-        toast('Applied ' + fieldCount + ' field' + (fieldCount === 1 ? '' : 's') + ' to ' + targetName + ' ✓' + bankSuffix + incomeSuffix + monthliesSuffix);
+        const empSuffix = empApplied ? ' + employment ' + empApplied : empErrorSuffix;
+        toast('Applied ' + fieldCount + ' field' + (fieldCount === 1 ? '' : 's') + ' to ' + targetName + ' ✓' + bankSuffix + incomeSuffix + monthliesSuffix + empSuffix);
       }
     }
     closeOCRReviewModal();
