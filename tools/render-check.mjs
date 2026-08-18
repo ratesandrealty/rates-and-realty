@@ -1558,6 +1558,108 @@ const SPECS = [
     ],
   },
   {
+    /* The assignee picker must come from auth_user_roles, and must never offer
+     * the automation account.
+     *
+     * The stub owns the supabase client, so the query is intercepted here and
+     * fed the three rows that actually exist -- including the bot -- and the
+     * assertion is that the bot does NOT reach the select. A hardcoded list
+     * would pass a "two options appear" check and fail this one, which is the
+     * point: the filter is the behaviour under test, not the count.
+     *
+     * Unassigned is asserted separately because it is a real destination, not
+     * the absence of one: 34 of the 35 live tasks are unassigned. */
+    name: 'Assignee picker reads auth_user_roles and excludes the bot',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(async function(){
+          if (typeof _tkFillAssignees !== 'function') return 'HARNESS: _tkFillAssignees missing';
+          var sel = document.getElementById('task-assignee-input');
+          if (!sel) return 'HARNESS: #task-assignee-input never mounted';
+
+          /* Intercept the query and record that the filter was actually asked
+             for -- a client that fetched all three and filtered in JS would
+             still be reading the bot's row. */
+          var asked = { table: null, notCalled: false };
+          var realFrom = sb.from;
+          sb.from = function(t){
+            if (t !== 'auth_user_roles') return realFrom.call(sb, t);
+            asked.table = t;
+            var rows = [
+              { user_id:'u-rene',   role:'admin', display_name:'Rene Duarte',       service_account:false },
+              { user_id:'u-aubrey', role:'va',    display_name:'Aubrey Ayson',      service_account:false },
+              { user_id:'u-bot',    role:'admin', display_name:'[bot] RR Automation', service_account:true  }
+            ];
+            var q = {
+              select: function(){ return q; },
+              order:  function(){ return Promise.resolve({ data: q._rows, error: null }); },
+              not: function(col, op, val){
+                asked.notCalled = (col === 'service_account' && String(val) === 'true');
+                q._rows = rows.filter(function(r){ return r.service_account !== true; });
+                return q;
+              },
+              _rows: rows
+            };
+            return q;
+          };
+
+          _tkAssignees = null;                 // force a reload
+          await _tkFillAssignees();
+          sb.from = realFrom;
+
+          var vals = Array.prototype.map.call(sel.options, function(o){ return o.value; });
+          var text = sel.textContent;
+          var unassignedFirst = sel.options.length > 0 && sel.options[0].value === '';
+          var hasPeople = vals.indexOf('u-rene') !== -1 && vals.indexOf('u-aubrey') !== -1;
+          var botExcluded = vals.indexOf('u-bot') === -1 && text.indexOf('[bot]') === -1;
+          var namesFromData = text.indexOf('Rene Duarte') !== -1 && text.indexOf('Aubrey Ayson') !== -1;
+
+          return 'queried=' + (asked.table === 'auth_user_roles')
+               + ' filteredServerSide=' + asked.notCalled
+               + ' unassignedFirst=' + unassignedFirst
+               + ' people=' + hasPeople + ' botExcluded=' + botExcluded
+               + ' namesFromData=' + namesFromData;
+        })()`,
+       'queried=true filteredServerSide=true unassignedFirst=true people=true botExcluded=true namesFromData=true'],
+    ],
+  },
+  {
+    /* Folders are task_list SCOPES, and the scope must reach the RPC. A folder
+     * bar that changes colour without changing the query is the failure this
+     * catches -- and contact_id must be dropped for the non-lead scopes, or
+     * "My tasks" silently means "my tasks on this one lead". */
+    name: 'Task folders send the scope to task_list',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(async function(){
+          if (typeof tkSetScope !== 'function')  return 'HARNESS: tkSetScope missing';
+          if (typeof loadTasks !== 'function')   return 'HARNESS: loadTasks missing';
+          var calls = [];
+          var realRpc = sb.rpc;
+          sb.rpc = function(name, args){
+            if (name === 'task_list') { calls.push(args || {}); return Promise.resolve({ data: [], error: null }); }
+            return realRpc.apply(sb, arguments);
+          };
+          await tkSetScope('mine');
+          await tkSetScope('unassigned');
+          await tkSetScope('lead');
+          sb.rpc = realRpc;
+
+          var scopes = calls.map(function(c){ return c.p_scope; }).join(',');
+          var mineHasNoContact = calls.length > 0 && !(calls[0].p_filters || {}).contact_id;
+          var leadHasContact   = calls.length > 2 && !!(calls[2].p_filters || {}).contact_id;
+          var bar = document.getElementById('task-folders');
+          var barRendered = !!bar && bar.querySelectorAll('button').length === 4;
+
+          return 'scopes=' + scopes + ' mineUnscoped=' + mineHasNoContact
+               + ' leadScoped=' + leadHasContact + ' bar=' + barRendered;
+        })()`,
+       'scopes=mine,unassigned,lead mineUnscoped=true leadScoped=true bar=true'],
+    ],
+  },
+  {
     /* The fallback must do the two things it could not do before: collapse the
      * quoted history and list attachments. Both come from the reader's own
      * exported helpers, so this also asserts the export exists -- if inbox.js

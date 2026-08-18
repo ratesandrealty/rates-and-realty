@@ -4449,6 +4449,14 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
         </svg>
         Add Task
       </button>
+      <!-- FOLDERS. These are task_list SCOPES that already existed — all, mine,
+           other, unassigned, lead — not a new filtering layer. 'lead' is the
+           default because this is a lead page; the others answer "and what else
+           is outstanding" without leaving the record.
+           Aubrey's view is enforced INSIDE task_list, not here: its visibility
+           clause is (is_admin OR assigned_to = uid OR lead_shares), so a va sees
+           only her own work whatever scope this bar asks for. -->
+      <div id="task-folders" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px;"></div>
       <div class="task-form" id="task-form">
         <div class="task-form-grid">
           <div class="ld-field">
@@ -4465,6 +4473,17 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
               <option value="normal">Normal</option>
               <option value="high">High</option>
               <option value="low">Low</option>
+            </select>
+          </div>
+          <div class="ld-field">
+            <label class="ld-label">Assign to</label>
+            <!-- Options are filled by _tkFillAssignees() from auth_user_roles at
+                 render time. Deliberately NOT a hardcoded two-name list: that is
+                 a second vocabulary, and it goes stale the day somebody joins.
+                 "Unassigned" is the default and a real state -- 34 of the 35 live
+                 tasks are unassigned, so it is the common case, not a fallback. -->
+            <select class="ld-select" id="task-assignee-input">
+              <option value="">Unassigned</option>
             </select>
           </div>
         </div>
@@ -7063,6 +7082,40 @@ async function saveNote() {
 }
 
 /* ── TASKS ── */
+/* The folder currently shown. 'lead' by default — this is a lead page. */
+let _tkScope = 'lead';
+
+/* Counts come from the rows task_list returned, so a folder can never claim a
+   number the server would not actually hand over. */
+function _tkRenderFolders(){
+  const bar = document.getElementById('task-folders');
+  if (!bar) return;
+  const live = (tasksData || []).filter(function(t){
+    return ['completed','cancelled'].indexOf(String(t.status || 'open')) === -1;
+  }).length;
+  const defs = [
+    { k:'lead',       label:'This lead' },
+    { k:'mine',       label:'My tasks' },
+    { k:'other',      label:"Someone else's" },
+    { k:'unassigned', label:'Unassigned' }
+  ];
+  bar.innerHTML = defs.map(function(d){
+    const on = _tkScope === d.k;
+    return '<button type="button" onclick="tkSetScope(\'' + d.k + '\')" '
+      + 'style="background:' + (on ? 'rgba(201,168,76,.16)' : 'transparent') + ';'
+      + 'border:1px solid ' + (on ? 'rgba(201,168,76,.5)' : 'rgba(255,255,255,.14)') + ';'
+      + 'color:' + (on ? '#C9A84C' : '#9a9a9a') + ';border-radius:14px;font-size:11px;'
+      + 'font-weight:600;padding:3px 11px;cursor:pointer;font-family:inherit;">'
+      + d.label + (on ? ' · ' + live : '') + '</button>';
+  }).join('');
+}
+
+async function tkSetScope(scope){
+  if (['lead','mine','other','unassigned'].indexOf(scope) === -1) return;
+  _tkScope = scope;
+  await loadTasks();
+}
+
 async function loadTasks() {
   if (!leadId) return;
   try {
@@ -7081,14 +7134,23 @@ async function loadTasks() {
        and this tab renders completed tasks with a strike-through and a toggle
        back to open. Dropping to the default would hide them and make the
        toggle look broken. */
+    /* contact_id is sent ONLY for the lead scope. task_list narrows every scope
+       to that contact when it is present (`v_contact is null or v_scope='lead'
+       or t.contact_id = v_contact`), so passing it on 'mine' would silently turn
+       "my tasks" into "my tasks on this one lead" — a folder that looks empty
+       for the wrong reason. */
+    const _scopeFilters = (_tkScope === 'lead')
+      ? { contact_id: leadId, status_group: 'all' }
+      : { status_group: 'all' };
     const { data, error } = await sb.rpc('task_list', {
-      p_scope: 'lead',
-      p_filters: { contact_id: leadId, status_group: 'all' }
+      p_scope: _tkScope,
+      p_filters: _scopeFilters
     });
     if (error) throw error;
     tasksData = data || [];
     await _tkLoadNames();          // chips need display names, not email local parts
     renderTasks();
+    _tkRenderFolders();            // counts come from what the server actually returned
   } catch (err) {
     /* The old `catch (_) {}` swallowed everything, and supabase-js resolves
        with { error } rather than throwing, so a failed read left tasksData at
@@ -7300,6 +7362,9 @@ function renderTasks() {
 
 function openTaskForm() {
   document.getElementById('task-form').classList.add('open');
+  /* Filled on open, not at page load: the query is only worth making when the
+     form is actually going to be used. */
+  if (typeof _tkFillAssignees === 'function') _tkFillAssignees();
   const taskBtn = Array.from(document.querySelectorAll('.ld-tab-btn')).find(b => b.textContent.trim() === 'Tasks');
   switchTab('tasks', taskBtn);
   document.getElementById('task-title-input').focus();
@@ -7307,6 +7372,56 @@ function openTaskForm() {
 function closeTaskForm() {
   document.getElementById('task-form').classList.remove('open');
   document.getElementById('task-title-input').value = '';
+}
+
+/* WHO CAN BE ASSIGNED WORK — read from auth_user_roles, never hardcoded.
+ *
+ * service_account is excluded so the automation account cannot be handed work:
+ * it is an admin row ([bot] RR Automation) and would otherwise sit in the picker
+ * looking like a person. display_name is the label, so the list needs no names
+ * in this file at all -- rename someone in auth_user_roles and the picker
+ * follows.
+ *
+ * Cached per page load. The list is three rows and changes about never, but the
+ * cache is what stops every open of the form issuing a query. */
+let _tkAssignees = null;
+let _tkMyUid = null;
+async function _tkLoadAssignees(){
+  if (_tkAssignees) return _tkAssignees;
+  try {
+    const r = await sb.from('auth_user_roles')
+      .select('user_id,role,display_name,service_account')
+      .not('service_account','is',true)
+      .order('role', { ascending: true });
+    if (r.error) throw r.error;
+    _tkAssignees = (r.data || []).filter(function(x){ return x && x.user_id; });
+    /* Resolve who "me" is here rather than depending on a page global — there
+       isn't one, and a (me) hint that never appears is worse than none. */
+    try { const u = await sb.auth.getUser(); _tkMyUid = (u && u.data && u.data.user && u.data.user.id) || null; }
+    catch (_) { _tkMyUid = null; }
+  } catch (e) {
+    console.warn('[assignees]', e.message);
+    _tkAssignees = null;          // stay null so the next open retries
+  }
+  return _tkAssignees;
+}
+
+async function _tkFillAssignees(){
+  const sel = document.getElementById('task-assignee-input');
+  if (!sel) return;
+  const list = await _tkLoadAssignees();
+  const keep = sel.value || '';
+  /* Unassigned is always present and always first, even if the query failed:
+     it is a real destination, not the absence of one, and a form that cannot
+     offer it would force a wrong answer. */
+  sel.innerHTML = '<option value="">Unassigned</option>';
+  (list || []).forEach(function(u){
+    const me = _tkMyUid && _tkMyUid === u.user_id;
+    const label = (u.display_name || u.role || 'user') + (me ? ' (me)' : '');
+    sel.insertAdjacentHTML('beforeend',
+      '<option value="' + esc(u.user_id) + '">' + esc(label) + '</option>');
+  });
+  sel.value = keep;
 }
 
 async function createTask() {
@@ -7329,7 +7444,12 @@ async function createTask() {
       p_due_date: due || null,
       p_priority: pri,
       p_status: 'open',
-      p_contact_id: leadId
+      p_contact_id: leadId,
+      /* task_upsert has always accepted p_assigned_to; the form simply never
+         sent it, which is why the assignment model existed with no way to use
+         it. Empty string means Unassigned and must go as NULL -- '' is not a
+         uuid and would be rejected. */
+      p_assigned_to: (document.getElementById('task-assignee-input') || {}).value || null
     });
     if (error) throw error;
     tasksData.unshift(data);
