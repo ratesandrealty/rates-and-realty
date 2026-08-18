@@ -1660,6 +1660,76 @@ const SPECS = [
     ],
   },
   {
+    /* Sweeper tasks get their own group, sorted by neglect, NOT collapsed.
+     *
+     * The failure being prevented is subtle: mixed into Unassigned in creation
+     * order, 25 machine rows buried 9 human ones, and a lead quiet 107 days sat
+     * below one quiet 4 days. So the assertions are about ORDER and SEPARATION,
+     * not merely that a heading exists.
+     *
+     * Never-contacted sorts FIRST. That is the strongest signal the sweeper
+     * produces -- 11 of the 25 -- and creation order hid it completely. */
+    name: 'Sweeper tasks form their own group, sorted by neglect',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      [`(function(){
+          if (typeof renderTasks !== 'function')  return 'HARNESS: renderTasks missing';
+          if (typeof _tkIsSweeper !== 'function') return 'HARNESS: _tkIsSweeper missing';
+          if (typeof _tkQuietDays !== 'function') return 'HARNESS: _tkQuietDays missing';
+          var el = document.getElementById('tasks-list');
+          if (!el) return 'HARNESS: #tasks-list never mounted';
+
+          tasksData = [
+            { id:'h1', title:'A real human task', status:'open', priority:'normal' },
+            { id:'s1', title:'Follow up: Quiet Four (Contacted) — quiet 4d',
+              status:'open', priority:'high', related_table:'auto_followup_lead' },
+            { id:'s2', title:'Follow up: Never Contacted (Follow Up) — no activity logged',
+              status:'open', priority:'high', related_table:'auto_followup_lead' },
+            { id:'s3', title:'Follow up: Very Quiet (Pre-Approved) — quiet 107d',
+              status:'open', priority:'high', related_table:'auto_followup_lead' },
+            { id:'d1', title:'Something finished', status:'completed', priority:'normal' }
+          ];
+          renderTasks();
+          var txt = el.textContent;
+
+          /* the group exists, counted, and NOT collapsed -- its rows are present */
+          var heading = txt.indexOf('Needs follow-up (3)') !== -1;
+          var neverBadge = txt.indexOf('1 never contacted') !== -1;
+          var notCollapsed = txt.indexOf('Never Contacted') !== -1
+                          && txt.indexOf('Very Quiet') !== -1
+                          && txt.indexOf('Quiet Four') !== -1;
+
+          /* the copy that says what completing one means */
+          var copy = txt.indexOf('will not come back') !== -1;
+
+          /* ORDER: never-contacted, then 107d, then 4d */
+          var iNever = txt.indexOf('Never Contacted');
+          var i107   = txt.indexOf('Very Quiet');
+          var i4     = txt.indexOf('Quiet Four');
+          var sorted = iNever > -1 && i107 > iNever && i4 > i107;
+
+          /* SEPARATION: the human task must be ABOVE the group, not inside it */
+          var iHuman = txt.indexOf('A real human task');
+          var iGroup = txt.indexOf('Needs follow-up');
+          var separated = iHuman > -1 && iGroup > iHuman;
+
+          /* and the group sits ABOVE Done */
+          var iDone = txt.indexOf('Something finished');
+          var aboveDone = iDone > i4;
+
+          /* the parser: a shape it does not recognise must read as
+             never-contacted, never as "0 days quiet" */
+          var unknownIsNever = _tkQuietDays({ title:'Follow up: Odd shape' }) === null;
+
+          return 'heading=' + heading + ' never=' + neverBadge + ' shown=' + notCollapsed
+               + ' copy=' + copy + ' sorted=' + sorted + ' separated=' + separated
+               + ' aboveDone=' + aboveDone + ' unknownIsNever=' + unknownIsNever;
+        })()`,
+       'heading=true never=true shown=true copy=true sorted=true separated=true aboveDone=true unknownIsNever=true'],
+    ],
+  },
+  {
     /* The fallback must do the two things it could not do before: collapse the
      * quoted history and list attachments. Both come from the reader's own
      * exported helpers, so this also asserts the export exists -- if inbox.js

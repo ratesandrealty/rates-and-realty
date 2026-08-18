@@ -7319,6 +7319,60 @@ function _tkRow(t) {
       </div>`;
 }
 
+/* ── "NEEDS FOLLOW-UP": the sweeper's output, kept apart from real to-dos ──
+ *
+ * These are auto_followup_lead tasks — surface_stale_leads raises one when an
+ * active lead has gone quiet. Mixed into Unassigned they buried the handful of
+ * genuinely unassigned human tasks: measured, 25 sweeper rows against 9 real
+ * ones, in creation order, so a lead quiet 107 days and eleven leads never
+ * contacted at all sat among 4-day-old entries and read as undifferentiated
+ * noise.
+ *
+ * NOT COLLAPSED, unlike Done. Done hides finished work; this is the opposite —
+ * unfinished work ignored long enough that a machine noticed. Collapsing it
+ * would hide the most actionable thing on the page. */
+function _tkIsSweeper(t){ return t && t.related_table === 'auto_followup_lead'; }
+
+/* SORT BY NEGLECT, not by creation. Never-contacted first — a lead with no
+   recorded contact at all is the strongest signal the sweeper produces — then
+   longest-quiet first. days_quiet is parsed from the title the sweeper wrote
+   ("— quiet 12d" / "— no activity logged") because task_list does not return
+   the contact's last activity; if the shape ever changes the parse yields null,
+   which sorts as never-contacted rather than silently reordering everything. */
+function _tkQuietDays(t){
+  const s = String((t && t.title) || '');
+  if (/no activity logged/i.test(s)) return null;          // never contacted
+  const m = s.match(/quiet\s+(\d+)\s*d/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+function _tkSortNeglect(a, b){
+  const da = _tkQuietDays(a), db = _tkQuietDays(b);
+  if (da === null && db !== null) return -1;
+  if (db === null && da !== null) return 1;
+  if (da !== null && db !== null && da !== db) return db - da;   // longest quiet first
+  return String(a.title || '').localeCompare(String(b.title || ''));
+}
+
+function _tkSweeperSectionHtml(rows){
+  if (!rows.length) return '';
+  const never = rows.filter(function(t){ return _tkQuietDays(t) === null; }).length;
+  return '<div style="margin:14px 0 6px;">'
+    + '<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">'
+    +   '<span style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#E0B84C;">'
+    +     'Needs follow-up (' + rows.length + ')</span>'
+    +   (never ? '<span style="font-size:10px;color:#FF8A8A;font-weight:600;">'
+    +            + never + ' never contacted</span>' : '')
+    + '</div>'
+    /* The line that makes these feel actionable. They read as un-clearable
+       because nothing said what completing one means. */
+    + '<div style="font-size:10.5px;color:#8a8a8a;margin-top:3px;line-height:1.45;">'
+    +   'Raised automatically when an active lead goes quiet. Complete one after you have '
+    +   'actually followed up and it will not come back &mdash; it only returns while the lead is still quiet.'
+    + '</div>'
+    + '</div>'
+    + rows.slice().sort(_tkSortNeglect).map(_tkRow).join('');
+}
+
 function renderTasks() {
   const el = document.getElementById('tasks-list');
   if (!tasksData.length) {
@@ -7330,8 +7384,13 @@ function renderTasks() {
     return;
   }
 
-  const live = tasksData.filter(t => t.status !== 'completed' && t.status !== 'cancelled');
-  const done = tasksData.filter(t => t.status === 'completed' || t.status === 'cancelled');
+  const liveAll = tasksData.filter(t => t.status !== 'completed' && t.status !== 'cancelled');
+  const done    = tasksData.filter(t => t.status === 'completed' || t.status === 'cancelled');
+  /* Sweeper output is pulled OUT of the assignee buckets entirely. Left in, it
+     lands in Unassigned — it has no assignee and never will, because assignment
+     is irrelevant to the sweeper — and buries the human tasks there. */
+  const sweeper = liveAll.filter(_tkIsSweeper);
+  const live    = liveAll.filter(t => !_tkIsSweeper(t));
 
   /* Insertion order decides section order: Mine, Unassigned, then everyone else
      as encountered. Map preserves it, so no separate sort is needed. */
@@ -7352,6 +7411,11 @@ function renderTasks() {
       ? `<div class="tk-sec">${esc(g.label)} <span class="tk-sec-n">${g.rows.length}</span></div>`
       : '') + g.rows.map(_tkRow).join('')
   ).join('');
+
+  /* Between the real to-dos and Done: it is outstanding work, so it belongs
+     above Done — but it is not work anyone has been assigned, so it does not
+     belong among the assignee buckets either. */
+  html += _tkSweeperSectionHtml(sweeper);
 
   if (done.length) {
     html += `<div class="tk-sec tk-sec-done">Done <span class="tk-sec-n">${done.length}</span></div>`
