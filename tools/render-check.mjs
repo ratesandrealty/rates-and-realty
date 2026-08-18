@@ -1123,12 +1123,22 @@ const SPECS = [
           var ctlOld  = ['Appraisal Due','Disclosures Due']
                           .every(function(n){ return oldText.indexOf(n) === -1; });
           var control = (ctlNew === false) && (ctlOld === false);
-          return 'rows=' + (rows >= 10) + ' newNames=' + newNames + ' oldGone=' + oldGone
+          /* CONTRACT CHRONOLOGY ONLY, and exactly ten of them. A >= 10 check
+             would have kept passing with the two app-backed entries still
+             present, so the count is exact and the removed labels are named.
+             (No backticks in this comment: the whole eval is a template
+             literal, and one would end it mid-string.) */
+          var exactlyTen = rows === 10;
+          var appBackedGone = ['Preapproval Expiry','Credit Pulled']
+                                .every(function(n){ return t.indexOf(n) === -1; });
+          var noAppProp = LP_KEY_DATES.every(function(d){ return !d.app; });
+          return 'rows=' + exactlyTen + ' appGone=' + appBackedGone + ' noAppProp=' + noAppProp
+               + ' newNames=' + newNames + ' oldGone=' + oldGone
                + ' noBareCdOut=' + noBareCdOut + ' keysIntact=' + keysIntact
                + ' amtOnEmdOnly=' + amtOnEmdOnly + ' amtIsNumber=' + amtIsNumber
                + ' control=' + control;
         })()`,
-       'rows=true newNames=true oldGone=true noBareCdOut=true keysIntact=true amtOnEmdOnly=true amtIsNumber=true control=true'],
+       'rows=true appGone=true noAppProp=true newNames=true oldGone=true noBareCdOut=true keysIntact=true amtOnEmdOnly=true amtIsNumber=true control=true'],
     ],
   },
   {

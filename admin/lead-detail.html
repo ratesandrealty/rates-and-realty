@@ -11672,15 +11672,35 @@ const LP_KEY_DATES = [
   {key:'cd_out',label:'Need CD Out By'},
   {key:'signing',label:'Signing'},
   {key:'funding',label:'Funding'},
-  {key:'close_of_escrow',label:'Close of Escrow'},
-  {key:'preapproval_expiry',label:'Preapproval Expiry',app:'preapproval_expiry'},
-  {key:'credit_pulled',label:'Credit Pulled Date',app:'credit_report_pulled_date'}
+  {key:'close_of_escrow',label:'Close of Escrow'}
 ];
+/* CONTRACT CHRONOLOGY ONLY. Every entry above is a milestone of the purchase
+   contract, in the order it happens, and every one is a row in loan_key_dates.
+   No entry carries an `app:` property any more.
+
+   Preapproval Expiry and Credit Pulled Date used to sit here. They are not
+   contract dates -- they are properties of documents WE issued -- and they were
+   never loan_key_dates rows at all: they live on mortgage_applications and were
+   mirrored in and out of this panel. They are edited in the Loan Snapshot
+   ('Pre-Approval Exp' and 'Credit Pulled'), which renders both and now opens
+   with the stored value.
+
+   That fix had to come FIRST. Until it landed, the snapshot editor read its
+   value from #docPreapprovalExpiry / #docCreditPulledDate -- elements deleted
+   when these dates moved here -- so it opened blank and saving wrote null over
+   a real value. Removing them from this panel before that was repaired would
+   have left mortgage_applications.preapproval_expiry with no working editor
+   while proactive-followups kept sending its urgent "preapproval expires" SMS
+   off the column. */
 // Loan-health "on-track" system: one loan_health fetch drives the status banner, urgent
-// list, AND the Critical Dates glow. _lpHealth caches the last result. LP_DATE_HEALTHKEY
-// maps a UI date key → the loan_health.dates date_key where they differ (app-backed credit).
+// list, AND the Critical Dates glow. _lpHealth caches the last result.
+// LP_DATE_HEALTHKEY mapped a UI date key → the loan_health.dates date_key where the two
+// differed. Its only entry was credit_pulled → credit_pulled_date, and credit_pulled is
+// no longer a row in this panel, so the map is now empty rather than deleted: every
+// remaining key is identical on both sides, and the lookup stays in place so a future
+// key that does differ has somewhere to say so instead of silently mismatching.
 let _lpHealth = null, _lpHealthExpanded = false;
-const LP_DATE_HEALTHKEY = { credit_pulled: 'credit_pulled_date' };
+const LP_DATE_HEALTHKEY = {};
 const LP_CONTACT_ROLES = [
   {key:'listing_agent',label:'Listing Agent'},
   {key:'listing_agent_tc',label:'Listing Agent Transaction Coordinator'},
@@ -11831,8 +11851,12 @@ async function lpLoadKeyDates(cid){
   let map = {};
   let amt = {};
   try{ const { data } = await _authClient().from('loan_key_dates').select('date_key,date_value,amount').eq('contact_id',cid); (data||[]).forEach(r=>{ map[r.date_key]=r.date_value; if(r.amount!=null) amt[r.date_key]=r.amount; }); }catch(_){}
-  // App-backed dates live on mortgage_applications — the daily proactive-followups cron watches them there.
-  try{ const app = await _fetchAppRowForContact(cid); if(app){ if(app.preapproval_expiry) map['preapproval_expiry']=String(app.preapproval_expiry).slice(0,10); if(app.credit_report_pulled_date) map['credit_pulled']=String(app.credit_report_pulled_date).slice(0,10); } }catch(_){}
+  /* The app-backed fetch that used to run here is gone with the two entries it
+     served. It cost a mortgage_applications round trip on every panel load and
+     its result is now read by nothing: no LP_KEY_DATES entry has an `app:` key,
+     so the values it fetched could only ever have landed in map[] slots that no
+     longer render. Preapproval Expiry and Credit Pulled Date are edited in the
+     Loan Snapshot. */
   // Legacy fallback: Close of Escrow was historically stored under date_key 'coe'. Read it
   // so existing leads still display until a one-time migration renames coe → close_of_escrow.
   if(!map['close_of_escrow'] && map['coe']) map['close_of_escrow'] = map['coe'];
@@ -11841,7 +11865,7 @@ async function lpLoadKeyDates(cid){
   el.innerHTML = LP_KEY_DATES.map(d=>{
     const hk = LP_DATE_HEALTHKEY[d.key] || d.key;   // loan_health.dates date_key for glow + met toggle
     return '<div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.4);margin-bottom:4px;">'+d.label+'</div>'
-      + '<input type="date" data-lp-datekey="'+hk+'" value="'+(map[d.key]||'')+'" onchange="lpSaveDate(\''+d.key+'\',this.value,\''+(d.app||'')+'\')" style="'+inp+'">'
+      + '<input type="date" data-lp-datekey="'+hk+'" value="'+(map[d.key]||'')+'" onchange="lpSaveDate(\''+d.key+'\',this.value)" style="'+inp+'">'
       + '<button type="button" data-lp-metbtn="'+hk+'" data-met="0" onclick="lpToggleMet(\''+hk+'\')" style="'+metBtn+'">Mark met</button>'
       /* An amount stored on the same row as the date. Only emd_due declares one.
          type=number, not a formatted text box: the value goes to a numeric
@@ -11859,18 +11883,12 @@ async function lpLoadKeyDates(cid){
   }).join('');
   lpApplyDateGlow();   // paint urgency + met-toggle state from the cached loan_health
 }
-async function lpSaveDate(key, value, appcol){
+async function lpSaveDate(key, value){
   const cid = lpCid(); if(!cid) return;
-  if(appcol){
-    try{
-      const app = await _fetchAppRowForContact(cid);
-      if(app && app.id){ await _authClient().from('mortgage_applications').update({[appcol]:value||null, updated_at:new Date().toISOString()}).eq('id',app.id); }
-      // Same race, same fix — see the note on the other insert site.
-      else { await _authClient().from('mortgage_applications').upsert({contact_id:cid,[appcol]:value||null}, { onConflict:'contact_id' }); }
-    }catch(e){ console.warn('[lpSaveDate app]', e.message); }
-    lpLoadHealth(cid);   // re-run loan_health so the banner/urgent/glow reflect the new date
-    return;
-  }
+  /* The app-backed branch is gone with the entries that used it. Nothing passes
+     an appcol any more -- every LP_KEY_DATES entry is a loan_key_dates row.
+     Leaving an unreachable write to mortgage_applications here is exactly the
+     shape that makes a later reader edit the copy that never runs. */
   /* Write the label with the value. Without it the row keeps whatever name the
      DB fallbacks invent -- ClickUp shows the raw date_key, the health banner
      shows initcap(date_key) -- while this panel shows the real one. */
