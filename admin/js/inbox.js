@@ -1325,6 +1325,17 @@
       s.search(/<div[^>]+class="[^"]*gmail_quote[^"]*"/i),
       s.search(/<blockquote[^>]+type="cite"/i),
       s.search(/<div[^>]+id="appendonsend"/i),
+      /* Yahoo. Measured on a real reply (VOE, Rafael Hernandez Andrade): Yahoo
+         Mail for iPhone opens its quote with
+             <p class="yahoo-quoted-begin" style="...">On Wednesday, July ...
+         which none of the patterns above match. That message DID cut — at the
+         `gmail_quote` 7932 characters in, because our own original message is
+         nested inside Yahoo's quote — so the reply, the signature AND the whole
+         quoted history all landed in `main`. A late cut is worse than no cut:
+         it looks exactly like a fall-through while the splitter reports success.
+         Matched on the class rather than the tag so a p->div change does not
+         silently reopen this. */
+      s.search(/<[a-z]+[^>]+class="[^"]*yahoo-quoted-begin/i),
       // Bare textual trailer, e.g. "On Tue, Jul 8, 2026 at 9:14 AM Bob <b@x> wrote:"
       s.search(/On\s+[^<]{6,120}\s+wrote:\s*(<br|<\/div|<blockquote)/i)
     ].filter(function (i) { return i > -1; });

@@ -1619,6 +1619,27 @@ const SPECS = [
           var aAtt     = host.textContent.indexOf('Quote.pdf') !== -1;
           var aAttBtn  = host.querySelectorAll('button[onclick^="_lpEmailAttOpen("]').length === 1;
 
+          /* (a2) YAHOO. Measured on a real reply: Yahoo Mail for iPhone opens
+             its quote with <p class="yahoo-quoted-begin">, which matched none of
+             the original patterns. That message still CUT — at a gmail_quote
+             7932 chars in, because our own original is nested inside Yahoo's
+             quote — so reply, signature and the whole history landed in the main
+             frame and it looked identical to no split at all. The nested gmail_quote
+             is reproduced here deliberately: without it this fixture would pass
+             for the wrong reason. */
+          var yahooShape = 'The real reply text.<br><br>'
+                         + '<div class="yahoo-signature">Sent from Yahoo Mail for iPhone</div><br>'
+                         + '<p class="yahoo-quoted-begin">On Wednesday, July 9, 2026, Rene wrote:</p>'
+                         + '<div>quoted history</div>'
+                         + '<div class="gmail_quote">nested original we sent</div>';
+          _lpRenderEmailBody(host, { frameId:'specY', html:yahooShape, text:'' });
+          var yFrame = document.getElementById('specY');
+          var yMain  = yFrame ? String(yFrame.srcdoc || '') : '';
+          var yKeeps = yMain.indexOf('The real reply text') !== -1;
+          var yCuts  = yMain.indexOf('yahoo-quoted-begin') === -1
+                    && yMain.indexOf('nested original we sent') === -1;
+          var yToggle = !!document.getElementById('specY-qtog');
+
           /* (b) plain message, no trailer, no attachments — no empty toggle. */
           _lpRenderEmailBody(host, { frameId:'specB',
             html:'<div>Quick note with no quoted history at all.</div>', text:'' });
@@ -1628,13 +1649,14 @@ const SPECS = [
           var bNoAtt  = host.querySelectorAll('button[onclick^="_lpEmailAttOpen("]').length === 0;
 
           host.remove();
-          return 'toggle=' + aToggle + ' collapsed=' + aHidden
+          return 'yahooKeeps=' + yKeeps + ' yahooCuts=' + yCuts + ' yahooToggle=' + yToggle
+               + ' toggle=' + aToggle + ' collapsed=' + aHidden
                + ' keepsMsg=' + aKeepsMsg + ' dropsQuote=' + aDropsQuote
                + ' att=' + aAtt + ' attBtn=' + aAttBtn
                + ' plainNoToggle=' + (bToggle === false) + ' plainRenders=' + bRenders
                + ' plainNoAtt=' + bNoAtt;
         })()`,
-       'toggle=true collapsed=true keepsMsg=true dropsQuote=true att=true attBtn=true plainNoToggle=true plainRenders=true plainNoAtt=true'],
+       'yahooKeeps=true yahooCuts=true yahooToggle=true toggle=true collapsed=true keepsMsg=true dropsQuote=true att=true attBtn=true plainNoToggle=true plainRenders=true plainNoAtt=true'],
     ],
   },
   {
