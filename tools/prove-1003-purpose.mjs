@@ -11,16 +11,13 @@
  * live in a rendered document, so the assertion has to be made against a
  * rendered document.
  *
- * Two generators, two completely different output formats, so two extractors:
- *
- *   generate-1003      -> a real PDF. A ticked box is a literal 'X' drawn at a
- *                         KNOWN coordinate (checkbox() draws rect at x, then
- *                         text 'X' at x+1). MARGIN=36, Purchase at MARGIN+240,
- *                         Refinance at MARGIN+285. So this inflates the content
- *                         streams and reads the POSITION of every 'X'.
- *                         Substring-searching the raw bytes would prove nothing:
- *                         the streams are Flate-compressed, and searching them
- *                         uncompressed is a mistake already made in this repo.
+ * ONE generator now, not two. This suite used to cover `generate-1003` as well,
+ * reading X positions out of inflated PDF content streams. That function was
+ * UNDEPLOYED AND DELETED on 2026-08-19: it had held no caller since 2026-04-13,
+ * when 0d1b06c repointed lead-detail at generate-1003-pdf, and it carried both
+ * of the loan-purpose defects above uncorrected. Its half of this file went with
+ * it rather than being left to rot green against a 404 -- see the note on three
+ * outcomes below, which is exactly what an unreachable function would have hit.
  *
  *   generate-1003-pdf  -> an HTML form whose boxes are ticked by embedded
  *                         BROWSER javascript at render time. The served HTML
@@ -40,14 +37,9 @@ import { spawn, execFileSync } from 'node:child_process';
 import { writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { inflateSync } from 'node:zlib';
 
 const PROJECT = 'ljywhvbmsibwnssxpesh';
 const BASE = `https://${PROJECT}.supabase.co/functions/v1`;
-const MARGIN = 36;
-const X_PURCHASE  = MARGIN + 240 + 1;   // checkbox() draws the X at x+1
-const X_REFINANCE = MARGIN + 285 + 1;
-const TOL = 3;                          // points
 
 const CHROME_CANDIDATES = [
   'C:\\Users\\rened\\AppData\\Local\\ms-playwright\\chromium-1223\\chrome-win64\\chrome.exe',
@@ -62,54 +54,6 @@ function die(msg) {
   console.error(`\nREFUSED TO RUN: ${msg}`);
   process.exitCode = 2;
 }
-
-/* ── the PDF extractor ─────────────────────────────────────────────────────
- * Pull every text-showing operation with its position out of the inflated
- * content streams. pdf-lib writes `1 0 0 1 x y Tm` followed by `(s) Tj`. */
-function pdfTextPositions(buf) {
-  const out = [];
-  const s = buf.toString('latin1');
-  const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-  let m;
-  while ((m = re.exec(s)) !== null) {
-    let body;
-    try { body = inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1'); }
-    catch { continue; }                       // fonts and images: not content
-    /* pdf-lib writes text as HEX strings -- `<546F..> Tj`, not `(To..) Tj`.
-       Matching parenthesised strings finds nothing and reads as "no text",
-       which is why this extractor asserts it found the LABELS before believing
-       any answer about the boxes. */
-    const tre = /1 0 0 1 ([-\d.]+) ([-\d.]+) Tm[^<]{0,120}<([0-9A-Fa-f]+)>\s*Tj/g;
-    let t;
-    while ((t = tre.exec(body)) !== null) {
-      let txt = '';
-      const hex = t[3];
-      for (let i = 0; i + 1 < hex.length; i += 2) txt += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
-      out.push({ x: parseFloat(t[1]), y: parseFloat(t[2]), text: txt });
-    }
-  }
-  return out;
-}
-
-function readPdfBoxes(buf) {
-  const items = pdfTextPositions(buf);
-  if (!items.length) return { harness_ok: false, why: 'no text recovered from any content stream' };
-
-  /* ANCHOR ON THE LABEL, NOT ON A CONSTANT. The form draws many X marks; one
-     at the Purchase x-coordinate but on a different ROW would otherwise read as
-     a ticked purpose. checkbox() puts the label at (x+9, y) and the X at
-     (x+1, y-5), so each label locates its own box on both axes. */
-  const label = (want, nearX) => items.find(i => i.text === want && Math.abs(i.x - nearX) <= 12);
-  const lp = label('Purchase', X_PURCHASE + 8);
-  const lr = label('Refinance', X_REFINANCE + 8);
-  if (!lp || !lr) return { harness_ok: false, why: 'the Purchase/Refinance labels were not found where the form draws them' };
-
-  const tickedAt = (lbl) => items.some(i =>
-    i.text === 'X' && Math.abs(i.x - (lbl.x - 8)) <= TOL && Math.abs(i.y - (lbl.y - 5)) <= TOL);
-
-  return { harness_ok: true, purchase: tickedAt(lp), refinance: tickedAt(lr) };
-}
-
 /* ── the browser extractor ────────────────────────────────────────────────── */
 function chromePath() {
   for (const c of CHROME_CANDIDATES) if (existsSync(c)) return c;
@@ -221,30 +165,6 @@ async function main() {
     return die('could not mint an automation session token');
   }
   if (!token) return die('automation session returned an empty token');
-
-  console.log('\ngenerate-1003 — a real PDF, X position read from inflated content streams');
-  const pdfCases = [
-    ['a purchase',            { loan_purpose: 'purchase',       first_name: 'ZZ-TEST', last_name: 'Purchase' },  { purchase: true,  refinance: false }],
-    ['a rate & term refi',    { loan_purpose: 'refi_rate_term', first_name: 'ZZ-TEST', last_name: 'RateTerm' },  { purchase: false, refinance: true  }],
-    ['a cash-out refi',       { loan_purpose: 'refi_cash_out',  first_name: 'ZZ-TEST', last_name: 'CashOut'  },  { purchase: false, refinance: true  }],
-    ['NO purpose stated',     { first_name: 'ZZ-TEST', last_name: 'Blank' },                                    { purchase: false, refinance: false }],
-    ['legacy "Purchase"',     { loan_purpose: 'Purchase',       first_name: 'ZZ-TEST', last_name: 'Legacy'   },  { purchase: true,  refinance: false }],
-  ];
-  for (const [name, payload, want] of pdfCases) {
-    let got;
-    try {
-      const r = await fetch(`${BASE}/generate-1003`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(payload),
-      });
-      const j = await r.json();
-      if (!j.pdf) { console.log(`  ????  ${name}: no pdf in response (${j.error || r.status})`); unrunnable++; ran++; continue; }
-      got = readPdfBoxes(Buffer.from(j.pdf, 'base64'));
-    } catch (e) { console.log(`  ????  ${name}: ${e.message}`); unrunnable++; ran++; continue; }
-    if (!got.harness_ok) { console.log(`  ????  ${name}: HARNESS ${got.why}`); unrunnable++; ran++; continue; }
-    expect(name, got, want);
-  }
 
   console.log('\ngenerate-1003-pdf — the HTML form, boxes read from the rendered DOM');
   const CONTACTS = [

@@ -122,7 +122,10 @@ Send count corrected from 11 to **9**.
 - `canva-proxy`
 - `clickup-mention-ping`
 - `convert-to-pdf`
-- `generate-1003`
+- ~~`generate-1003`~~ — **undeployed and deleted 2026-08-19.** Not closed by a
+  guard; removed. Callerless since 2026-04-13 (`0d1b06c`). The endpoint returns
+  404 to a caller holding a valid admin session, so it is gone rather than
+  refusing.
 - `generate-fee-sheet`
 - `generate-heloc-sheet`
 
