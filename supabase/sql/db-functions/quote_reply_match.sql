@@ -1,8 +1,8 @@
--- quote_reply_match(p_in_reply_to text, p_references text, p_from_email text, p_to_email text, p_cc_email text, p_subject text, p_body text)
+-- quote_reply_match(p_in_reply_to text, p_references text, p_from_email text, p_to_email text, p_cc_email text, p_subject text, p_body text, p_gmail_thread_id text)
 -- language: plpgsql
--- Captured from production 2026-08-17.
+-- Captured from production 2026-08-19.
 
-CREATE OR REPLACE FUNCTION public.quote_reply_match(p_in_reply_to text DEFAULT NULL::text, p_references text DEFAULT NULL::text, p_from_email text DEFAULT NULL::text, p_to_email text DEFAULT NULL::text, p_cc_email text DEFAULT NULL::text, p_subject text DEFAULT NULL::text, p_body text DEFAULT NULL::text)
+CREATE OR REPLACE FUNCTION public.quote_reply_match(p_in_reply_to text DEFAULT NULL::text, p_references text DEFAULT NULL::text, p_from_email text DEFAULT NULL::text, p_to_email text DEFAULT NULL::text, p_cc_email text DEFAULT NULL::text, p_subject text DEFAULT NULL::text, p_body text DEFAULT NULL::text, p_gmail_thread_id text DEFAULT NULL::text)
  RETURNS jsonb
  LANGUAGE plpgsql
  STABLE SECURITY DEFINER
@@ -13,27 +13,21 @@ AS $function$
 
    The ladder, strongest first:
      1. In-Reply-To / References -> rfc_message_id   (survives a stripped token)
-     2. hoi_/voe_ token in addressing, subject or body
-     3. sender address, ONLY when it identifies exactly one row
+     2. gmail_thread_id          -> the same Gmail conversation
+     3. hoi_/voe_ token in addressing, subject or body
+     4. sender address, ONLY when it identifies exactly one row
 
    EVERY TIER IS RESTRICTED TO ROWS WE HAVE A SEND RECORD FOR — gmail_message_id
-   or rfc_message_id present. Rows predating those columns went out through
+   or rfc_message_id present, or (tier 2) a gmail_thread_id, which is only ever
+   written by a send or an adopt. Rows predating those columns went out through
    MailerSend, which returned no id, so nothing about them can be corroborated
    and a reply must attach to NOTHING rather than be guessed onto history.
-   Measured before that guard existed: a reply from a pre-existing order's HR
-   address matched it by address_unique (f012081f via rduarte89@yahoo.com,
-   e0d241f8 via rhonda@cal-tech.net). The HOI side returned ambiguous_address
-   only BY ACCIDENT — every agent address there happens to sit on two rows.
-
-   The predicate is 'gmail_message_id or rfc_message_id', not rfc alone:
-   gmail-inbox returns rfc as NULL when its post-send read fails, and such a row
-   must still be reachable by its token. Pre-existing rows have NEITHER.
 
    rfc_message_id is the RFC header, NOT the Gmail API id. They are different
    strings and matching In-Reply-To against the API id can never hit.
 
    'unmatched' and 'ambiguous_address' are legitimate outcomes and are NEVER
-   upgraded to a guess. voe_match_reply is untouched; this is additive. */
+   upgraded to a guess. */
 declare
   v_ids       text[];
   v_token     text;
@@ -44,6 +38,7 @@ declare
   v_haystack  text;
   v_n         int;
   v_from      text;
+  v_thread    text := nullif(trim(coalesce(p_gmail_thread_id, '')), '');
 begin
   v_ids := array(
     select distinct m[1]
@@ -64,6 +59,26 @@ begin
     end if;
 
     if v_row_id is not null then v_matched := 'in_reply_to'; end if;
+  end if;
+
+  /* TIER 2 — the same Gmail conversation. */
+  if v_row_id is null and v_thread is not null then
+    select 'hoi', id, contact_id into v_kind, v_row_id, v_contact
+    from public.hoi_quote_requests
+    where gmail_thread_id = v_thread
+    limit 1;
+
+    if v_row_id is null then
+      /* Deliberately NOT restricted to order_type='voe'. A title company
+         replying in the thread we started is the same fact as an HR department
+         doing so, and tiers 3 and 4 below cannot serve non-VOE orders at all. */
+      select 'voe', id, contact_id into v_kind, v_row_id, v_contact
+      from public.loan_orders
+      where gmail_thread_id = v_thread
+      limit 1;
+    end if;
+
+    if v_row_id is not null then v_matched := 'thread'; end if;
   end if;
 
   if v_row_id is null then
@@ -115,10 +130,9 @@ begin
       end if;
       if v_row_id is not null then v_matched := 'address_unique'; end if;
     elsif v_n > 1 then
-      /* DELIBERATELY NO ROW. voe_match_reply's equivalent fallback takes the
-         address and picks the most RECENT order for it. That is a guess, and it
-         is wrong exactly when it matters: jesus@ezinsurance123.com is already on
-         two borrowers, so "most recent" would file a reply about one borrower
+      /* DELIBERATELY NO ROW. Taking the most RECENT order for an address is a
+         guess, and it is wrong exactly when it matters: one agent address is
+         already on two borrowers, so "most recent" would file a reply about one
          onto the other's record — silently, on borrower NPI. An unattached reply
          is a visible gap somebody can act on; a confidently misattached one is a
          record of a conversation that did not happen. */

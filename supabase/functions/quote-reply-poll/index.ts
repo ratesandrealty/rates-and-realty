@@ -168,6 +168,15 @@ serve(async (req) => {
           p_cc_email: hdr(H, 'Cc') || null,
           p_subject: subject || null,
           p_body: snippet || null,
+          /* THE THREAD, which this already had and never sent. It is stored on
+             the row three lines below as gmail_thread_id, so the poller knew the
+             conversation the whole time while the matcher was given only
+             headers, a token and an address — and every one of those tiers needs
+             a send record that 22 of 23 orders do not have.
+             Measured before adding it: 0 of 433 replies had ever correlated to a
+             loan order, so order_document_status returned 'no_reply' for all 23
+             and the reminder's document branch had never executed. */
+          p_gmail_thread_id: msg.threadId || null,
         }),
       })
       if (!mrsp.ok) {
