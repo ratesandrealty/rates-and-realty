@@ -706,6 +706,46 @@ const SPECS = [
       })()`, 'ok'],
     ],
   },
+  /* THE STAFF-NOTICE TOAST, BOTH DIRECTIONS.
+   *
+   * Two specs rather than one, deliberately. The failure wording is the change
+   * being made, so it is the tempting thing to assert alone — and a toast
+   * hard-coded to the cautious sentence would PASS that assertion while being
+   * wrong for every borrower whose notice actually sent. The success case is
+   * therefore asserted as its own spec, and the null case with it, because
+   * "says nothing about Rene when no notice was due" is the third outcome that
+   * a boolean would have flattened.
+   *
+   * These assert _shNotice, the shipped mapping the two call sites pass their
+   * portal-data response through. The server half — that `notified` is true,
+   * false or null at the right times — is proven separately against the live
+   * function, since no browser test can prove what sms-service answered. */
+  {
+    name: 'portal tour toast — notice SENT says notified',
+    url: '/unified-portal',
+    anonymous: true,
+    evals: [
+      [`typeof window._shNotice === 'function'`, true],
+      [`window._shNotice({ updated: 1, notified: true }, 'Date updated!')`,
+       'Date updated! Rene has been notified.'],
+      // null: no notice was due, so the borrower is told nothing about Rene.
+      [`window._shNotice({ updated: 1, notified: null }, 'Tour cancelled.')`, 'Tour cancelled.'],
+      [`window._shNotice({ updated: 1 }, 'Tour cancelled.')`, 'Tour cancelled.'],
+    ],
+  },
+  {
+    name: 'portal tour toast — notice FAILED does not claim it sent',
+    url: '/unified-portal',
+    anonymous: true,
+    evals: [
+      [`window._shNotice({ updated: 1, notified: false }, 'Date updated!')`,
+       'Date updated! Rene will see it in the CRM.'],
+      /* The words that must NOT appear when the notice did not go. This is the
+         sentence the page told borrowers for four and a half months while
+         nothing was sent. */
+      [`window._shNotice({ updated: 1, notified: false }, 'Date updated!').indexOf('has been notified') === -1`, true],
+    ],
+  },
   {
     name: 'maps double-load forced race',
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,

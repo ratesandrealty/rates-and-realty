@@ -2059,6 +2059,28 @@ async function _shCall(action, extra) {
    it changed something or nothing, so the old code could not tell the two apart
    and always reported success; portal-data returns the affected count instead,
    and this is where that count gets read. */
+/* What the borrower is told about the staff notice, from what actually happened.
+ *
+ * Three cases, because collapsing them lies in one direction or the other:
+ *   true  -> "Rene has been notified."      the notice was sent
+ *   false -> "Rene will see it in the CRM." it was due and did not go
+ *   null  -> nothing about Rene at all      no notice was due
+ *
+ * The false wording is deliberately not an error. From the borrower's side
+ * nothing has gone wrong — their change was saved — and the tour still reaches
+ * Rene through the CRM. What they must not be told is that a text went when it
+ * did not, which is what this page did for four and a half months.
+ *
+ * A toast that always said the cautious thing would pass a failure test and be
+ * wrong, so the success case is asserted separately; see the two render-check
+ * specs named "portal tour toast …". */
+function _shNotice(res, base) {
+  var n = res && Object.prototype.hasOwnProperty.call(res, 'notified') ? res.notified : null;
+  if (n === true)  return base + ' Rene has been notified.';
+  if (n === false) return base + ' Rene will see it in the CRM.';
+  return base;
+}
+
 function _shChanged(res, what) {
   if (!res || !res.updated) throw new Error('Nothing was ' + what + ' — the tour may already have changed. Refresh and try again.');
   return res.updated;
@@ -2090,22 +2112,22 @@ async function saveEditDate(batchId) {
   var newTime = document.getElementById('newTime-' + batchId).value;
   if (!newDate) { showToast('Please pick a date'); return; }
   try {
-    _shChanged(await _shCall('reschedule_batch', {
+    var _res = await _shCall('reschedule_batch', {
       batch_id: batchId, preferred_date: newDate, preferred_time: newTime
-    }), 'rescheduled');
-    // Notify Rene via SMS
-    var first = (currentUser && currentUser.first_name) || 'Borrower';
-    /* THE NOTICE IS SENT BY portal-data, server-side, as part of
-       reschedule_batch — not from here. This used to POST sms-service directly
-       with no auth header at all, against a function pinned verify_jwt = true,
-       so the gateway returned 401 and the bare .catch() swallowed it. MEASURED:
-       sms_log contains no notice in this format across the entire life of the
-       feature. The toast below has been telling borrowers "Rene has been
-       notified" since 2026-04-04 while nothing was ever sent.
-       A browser cannot fix this itself: the only credential sms-service accepts
-       here is the service key, and that must never be in a page served to
-       borrowers. See notifyStaff() in portal-data. */
-    showToast('Date updated! Rene has been notified.');
+    });
+    _shChanged(_res, 'rescheduled');
+    /* THE NOTICE IS SENT BY portal-data, server-side — this used to POST
+       sms-service from the browser with no auth header at all, against a
+       function pinned verify_jwt = true, so the gateway returned 401 and a bare
+       .catch() swallowed it. MEASURED: sms_log holds no notice in that format
+       across the entire life of the feature, while this toast told borrowers
+       "Rene has been notified" from 2026-04-04 onwards.
+       THE TOAST NOW BRANCHES ON WHAT ACTUALLY HAPPENED. Moving the send
+       server-side fixed the sending and not the telling: portal-data returned
+       success whether or not the notice went, so the borrower was still assured
+       either way. `notified` is three-valued — true sent, false due-but-failed,
+       null none due — and only true earns the original sentence. */
+    showToast(_shNotice(_res, 'Date updated!'));
     loadShowings();
   } catch(e) { showToast('Error: ' + e.message); }
 }
@@ -2116,7 +2138,8 @@ async function cancelBatch(batchId) {
   var msg = isConfirmed ? '\u26a0 This tour is confirmed. Cancel anyway? Rene will be notified.' : 'Cancel this showing request?';
   if (!confirm(msg)) return;
   try {
-    _shChanged(await _shCall('cancel_batch', { batch_id: batchId, soft_delete: true }), 'cancelled');
+    var _res = await _shCall('cancel_batch', { batch_id: batchId, soft_delete: true });
+    _shChanged(_res, 'cancelled');
     /* THE CONFIRMED-CANCELLATION NOTICE IS SENT BY portal-data, server-side,
        as part of cancel_batch. The condition was preserved rather than
        widened: portal-data reads the batch's status BEFORE the update and
@@ -2126,7 +2149,10 @@ async function cancelBatch(batchId) {
        header against a verify_jwt = true function, 401, swallowed by a bare
        .catch(). sms_log has no notice in this format, ever. See notifyStaff()
        in portal-data. */
-    showToast('Tour cancelled');
+    /* Unconfirmed cancellations send no notice, so `notified` is null and this
+       says nothing about Rene — which is correct, and is why the flag is
+       three-valued rather than a boolean. */
+    showToast(_shNotice(_res, 'Tour cancelled.'));
     loadShowings();
   } catch(e) { showToast('Error: ' + e.message); }
 }

@@ -126,15 +126,26 @@ const sb = createClient(
  * to staff rather than a message to a consumer. IF THE RECIPIENT EVER BECOMES
  * THE BORROWER, DELETE THE BYPASS IN THE SAME EDIT.
  *
- * Never throws. A tour that was rescheduled successfully must not report failure
- * because a text did not go out -- but the status IS logged, because "sent
- * nothing and said nothing" is the failure being corrected here. */
+ * NEVER THROWS, but it now REPORTS. A tour that was rescheduled successfully must
+ * not report failure because a text did not go out -- so the caller still
+ * succeeds -- but the verdict is returned, written to a row, and handed back to
+ * the browser so the borrower is not told something untrue.
+ *
+ * HTTP 200 IS NOT SUCCESS HERE, and that distinction is the whole point.
+ * sms-service answers 200 with `sent:false` when the recipient has opted out,
+ * when quiet hours block, or when an unrecognised bypass fails the send. Judging
+ * on r.ok alone would call every one of those a delivered notice -- the same
+ * both-ends-satisfied shape being fixed, reintroduced one layer down. The
+ * verdict is `sent === true` from the BODY. */
 const RENE_PHONE = Deno.env.get('RENE_PHONE') || '+17144728508';
+const SMS_SERVICE_URL = (Deno.env.get('SUPABASE_URL') || '') + '/functions/v1/sms-service';
 
-async function notifyStaff(message: string): Promise<void> {
+type NoticeResult = { ok: boolean; error?: string };
+
+async function notifyStaff(message: string): Promise<NoticeResult> {
   try {
     const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-    const r = await fetch((Deno.env.get('SUPABASE_URL') || '') + '/functions/v1/sms-service', {
+    const r = await fetch(SMS_SERVICE_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -148,11 +159,61 @@ async function notifyStaff(message: string): Promise<void> {
         params: { message },
       }),
     });
+
+    const raw = await r.text();
     if (!r.ok) {
-      console.error(`[portal-data] staff notice FAILED ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      const why = `HTTP ${r.status}: ${raw.slice(0, 200)}`;
+      console.error('[portal-data] staff notice FAILED', why);
+      return { ok: false, error: why };
     }
+
+    let parsed: any = null;
+    try { parsed = JSON.parse(raw); } catch (_) { /* handled below */ }
+    if (!parsed || parsed.sent !== true) {
+      /* 200 with sent:false — blocked, opted out, or a rejected bypass. */
+      const why = `not sent: ${raw.slice(0, 200)}`;
+      console.error('[portal-data] staff notice NOT SENT', why);
+      return { ok: false, error: why };
+    }
+    return { ok: true };
   } catch (e) {
-    console.error('[portal-data] staff notice threw:', String(e));
+    const why = String(e).slice(0, 200);
+    console.error('[portal-data] staff notice threw:', why);
+    return { ok: false, error: why };
+  }
+}
+
+/* The row is what survives. An edge log retains 24 hours and nothing queries it;
+   this leaves a fact on the showings rows the caller just changed, which is what
+   makes "which tour changes was Rene never told about" answerable on Monday.
+   Never throws: failing to RECORD a failed notice must not fail the reschedule
+   the borrower actually asked for. */
+async function recordNoticeFailure(ids: string[], error: string): Promise<void> {
+  if (!ids.length) return;
+  try {
+    await sb.from('showings')
+      .update({ staff_notify_failed_at: new Date().toISOString(), staff_notify_error: error })
+      .in('id', ids);
+  } catch (e) {
+    console.error('[portal-data] could not record notice failure:', String(e));
+  }
+}
+
+/* A LATER SUCCESS CLEARS AN EARLIER FAILURE, and this was missed on the first
+   pass -- found by proving both directions rather than only the failure one.
+   Without it the stamp is permanent: the same showing row that failed once kept
+   staff_notify_failed_at set through a subsequent successful notice, so
+   "which tour changes was Rene never told about" would list rows he HAD been
+   told about, forever. A flag that only ever accumulates stops being read. */
+async function clearNoticeFailure(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  try {
+    await sb.from('showings')
+      .update({ staff_notify_failed_at: null, staff_notify_error: null })
+      .in('id', ids)
+      .not('staff_notify_failed_at', 'is', null);   // touch only rows actually flagged
+  } catch (e) {
+    console.error('[portal-data] could not clear notice failure:', String(e));
   }
 }
 
@@ -713,10 +774,22 @@ Deno.serve(async (req: Request) => {
       /* Only when rows actually changed. A cancel that matched nothing is not an
          event worth waking someone for, and scopeToCaller means "matched
          nothing" includes "not this borrower's batch". */
+      /* `notified` is THREE-VALUED and the third value is the point.
+         true  — the notice was sent
+         false — a notice was due and did not go; the row records why
+         null  — no notice was due (nothing changed, or the tour was not
+                 confirmed), so the browser must not claim one either way.
+         Collapsing null into false would make the portal apologise for a
+         message it never intended to send. */
+      let notified: boolean | null = null;
       if ((data || []).length && wasConfirmed) {
-        await notifyStaff(`⚠ Tour CANCELLED: a borrower cancelled their CONFIRMED showing. Batch ${String(batch_id).slice(0, 8)}. Check CRM.`);
+        const res = await notifyStaff(`⚠ Tour CANCELLED: a borrower cancelled their CONFIRMED showing. Batch ${String(batch_id).slice(0, 8)}. Check CRM.`);
+        notified = res.ok;
+        const _ids = (data || []).map((r: any) => r.id);
+        if (res.ok) await clearNoticeFailure(_ids);
+        else await recordNoticeFailure(_ids, res.error || 'unknown');
       }
-      return ok({ success: true, updated: (data || []).length });
+      return ok({ success: true, updated: (data || []).length, notified });
     }
 
     // Restore a cancelled batch — unified-portal.html:2112.
@@ -751,13 +824,18 @@ Deno.serve(async (req: Request) => {
       if (scoped.err) return err(scoped.err);
       const { data, error } = await scoped.q.select('id');
       if (error) return err(error.message, 500);
+      let notified: boolean | null = null;    // null = no notice was due; see cancel_batch
       if ((data || []).length) {
-        await notifyStaff(
+        const res = await notifyStaff(
           `Tour update: a borrower changed their showing to ${preferred_date}` +
           `${preferred_time ? ' ' + preferred_time : ''}. Batch ${String(batch_id).slice(0, 8)}. Check CRM.`,
         );
+        notified = res.ok;
+        const _ids = (data || []).map((r: any) => r.id);
+        if (res.ok) await clearNoticeFailure(_ids);
+        else await recordNoticeFailure(_ids, res.error || 'unknown');
       }
-      return ok({ success: true, updated: (data || []).length });
+      return ok({ success: true, updated: (data || []).length, notified });
     }
 
     /* get_annotations and save_annotations were REMOVED 2026-08-17.
