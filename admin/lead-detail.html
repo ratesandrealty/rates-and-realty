@@ -930,6 +930,14 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
       cursor: pointer; font-family: inherit;
     }
     .tk-bulk-btn:hover { border-color: rgba(201,168,76,.5); color: #C9A84C; }
+    /* Tag chips. Quieter than the assignee chip — whose the task is matters more
+       than what it is about — and width-capped so a long company name cannot
+       squeeze the title out. Full value is in the tooltip. */
+    .tk-chip-tag {
+      background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12);
+      color: #a9a396; max-width: 170px; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; margin-right: 4px;
+    }
     .tk-bulk-danger { border-color: rgba(224,82,82,.4); color: #e05252; }
     .tk-bulk-danger:hover { border-color: #e05252; color: #e05252; background: rgba(224,82,82,.08); }
     .task-check {
@@ -4503,6 +4511,31 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
             </select>
           </div>
         </div>
+        <!-- TAGS: what the task is ABOUT. Not provenance — tg_tasks_set_origin
+             still stamps origin='user' on anything a signed-in human creates, so
+             tagging a task to an order does NOT make it look machine-made and
+             does NOT make it eligible for ClickUp export. That separation is
+             what made these pickers safe to add at all.
+             Both optional, and both can be set at once: they are two columns,
+             not one shared slot, so "chase the title company about the order on
+             this file" is one task with both tags rather than a choice. -->
+        <div class="task-form-grid">
+          <div class="ld-field">
+            <label class="ld-label">Referral partner <span style="color:#777;font-weight:400;">(optional)</span></label>
+            <select class="ld-select" id="task-partner-input">
+              <option value="">No partner</option>
+            </select>
+          </div>
+          <div class="ld-field">
+            <!-- Scoped to THIS lead's orders. A global order list would be a few
+                 hundred rows of other people's files, and picking the wrong one
+                 is a mis-tag nobody would spot. -->
+            <label class="ld-label">Order on this lead <span style="color:#777;font-weight:400;">(optional)</span></label>
+            <select class="ld-select" id="task-order-input">
+              <option value="">No order</option>
+            </select>
+          </div>
+        </div>
         <div style="display:flex;gap:8px;justify-content:flex-end;">
           <button class="ld-btn-cancel" onclick="closeTaskForm()">Cancel</button>
           <button class="ld-btn-save" onclick="createTask()">Add Task</button>
@@ -7371,6 +7404,33 @@ async function tkDelete(id){
   if (typeof loadTasks === 'function') loadTasks();
 }
 
+/* WHAT A TAGGED ROW SHOWS: one small chip per tag, before the assignee chip.
+ *
+ * 🤝 for a referral partner, 📋 for an order, each carrying the label the SERVER
+ * composed — task_list resolves them by joining referral_partners and
+ * loan_orders, so the browser never has to fetch either table to draw a row and
+ * two surfaces cannot disagree about what an order is called.
+ *
+ * NOTHING IS SHOWN WHEN NOTHING IS TAGGED, which is almost every row today: 0 of
+ * 327 tasks carry a partner and 34 carry an order. An always-present empty chip
+ * would add a column of furniture to a list whose whole problem was already
+ * noise.
+ *
+ * The label is deliberately truncated in CSS rather than here: a title is worth
+ * more room than a tag, and the full value is in the tooltip. */
+function _tkTagChips(t) {
+  let html = '';
+  if (t.referral_partner_id) {
+    const lbl = t.referral_partner_label || 'Referral partner';
+    html += '<span class="tk-chip tk-chip-tag" title="Referral partner: ' + esc(lbl) + '">🤝 ' + esc(lbl) + '</span>';
+  }
+  if (t.loan_order_id) {
+    const lbl = t.loan_order_label || 'Order';
+    html += '<span class="tk-chip tk-chip-tag" title="Third-party order: ' + esc(lbl) + '">📋 ' + esc(lbl) + '</span>';
+  }
+  return html;
+}
+
 function _tkRow(t) {
   const done = t.status === 'completed';
   /* _rrD, not new Date(): tasks.due_date is `timestamp WITHOUT time zone` and
@@ -7391,6 +7451,7 @@ function _tkRow(t) {
             ${overdue ? '⚠ ' : ''}Due ${fmtDate(t.due_date)}
           </div>` : ''}
         </div>
+        ${_tkTagChips(t)}
         <span class="tk-chip ${b.cls}" title="Assignee">${esc(b.label)}</span>
         <span class="task-priority tp-${t.priority || 'normal'}">${t.priority || 'normal'}</span>
         ${_tkCanDelete() ? `<button class="tk-del" onclick="tkDelete('${t.id}')" title="Delete this task" style="background:transparent;border:none;color:#7a7a7a;font-size:13px;cursor:pointer;line-height:1;padding:2px 4px;flex-shrink:0;">&#128465;</button>` : ''}
@@ -7696,6 +7757,7 @@ function openTaskForm() {
   /* Filled on open, not at page load: the query is only worth making when the
      form is actually going to be used. */
   if (typeof _tkFillAssignees === 'function') _tkFillAssignees();
+  if (typeof _tkFillTags === 'function') _tkFillTags();
   const taskBtn = Array.from(document.querySelectorAll('.ld-tab-btn')).find(b => b.textContent.trim() === 'Tasks');
   switchTab('tasks', taskBtn);
   document.getElementById('task-title-input').focus();
@@ -7703,6 +7765,11 @@ function openTaskForm() {
 function closeTaskForm() {
   document.getElementById('task-form').classList.remove('open');
   document.getElementById('task-title-input').value = '';
+  /* CLEAR THE TAGS TOO. The title is cleared and the pickers were not, so the
+     next task typed on this lead would silently inherit the last one's partner
+     and order — a wrong tag nobody chose and nobody would look for. */
+  const p = document.getElementById('task-partner-input'); if (p) p.value = '';
+  const o = document.getElementById('task-order-input');   if (o) o.value = '';
 }
 
 /* WHO CAN BE ASSIGNED WORK — read from auth_user_roles, never hardcoded.
@@ -7771,6 +7838,83 @@ async function _tkFillAssignees(){
   sel.value = keep;
 }
 
+/* ── TAG PICKERS ──────────────────────────────────────────────────────────
+ *
+ * Partners are global (9 rows); orders are scoped to THIS lead. A global order
+ * list would be a few hundred rows of other people's files, and a mis-tag there
+ * is one nobody would ever spot.
+ *
+ * Both fail SOFT and SILENT-ish: if a list cannot be read the picker keeps only
+ * its "no tag" option and a warning goes to the console. These are optional
+ * fields on a form whose real job is creating a task — a partner query that 403s
+ * must not stop somebody writing "call the borrower back".
+ *
+ * Cached for the page's lifetime, like the assignee list, so opening the form
+ * repeatedly does not re-query. */
+let _tkPartners = null;
+async function _tkLoadPartners(){
+  if (_tkPartners) return _tkPartners;
+  try {
+    const r = await _authClient().from('referral_partners')
+      .select('id,company,first_name,last_name,status').order('company', { ascending: true });
+    if (r.error) throw r.error;
+    _tkPartners = r.data || [];
+  } catch (e) {
+    console.warn('[task tags] referral_partners unavailable', e && e.message);
+    _tkPartners = null;
+  }
+  return _tkPartners;
+}
+
+function _tkPartnerLabel(p){
+  const co = String(p.company || '').trim();
+  const who = String((p.first_name || '') + ' ' + (p.last_name || '')).trim();
+  if (co && who) return co + ' — ' + who;
+  return co || who || 'Unnamed partner';
+}
+
+async function _tkFillTags(){
+  const pSel = document.getElementById('task-partner-input');
+  const oSel = document.getElementById('task-order-input');
+
+  if (pSel) {
+    const keep = pSel.value || '';
+    const list = await _tkLoadPartners();
+    pSel.innerHTML = '<option value="">No partner</option>';
+    (list || []).forEach(function(p){
+      pSel.insertAdjacentHTML('beforeend',
+        '<option value="' + esc(p.id) + '">' + esc(_tkPartnerLabel(p)) + '</option>');
+    });
+    pSel.value = keep;
+  }
+
+  if (oSel) {
+    const keep = oSel.value || '';
+    oSel.innerHTML = '<option value="">No order</option>';
+    try {
+      /* Read straight from loan_orders rather than reusing lpLoadOrders' cache:
+         that cache holds one row per order TYPE for the non-VOE section and
+         drops VOEs entirely, so a VOE could never be tagged. */
+      const r = await _authClient().from('loan_orders')
+        .select('id,order_type,label,employer_name,status')
+        .eq('contact_id', leadId)
+        .order('order_type', { ascending: true });
+      if (r.error) throw r.error;
+      (r.data || []).forEach(function(o){
+        const extra = String(o.label || o.employer_name || '').trim();
+        const label = String(o.order_type || 'order').toUpperCase()
+                    + (extra ? ' · ' + extra : '')
+                    + (o.status ? ' (' + o.status + ')' : '');
+        oSel.insertAdjacentHTML('beforeend',
+          '<option value="' + esc(o.id) + '">' + esc(label) + '</option>');
+      });
+    } catch (e) {
+      console.warn('[task tags] loan_orders unavailable', e && e.message);
+    }
+    oSel.value = keep;
+  }
+}
+
 async function createTask() {
   const title = document.getElementById('task-title-input').value.trim();
   /* 17:00 UTC via the one shared helper — see RRTime.dateToUtc. A raw
@@ -7796,7 +7940,15 @@ async function createTask() {
          sent it, which is why the assignment model existed with no way to use
          it. Empty string means Unassigned and must go as NULL -- '' is not a
          uuid and would be rejected. */
-      p_assigned_to: (document.getElementById('task-assignee-input') || {}).value || null
+      p_assigned_to: (document.getElementById('task-assignee-input') || {}).value || null,
+      /* THE TAGS — subject, not provenance. related_table stays unset above for
+         exactly the reason in that comment; these are separate typed columns
+         with real foreign keys, so tagging cannot make a hand-typed task read as
+         automation output or make it eligible for ClickUp export.
+         '' from an unselected picker becomes null: task_upsert treats null as
+         "no tag" and would reject '' as a malformed uuid. */
+      p_referral_partner_id: (document.getElementById('task-partner-input') || {}).value || null,
+      p_loan_order_id:       (document.getElementById('task-order-input')   || {}).value || null
     });
     if (error) throw error;
     tasksData.unshift(data);

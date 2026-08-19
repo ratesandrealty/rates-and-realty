@@ -86,14 +86,21 @@ begin
       continue;
     end if;
 
+    /* THE DUPLICATE CHECK READS BOTH SHAPES during the changeover. loan_order_id
+       is the column readers should use from now on; related_table/related_id is
+       still written so nothing that reads the old pair breaks, and rows created
+       before 2026-08-19 only have the old pair. Checking one alone would raise a
+       SECOND reminder for every order tagged the other way. */
     if exists (select 1 from tasks t
-               where t.related_table='loan_orders' and t.related_id = r.id
+               where (t.loan_order_id = r.id
+                      or (t.related_table='loan_orders' and t.related_id = r.id))
                  and coalesce(t.status,'open') not in ('completed','cancelled')) then
       continue;
     end if;
 
     select max(created_at) into v_last from tasks
-     where related_table='loan_orders' and related_id = r.id;
+     where loan_order_id = r.id
+        or (related_table='loan_orders' and related_id = r.id);
     if v_last is not null and v_last > now() - make_interval(days => p_interval_days) then
       continue;
     end if;
@@ -102,8 +109,11 @@ begin
                     then upper(r.order_type) || ' replied, no document - ' || r.who
                     else upper(r.order_type) || ' still outstanding - ' || r.who end
                || coalesce(' (' || nullif(trim(coalesce(r.employer_name, r.label, '')),'') || ')', '');
+    /* loan_order_id IS WRITTEN ALONGSIDE the old pair, not instead of it. The
+       new column is the one to read; the pair stays until nothing reads it, so
+       this changeover never has a moment where a reader sees neither. */
     insert into tasks(contact_id, lead_id, title, description, due_date, status, priority,
-                      related_table, related_id, origin, created_at, updated_at)
+                      related_table, related_id, loan_order_id, origin, created_at, updated_at)
     values (r.contact_id, r.contact_id, v_title,
             case when v_doc = 'no_document'
                  then 'They replied, but nothing attached looks like the document we asked for. '
@@ -113,7 +123,7 @@ begin
             end,
             v_due, 'open',
             case when r.order_type in ('voe','payoff') then 'high' else 'normal' end,
-            'loan_orders', r.id, 'system', now(), now())
+            'loan_orders', r.id, r.id, 'system', now(), now())
     returning id into v_task;
     order_id := r.id; order_type := r.order_type; task_id := v_task;
     reason := case when v_doc = 'no_document' then 'replied without a document'

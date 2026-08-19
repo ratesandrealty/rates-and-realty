@@ -1,9 +1,9 @@
 -- task_list(p_scope text, p_filters jsonb)
 -- language: plpgsql
--- Captured from production 2026-08-18.
+-- Captured from production 2026-08-19.
 
 CREATE OR REPLACE FUNCTION public.task_list(p_scope text DEFAULT 'all'::text, p_filters jsonb DEFAULT '{}'::jsonb)
- RETURNS TABLE(id uuid, title text, description text, status text, priority text, due_date timestamp without time zone, contact_id uuid, lead_id uuid, contact_name text, contact_phone text, assigned_to uuid, assignee_email text, assigned_by uuid, clickup_url text, related_table text, related_id uuid, bucket text, assignee_state text, provenance text, question_pending boolean, created_at timestamp without time zone)
+ RETURNS TABLE(id uuid, title text, description text, status text, priority text, due_date timestamp without time zone, contact_id uuid, lead_id uuid, contact_name text, contact_phone text, assigned_to uuid, assignee_email text, assigned_by uuid, clickup_url text, related_table text, related_id uuid, bucket text, assignee_state text, provenance text, question_pending boolean, created_at timestamp without time zone, referral_partner_id uuid, referral_partner_label text, loan_order_id uuid, loan_order_label text)
  LANGUAGE plpgsql
  STABLE SECURITY DEFINER
  SET search_path TO 'public'
@@ -46,18 +46,38 @@ begin
          case when t.assigned_to is null then 'unassigned'
               when t.assigned_to = v_uid then 'mine'
               else 'other' end as assignee_state,
-         /* ONE provenance mechanism, not two. This was a compound rule --
-            related_table, OR a clickup_automation_log entry -- because
-            related_table alone misclassified 210 machine-created rows as human.
-            tasks.origin now holds the answer directly, backfilled from exactly
-            that rule, so the two cannot drift apart. It also retires the known
-            residual the old rule documented: the 2 rate_lock_5d rows with no log
-            entry are 'clickup' in the column. */
+         /* ONE provenance mechanism, not two. tasks.origin holds the answer
+            directly, so related_table and a clickup_automation_log lookup can no
+            longer drift apart. */
          case when t.origin = 'user' then 'human' else 'auto' end as provenance,
          (coalesce(t.status,'open') = 'question') as question_pending,
-         t.created_at
+         t.created_at,
+         /* THE TAGS — subject, never provenance. A human tagging a task to an
+            order still has origin='user' and is still never enqueued to ClickUp.
+            Labels are resolved HERE rather than in the browser: the alternative
+            is every consumer joining these two tables itself to render a chip,
+            which is three places to disagree about what an order is called.
+            Left joins, so a tag whose target was deleted (the FK sets it null)
+            renders nothing instead of erroring. */
+         t.referral_partner_id,
+         nullif(trim(
+           coalesce(nullif(trim(coalesce(rp.company,'')),''), '')
+           || case
+                when nullif(trim(coalesce(rp.first_name,'')||' '||coalesce(rp.last_name,'')),'') is null then ''
+                when nullif(trim(coalesce(rp.company,'')),'') is null
+                  then trim(coalesce(rp.first_name,'')||' '||coalesce(rp.last_name,''))
+                else ' — ' || trim(coalesce(rp.first_name,'')||' '||coalesce(rp.last_name,''))
+              end
+         ), '')::text as referral_partner_label,
+         t.loan_order_id,
+         nullif(trim(
+           coalesce(upper(lo.order_type),'')
+           || coalesce(' · ' || nullif(trim(coalesce(lo.label, lo.employer_name,'')),''), '')
+         ), '')::text as loan_order_label
   from tasks t
   left join contacts c on c.id = t.contact_id
+  left join referral_partners rp on rp.id = t.referral_partner_id
+  left join loan_orders lo on lo.id = t.loan_order_id
   where
     (v_is_admin
      or t.assigned_to = v_uid

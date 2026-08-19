@@ -830,6 +830,68 @@ const SPECS = [
   /* The folder names the one other person instead of saying "Someone else's".
      Asserted through _tkOtherLabel rather than the rendered bar so the failure
      message says WHICH label was produced. */
+  /* TAGGING, end to end and self-cleaning: the pickers populate, a tagged task
+     saves, and the row renders the chip with the label the SERVER composed.
+     Asserting the chip is the point — the columns can exist in task_list and
+     still never reach the row, which is exactly what a RETURNS TABLE that
+     enumerates its columns makes easy to get wrong. */
+  {
+    name: 'task tags — picker, save, and the chip on the row',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    tokenOnly: true,
+    evals: [
+      [`(async function(){
+        var cl = window._authClient();
+        var madeTask = null, madeOrder = null;
+        try {
+          if (typeof window._tkFillTags !== 'function') return 'HARNESS: _tkFillTags absent';
+
+          // An order to tag, on the fixture contact only.
+          var ins = await cl.from('loan_orders').insert({
+            order_type:'escrow', status:'ordered', contact_id:'${FIXTURE}', label:'ZZ-TEST tag order'
+          }).select('id').single();
+          if (ins.error) return 'HARNESS: could not create order — ' + ins.error.message;
+          madeOrder = ins.data.id;
+
+          // The pickers must actually offer something.
+          await window._tkFillTags();
+          var pSel = document.getElementById('task-partner-input');
+          var oSel = document.getElementById('task-order-input');
+          if (!pSel || pSel.options.length < 2) return 'partner picker empty';
+          if (!oSel || oSel.options.length < 2) return 'order picker empty';
+
+          var partnerId = pSel.options[1].value;
+
+          var up = await cl.rpc('task_upsert', {
+            p_title: 'ZZ-TEST tag spec', p_contact_id: '${FIXTURE}',
+            p_referral_partner_id: partnerId, p_loan_order_id: madeOrder });
+          if (up.error) return 'task_upsert: ' + up.error.message;
+          madeTask = up.data && up.data.id;
+          if (!madeTask) return 'no task id returned';
+
+          await window.loadTasks();
+          var row = null, rows = document.querySelectorAll('.task-row');
+          for (var i=0;i<rows.length;i++){
+            var ttl = rows[i].querySelector('.task-title');
+            if (ttl && ttl.textContent.indexOf('ZZ-TEST tag spec') === 0) { row = rows[i]; break; }
+          }
+          if (!row) return 'tagged task did not render';
+          var chips = Array.prototype.slice.call(row.querySelectorAll('.tk-chip-tag'))
+                        .map(function(c){ return c.textContent.trim(); });
+          if (chips.length !== 2) return 'expected 2 tag chips, got ' + chips.length + ': ' + chips.join(' / ');
+          var partnerChip = chips[0].indexOf('🤝') === 0;
+          var orderChip = chips[1].indexOf('📋') === 0 && chips[1].indexOf('ESCROW') !== -1;
+          return (partnerChip && orderChip) ? 'ok' : 'wrong chips: ' + chips.join(' / ');
+        } catch (e) {
+          return 'threw: ' + ((e && e.message) || e);
+        } finally {
+          if (madeTask)  { try { await cl.rpc('task_delete_bulk', { p_ids: [madeTask], p_force: true }); } catch(e){} }
+          if (madeOrder) { try { await cl.from('loan_orders').delete().eq('id', madeOrder); } catch(e){} }
+        }
+      })()`, 'ok'],
+    ],
+  },
   {
     name: 'tasks folder names the single other assignee',
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,
