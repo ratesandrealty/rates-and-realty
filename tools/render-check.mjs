@@ -767,6 +767,100 @@ const SPECS = [
      not just the helper. tokenOnly for the usual reason: with the stubbed client
      fnFetch throws "Not signed in".
      get_breakdown is a READ. */
+  /* BULK SELECT, end to end and self-cleaning.
+   *
+   * Creates two of its own tasks on the ZZ-TEST fixture contact, selects them,
+   * asserts the bar counts them, then deletes them THROUGH tkBulkDelete — so the
+   * real button path, the real task_delete_bulk RPC and the real cleanup all run
+   * once. It leaves nothing behind, which is why it can live in the suite rather
+   * than depending on fixture rows somebody has to remember not to delete.
+   *
+   * force:true so no confirm() is raised — headless Chromium blocks on a real
+   * dialog. window.confirm is stubbed anyway and restored in a finally, because a
+   * spec that leaves confirm() swallowed poisons every later spec in the context.
+   *
+   * origin is 'user' (auth.uid() is set), and clickup_enqueue gates on
+   * origin='system', so no ClickUp task is created and none needs cleaning up.
+   *
+   * tokenOnly: task_upsert and task_list both need a real session. */
+  {
+    name: 'tasks bulk select — count, then delete through the real path',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    tokenOnly: true,
+    evals: [
+      [`(async function(){
+        var C = window.confirm; window.confirm = function(){ return true; };
+        try {
+          if (typeof window.tkBulkDelete !== 'function') return 'HARNESS: bulk actions absent';
+          var mk = async function(t){
+            var r = await sb.rpc('task_upsert', { p_title: t, p_contact_id: '${FIXTURE}', p_priority: 'normal' });
+            if (r.error) throw new Error(r.error.message);
+            return (r.data && (r.data.id || (r.data[0] && r.data[0].id))) || null;
+          };
+          var a = await mk('ZZ-TEST bulk spec 1');
+          var b = await mk('ZZ-TEST bulk spec 2');
+          if (!a || !b) return 'HARNESS: could not create fixtures';
+
+          await window.loadTasks();
+          var boxA = document.querySelector('.tk-sel[data-id="' + a + '"]');
+          var boxB = document.querySelector('.tk-sel[data-id="' + b + '"]');
+          if (!boxA || !boxB) return 'HARNESS: created tasks did not render a checkbox';
+
+          window.tkSelToggle(a, true); window.tkSelToggle(b, true);
+          var bar = document.getElementById('task-bulkbar');
+          var shown = bar && bar.style.display !== 'none' && /2 selected/.test(bar.textContent || '');
+          if (!shown) return 'bar did not report 2 selected: ' + ((bar && bar.textContent) || '(no bar)');
+
+          await window.tkBulkDelete(true);
+
+          var left = await sb.rpc('task_list', { p_scope: 'lead', p_filters: { contact_id: '${FIXTURE}', status_group: 'all' } });
+          var rows = (left.data || []).filter(function(t){ return t.title && t.title.indexOf('ZZ-TEST bulk spec') === 0; });
+          if (rows.length) return 'delete left ' + rows.length + ' row(s) behind';
+
+          var barAfter = document.getElementById('task-bulkbar');
+          if (barAfter && barAfter.style.display !== 'none') return 'bar still visible after delete';
+          return 'ok';
+        } catch (e) {
+          return 'threw: ' + ((e && e.message) || e);
+        } finally { window.confirm = C; }
+      })()`, 'ok'],
+    ],
+  },
+  /* The folder names the one other person instead of saying "Someone else's".
+     Asserted through _tkOtherLabel rather than the rendered bar so the failure
+     message says WHICH label was produced. */
+  {
+    name: 'tasks folder names the single other assignee',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    tokenOnly: true,
+    evals: [
+      /* BOTH BRANCHES, because a label hard-coded to a name would pass a
+         "does it name someone" test and be wrong the day a third person joins.
+         _tkMyUid is driven directly and restored, because WHO IS ASKING is the
+         input the function turns on and the test account cannot supply it: the
+         automation user is deliberately excluded from task_assignees() as a
+         service account, so from its own seat there are TWO others and the
+         generic label is the correct answer. Asserting against the live session
+         would have tested the wrong seat — which is what the first version of
+         this spec did, and it reported a bug that was not there. */
+      [`(async function(){
+        if (typeof window._tkOtherLabel !== 'function') return 'HARNESS: _tkOtherLabel absent';
+        await window.loadTasks();                   // populates the roster the label reads
+        var r = await window._authClient().rpc('task_assignees');
+        if (r.error) return 'HARNESS: task_assignees — ' + r.error.message;
+        var roster = (r.data || []).slice().sort(function(a,b){
+          return String(a.display_name).localeCompare(String(b.display_name));
+        });
+        if (roster.length < 2) return 'HARNESS: roster has ' + roster.length + ' entries';
+        var out = roster.map(function(m){ return window._tkOtherLabel(m.user_id); });
+        // Somebody outside the roster sees more than one "other" — stay generic.
+        out.push(window._tkOtherLabel('00000000-0000-0000-0000-000000000000'));
+        return out.join(' | ');
+      })()`, "Rene Duarte's tasks | Aubrey Ayson's tasks | Someone else's"],
+    ],
+  },
   {
     name: 'lead-scorer panel calls scorerApi as the user',
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,

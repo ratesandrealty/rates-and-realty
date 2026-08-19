@@ -922,6 +922,16 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
       border-bottom: 1px solid var(--border2);
     }
     .task-row:last-child { border-bottom: none; }
+    /* Bulk bar controls. Deliberately quiet except Delete, which is the only one
+       that cannot be undone and is the only one coloured as a warning. */
+    .tk-bulk-btn {
+      background: transparent; border: 1px solid rgba(255,255,255,.16); color: #c9c3b4;
+      border-radius: 8px; font-size: 11px; font-weight: 600; padding: 4px 10px;
+      cursor: pointer; font-family: inherit;
+    }
+    .tk-bulk-btn:hover { border-color: rgba(201,168,76,.5); color: #C9A84C; }
+    .tk-bulk-danger { border-color: rgba(224,82,82,.4); color: #e05252; }
+    .tk-bulk-danger:hover { border-color: #e05252; color: #e05252; background: rgba(224,82,82,.08); }
     .task-check {
       width: 18px; height: 18px; border-radius: 50%;
       border: 2px solid var(--border); background: none;
@@ -4457,6 +4467,12 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
            clause is (is_admin OR assigned_to = uid OR lead_shares), so a va sees
            only her own work whatever scope this bar asks for. -->
       <div id="task-folders" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px;"></div>
+      <!-- Bulk actions. Hidden until something is selected: an always-visible bar
+           of destructive verbs over a list of one is noise, and Delete sitting
+           permanently under the cursor is how the wrong thing gets clicked. -->
+      <div id="task-bulkbar" style="display:none;align-items:center;gap:8px;flex-wrap:wrap;
+           margin:0 0 10px;padding:7px 10px;border:1px solid rgba(201,168,76,.35);
+           border-radius:10px;background:rgba(201,168,76,.08);"></div>
       <div class="task-form" id="task-form">
         <div class="task-form-grid">
           <div class="ld-field">
@@ -7098,6 +7114,46 @@ async function saveNote() {
 /* The folder currently shown. 'lead' by default — this is a lead page. */
 let _tkScope = 'lead';
 
+/* NAME THE PERSON WHEN THERE IS ONLY ONE.
+ *
+ * "Someone else's" is correct on a team of four and needlessly coy on a team of
+ * two. Today task_assignees() returns exactly two people — Rene and Aubrey — so
+ * from either side "someone else" is one specific, known colleague, and the
+ * folder may as well say so.
+ *
+ * DERIVED FROM THE ROSTER, not from the rows on screen. Scanning tasksData for
+ * distinct assignees would make the label depend on which folder is open: stand
+ * in "My tasks" and there are no other-assigned rows to learn from, so the label
+ * would flip back to the generic one as you click between folders. The roster is
+ * the same in every scope.
+ *
+ * SELF-CORRECTING. The moment a third person can hold work, task_assignees()
+ * returns three, this finds more than one "other", and the label reverts to
+ * "Someone else's" with no code change. Same reason _tkBucket keys on
+ * assigned_to rather than hardcoding a uid.
+ *
+ * Falls back to the generic label whenever the roster has not loaded yet, so a
+ * slow or failed RPC shows a vaguer folder rather than a wrong name. */
+/* Takes the viewer's uid so the answer can be checked for a seat other than the
+   one running the browser. Not a convenience: `_tkAssignees` and `_tkMyUid` are
+   `let` declarations and therefore NOT on window, so a test can neither read nor
+   override them — and the one account automated runs can use is excluded from
+   task_assignees() as a service account, which makes the live seat the one seat
+   whose answer proves nothing. Defaults to the real viewer. */
+function _tkOtherLabel(forUid){
+  try {
+    var me = forUid || _tkMyUid;
+    if (!_tkAssignees || !me) return "Someone else's";
+    var others = _tkAssignees.filter(function(a){ return a.user_id !== me; });
+    if (others.length !== 1) return "Someone else's";
+    var name = String(others[0].display_name || '').trim();
+    if (!name) return "Someone else's";
+    /* "Aubrey's tasks" matches the shape of "My tasks" next to it. A name
+       already ending in s takes the bare apostrophe. */
+    return name + (/s$/i.test(name) ? "'" : "'s") + ' tasks';
+  } catch (_) { return "Someone else's"; }
+}
+
 /* Counts come from the rows task_list returned, so a folder can never claim a
    number the server would not actually hand over. */
 function _tkRenderFolders(){
@@ -7109,7 +7165,7 @@ function _tkRenderFolders(){
   const defs = [
     { k:'lead',       label:'This lead' },
     { k:'mine',       label:'My tasks' },
-    { k:'other',      label:"Someone else's" },
+    { k:'other',      label:_tkOtherLabel() },
     { k:'unassigned', label:'Unassigned' }
   ];
   bar.innerHTML = defs.map(function(d){
@@ -7162,6 +7218,12 @@ async function loadTasks() {
     if (error) throw error;
     tasksData = data || [];
     await _tkLoadNames();          // chips need display names, not email local parts
+    /* The roster, for the folder label and the bulk-assign picker. Both cached
+       after the first call, so this costs one query per page load and not one
+       per folder switch. Awaited BEFORE the folders render: _tkOtherLabel falls
+       back to the generic wording when it has not loaded, and a label that
+       corrects itself a moment later reads as a glitch. */
+    await _tkLoadAssignees();
     renderTasks();
     _tkRenderFolders();            // counts come from what the server actually returned
   } catch (err) {
@@ -7319,6 +7381,9 @@ function _tkRow(t) {
   const b = _tkBucket(t);
   return `
       <div class="task-row">
+        <input type="checkbox" class="tk-sel" data-id="${t.id}" ${_tkSel.has(t.id) ? 'checked' : ''}
+               onchange="tkSelToggle('${t.id}', this.checked)" title="Select for a bulk action"
+               style="margin:0 8px 0 0;flex:none;cursor:pointer;accent-color:#C9A84C;width:14px;height:14px;">
         <button class="task-check ${done ? 'done' : ''}" onclick="toggleTask('${t.id}', ${done})" title="${done ? 'Mark open' : 'Mark done'}"></button>
         <div style="flex:1;min-width:0;">
           <div class="task-title ${done ? 'done' : ''}">${esc(t.title)}</div>
@@ -7394,6 +7459,10 @@ function renderTasks() {
       <h4>No tasks yet</h4>
       <p>Add a task above to get started.</p>
     </div>`;
+    /* The bar must go too. Without this it keeps whatever count it last had over
+       a list with no rows in it — a selection you cannot see and cannot clear,
+       still armed with Delete. */
+    _tkRenderBulkBar();
     return;
   }
 
@@ -7435,6 +7504,191 @@ function renderTasks() {
           + done.map(_tkRow).join('');
   }
   el.innerHTML = html;
+  _tkRenderBulkBar();
+}
+
+/* ── BULK SELECTION ───────────────────────────────────────────────────────
+ *
+ * A Set of ids, kept OUTSIDE the rendered rows. renderTasks() rebuilds the whole
+ * list on every load, toggle and delete, so selection held in the DOM would be
+ * silently lost by the first action taken on it — and losing a selection quietly
+ * is how somebody deletes the wrong four rows on the second attempt.
+ *
+ * Pruned against the rows actually present on every render: a task completed or
+ * deleted elsewhere must not linger in the set and end up in a later batch. That
+ * pruning is also why the bar's count can be trusted — it counts ids that are on
+ * screen, not ids that were once clicked. */
+var _tkSel = new Set();
+
+function tkSelToggle(id, on){
+  if (on) _tkSel.add(id); else _tkSel.delete(id);
+  _tkRenderBulkBar();
+}
+
+function tkSelClear(){
+  _tkSel.clear();
+  document.querySelectorAll('.tk-sel').forEach(function(c){ c.checked = false; });
+  _tkRenderBulkBar();
+}
+
+function tkSelAll(){
+  /* Selects what is VISIBLE, which is what "all" means to someone looking at a
+     filtered folder. Selecting rows the folder is hiding would be a different
+     and much more dangerous verb. */
+  document.querySelectorAll('.tk-sel').forEach(function(c){
+    c.checked = true;
+    if (c.dataset && c.dataset.id) _tkSel.add(c.dataset.id);
+  });
+  _tkRenderBulkBar();
+}
+
+function _tkSelIds(){ return Array.from(_tkSel); }
+
+function _tkRenderBulkBar(){
+  const bar = document.getElementById('task-bulkbar');
+  if (!bar) return;
+
+  /* Prune to what is on screen before counting anything. */
+  const present = new Set();
+  document.querySelectorAll('.tk-sel').forEach(function(c){
+    if (c.dataset && c.dataset.id) present.add(c.dataset.id);
+  });
+  Array.from(_tkSel).forEach(function(id){ if (!present.has(id)) _tkSel.delete(id); });
+
+  const n = _tkSel.size;
+  if (!n) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+
+  /* The picker lists only people who can actually hold work — the same
+     task_assignees() source the single-task form uses, so the two cannot offer
+     different sets. "Unassign" is a real choice and is spelled as one. */
+  const opts = (_tkAssignees || []).map(function(a){
+    return '<option value="' + esc(a.user_id) + '">' + esc(a.display_name || 'Unnamed') + '</option>';
+  }).join('');
+
+  bar.style.display = 'flex';
+  bar.innerHTML =
+      '<span style="color:#C9A84C;font-weight:600;font-size:12px;">' + n + ' selected</span>'
+    + '<button type="button" onclick="tkSelAll()" class="tk-bulk-btn">Select all shown</button>'
+    + '<button type="button" onclick="tkSelClear()" class="tk-bulk-btn">Clear</button>'
+    + '<span style="flex:1"></span>'
+    + '<select id="tk-bulk-assignee" class="tk-bulk-btn" style="padding:4px 8px;">'
+    +   '<option value="">Assign to…</option>' + opts
+    +   '<option value="__none__">Unassign</option>'
+    + '</select>'
+    + '<button type="button" onclick="tkBulkAssign()" class="tk-bulk-btn">Assign</button>'
+    + '<button type="button" onclick="tkBulkComplete()" class="tk-bulk-btn">Complete</button>'
+    + (_tkCanDelete()
+        ? '<button type="button" onclick="tkBulkDelete(false)" class="tk-bulk-btn tk-bulk-danger">Delete</button>'
+        : '');
+}
+
+/* ── BULK ACTIONS ─────────────────────────────────────────────────────────
+ *
+ * Every one of these reports what actually happened rather than assuming the
+ * happy path. The rule throughout: a count the server returned, never a count
+ * the browser hoped for. */
+
+async function tkBulkAssign(){
+  const ids = _tkSelIds();
+  if (!ids.length) return;
+  const sel = document.getElementById('tk-bulk-assignee');
+  const raw = sel ? sel.value : '';
+  if (!raw) { showToast('Pick who these should go to first.', true); return; }
+  const uid = (raw === '__none__') ? null : raw;
+  try {
+    /* task_assign_bulk, NOT a loop over task_upsert: that sets due_date without
+       a coalesce and would wipe the due date on every task it touched. */
+    const { data, error } = await sb.rpc('task_assign_bulk', { p_ids: ids, p_assigned_to: uid });
+    if (error) throw error;
+    if (!data || !data.ok) { showToast((data && data.message) || 'Nothing was reassigned.', true); return; }
+    const missed = (data.missing_ids || []).length;
+    showToast('Reassigned ' + data.updated + ' task' + (data.updated === 1 ? '' : 's')
+              + (missed ? ' — ' + missed + ' no longer existed' : '') + ' ✓', missed > 0);
+    tkSelClear();
+    await loadTasks();
+  } catch (err) { showToast('Assign failed: ' + ((err && err.message) || err), true); }
+}
+
+async function tkBulkComplete(){
+  const ids = _tkSelIds();
+  if (!ids.length) return;
+  /* DELIBERATELY A LOOP over task_set_status rather than a bulk statement.
+     That function authorises per task, writes a task_activity row and drives the
+     _task_clickup_sync seam; a bulk rewrite would have to reproduce all three,
+     and two mechanisms that must agree about what "completed" means is exactly
+     the drift this codebase keeps paying for. Partial completion is also
+     harmless and visible, unlike a partial delete.
+     Failures are COUNTED AND NAMED, not swallowed. */
+  let ok = 0; const failed = [];
+  for (const id of ids) {
+    try {
+      const { error } = await sb.rpc('task_set_status', { p_id: id, p_status: 'completed' });
+      if (error) throw error;
+      ok++;
+    } catch (e) { failed.push((e && e.message) || String(e)); }
+  }
+  if (failed.length) {
+    showToast('Completed ' + ok + ' of ' + ids.length + '. ' + failed.length
+              + ' refused: ' + failed[0], true);
+  } else {
+    showToast('Completed ' + ok + ' task' + (ok === 1 ? '' : 's') + ' ✓');
+  }
+  tkSelClear();
+  await loadTasks();
+}
+
+async function tkBulkDelete(force){
+  const ids = _tkSelIds();
+  if (!ids.length) return;
+  if (!force && !confirm('Delete ' + ids.length + ' task' + (ids.length === 1 ? '' : 's') + '? This cannot be undone.')) return;
+  try {
+    const { data, error } = await sb.rpc('task_delete_bulk', { p_ids: ids, p_force: !!force });
+    if (error) throw error;
+
+    /* The sweeper refusal comes back with the offending rows named, and refuses
+       the WHOLE batch — so the second attempt is an informed one rather than a
+       surprise about which rows survived. */
+    if (data && data.reason === 'will_recreate') {
+      const names = (data.will_recreate || []).map(function(w){ return '• ' + w.title + ' (' + (w.stage || 'active') + ')'; }).join('\n');
+      if (confirm(data.message + '\n\n' + names + '\n\nDelete anyway?')) return tkBulkDelete(true);
+      return;
+    }
+    if (!data || !data.ok) { showToast((data && data.message) || 'Nothing was deleted.', true); return; }
+
+    /* CLICKUP LAST, and reported per id. The RPC already deleted the CRM rows in
+       one statement and handed back every ClickUp id from the snapshot, so a
+       failure here cannot orphan a row we do not know about — but it CAN leave a
+       ClickUp task behind, and that must be said out loud rather than folded
+       into a success message. */
+    const cuIds = (data.clickup_task_ids || []).filter(Boolean);
+    const cuFailed = [];
+    for (const cu of cuIds) {
+      try {
+        /* THE SAME CALL SHAPE tkDelete uses, and it is not obvious: the route is
+           a URL PATH (clickup-bridge reads url.pathname[2]) and the body key is
+           clickup_task_id. An {action:'delete_task'} body — the shape most of
+           this codebase's edge functions take — reaches the bridge and deletes
+           nothing, so every ClickUp task would silently survive its CRM row. */
+        const r = await _authClient().functions.invoke('clickup-bridge/task/delete', {
+          body: { clickup_task_id: cu }
+        });
+        if (r.error) throw r.error;
+      } catch (e) { cuFailed.push(cu); }
+    }
+
+    const missed = (data.missing_ids || []).length;
+    let msg = 'Deleted ' + data.deleted + ' of ' + data.requested;
+    if (missed) msg += ' — ' + missed + ' no longer existed';
+    if (cuFailed.length) {
+      msg += '. ' + cuFailed.length + ' ClickUp task(s) could NOT be removed: '
+           + cuFailed.join(', ') + ' — delete them in ClickUp.';
+    } else if (cuIds.length) {
+      msg += ' (ClickUp tasks removed too)';
+    }
+    showToast(msg + (cuFailed.length || missed ? '' : ' ✓'), cuFailed.length > 0 || missed > 0);
+    tkSelClear();
+    await loadTasks();
+  } catch (err) { showToast('Delete failed: ' + ((err && err.message) || err), true); }
 }
 
 function openTaskForm() {
@@ -7474,12 +7728,23 @@ async function _tkLoadAssignees(){
        The function is SECURITY DEFINER with a fixed narrow shape (user_id,
        display_name, role) and excludes service accounts itself, so the bot
        cannot be handed work regardless of what the caller asks for. */
-    const r = await sb.rpc('task_assignees');
+    /* _authClient(), NOT bare `sb`. They are not always the same object:
+       _authClient prefers window._supabaseClient, the session-aware client
+       auth-guard installs, and only falls back to `sb`. task_assignees() is
+       SECURITY DEFINER and raises "not authorized" for a caller it cannot
+       identify, so on any load where `sb` has not picked up the session this
+       returned nothing and the picker rendered empty — the same empty list the
+       RLS fix was supposed to have ended. Surfaced by the folder-label spec,
+       which reported "roster had 0 entries" against a real admin session.
+       _tkLoadNames() next door already used _authClient; this one did not. */
+    const r = await _authClient().rpc('task_assignees');
     if (r.error) throw r.error;
     _tkAssignees = (r.data || []).filter(function(x){ return x && x.user_id; });
     /* Resolve who "me" is here rather than depending on a page global — there
        isn't one, and a (me) hint that never appears is worse than none. */
-    try { const u = await sb.auth.getUser(); _tkMyUid = (u && u.data && u.data.user && u.data.user.id) || null; }
+    /* Same client for the same reason: a uid read from a client with no session
+       is null, and _tkOtherLabel would then treat everyone as "other". */
+    try { const u = await _authClient().auth.getUser(); _tkMyUid = (u && u.data && u.data.user && u.data.user.id) || null; }
     catch (_) { _tkMyUid = null; }
   } catch (e) {
     console.warn('[assignees]', e.message);
