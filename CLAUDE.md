@@ -60,7 +60,11 @@ and errors in the harness itself. Exit 1 = a page failed; exit 2 = refused to ru
 
 ```
 node tools/render-check.mjs                              ->  75/75   the stub specs
-node tools/render-check.mjs --token tok.txt --token-only ->  7/7     the ones that need a session
+node tools/render-check.mjs --token tok.txt --token-only ->  8/8     the ones that need a session
+
+THE SECOND NUMBER MOVES whenever a tokenOnly spec is added — it was 7/7 on
+2026-08-19 and became 8/8 the same day. Read it off the run, never off this
+file; what is fixed is that there are TWO runs, not what either total is.
 ```
 
 **There is no invocation that returns 83/83, by construction.** Do not go looking
