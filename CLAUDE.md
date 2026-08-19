@@ -56,6 +56,46 @@ any `console.error`, an expected element being ABSENT, visible text below a floo
 a click step whose target does not exist, `readyState` never reaching `complete`,
 and errors in the harness itself. Exit 1 = a page failed; exit 2 = refused to run.
 
+### The green bar is TWO runs, and `--token` is not the better one
+
+```
+node tools/render-check.mjs                              ->  75/75   the stub specs
+node tools/render-check.mjs --token tok.txt --token-only ->  7/7     the ones that need a session
+```
+
+**There is no invocation that returns 83/83, by construction.** Do not go looking
+for one, and do not read a partial number as breakage.
+
+Measured 2026-08-19: running the WHOLE suite with `--token` returns **62/83, 21
+failed** — and not one of those 21 is a defect. `--token` replaces the stub for
+**every** spec, not only the ones that need a session, and 20 of the 75 stub
+specs assert things only the stub provides:
+
+- **Role-faked specs.** `spec.role: 'va'` is the stub pretending. Under a real
+  admin session auth-guard recomputes the actual role, so
+  `va-people is denied to a role without access` fails *because the admin is
+  genuinely allowed*. Correct behaviour, wrong seat.
+- **Stub-fabricated data.** `e-sign Send enables once a doc and signer exist`
+  fails with "Add at least one signer", because the ZZ-TEST fixture has neither
+  and the stub invented them. `staff chat Send actually sends` fails on
+  `nothing matched [data-sc-thread]` — no real thread exists for that account.
+
+That is the mirror of the trap recorded above: a stub that UNDER-delivers reads
+as a broken page, and one that OVER-delivers makes specs pass that real data
+cannot satisfy. Neither mode is wrong; they answer different questions.
+
+**A 21-failure token run reads as twenty-one broken things and is not.** That
+misreading is the reason this is written down.
+
+`ownerOnly` is a third state, narrower than `tokenOnly`: the spec needs **rene@'s
+own** session and no automated run can supply it. `dashboard/admin.html` calls
+`requireAdmin()`, which checks a hardcoded `ADMIN_EMAILS` allowlist holding one
+address and never consults `auth_user_roles` — so the automation account, an
+admin in the database, is still redirected off the page. Those specs are excluded
+from BOTH modes and announced on every run, because a spec that cannot pass with
+any credential the harness can mint must not sit in either mode reporting red.
+Exactly one spec is in that state today: the CRM board's va-refusal pair.
+
 Console-error exclusions are per-spec (`allowConsole`), need a reason, and are
 PRINTED on the run. An exclusion nobody can see is how a harness goes quietly
 blind.
@@ -1233,7 +1273,12 @@ renders empty, and a presence-only assertion on a container that exists but is
 empty passes — the identical shape to the `#shell` break-test above, which is the
 failure this harness was built to catch.
 
-This is why the board refusal spec is `tokenOnly`. It is also why a green
+This is why the board refusal spec was `tokenOnly` — and since 2026-08-19 it is
+**`ownerOnly`**, which is stricter: a token is not enough either, because
+`requireAdmin()` redirects every account this harness can authenticate as. It is
+excluded from both modes and announced on every run. The vacuous-pass reasoning
+below is unchanged and is exactly why the flag must not simply be removed. It is
+also why a green
 dashboard/admin run without a token should be read as **untested**, not passing.
 
 Closing it means intercepting the module (CDP `Fetch`, the way the surface-1

@@ -3830,7 +3830,32 @@ const SPECS = [
     name: 'board refuses Complete → To Do for a va, and writes nothing',
     url: '/dashboard/admin',
     role: 'va',
-    tokenOnly: true,
+    /* ownerOnly, NOT tokenOnly. Measured 2026-08-19 by running the whole suite
+     * with --token: this was the only spec of the eight that failed, with
+     * "nothing matched [data-crm-nav=tasks] to click" — the page had redirected
+     * before anything rendered.
+     *
+     * WHY IT CANNOT RUN AUTOMATED, both halves:
+     *
+     *   components/admin-dashboard.js calls requireAdmin(), which checks the
+     *   HARDCODED ADMIN_EMAILS allowlist — ["rene@ratesandrealty.com"] — and
+     *   redirects anyone else to /admin/people.html. It never consults
+     *   auth_user_roles, so no role grant helps. The automation account is an
+     *   admin in the database and is still bounced off this page.
+     *
+     *   And a second, independent reason: the only other account that exists is
+     *   processing@ (va), which requireAdmin also refuses.
+     *
+     * DO NOT "FIX" THIS BY REMOVING THE FLAG. Without a token the board renders
+     * ZERO CARDS — api/admin-api-v2.js imports its own supabase client that the
+     * stub cannot see — so the drag finds nothing, and a spec that asserts "the
+     * va was refused" passes just as well when nothing was draggable. That
+     * vacuous pass is the exact failure this pairing was built to prevent, and
+     * it is why the flag was tokenOnly in the first place.
+     *
+     * The honest state: real coverage, manual run, announced on every run rather
+     * than deleted or left permanently red. Run it with rene@'s own token. */
+    ownerOnly: true,
     width: 1440,
     steps: [
       { click: '[data-crm-nav="tasks"]', waitMs: 1500 },
@@ -4257,6 +4282,19 @@ if (adhocUrl) {
   const filter = argv.filter((a) => !a.startsWith('--') && argv[argv.indexOf(a) - 1] !== '--token')[0];
   specs = filter ? SPECS.filter((s) => s.name.includes(filter)) : SPECS;
   if (!specs.length) fail(`no spec matching "${filter}". Known: ${SPECS.map((s) => s.name).join(' | ')}`);
+
+  /* --token-only: run ONLY the specs that need a real session.
+   *
+   * The green bar here is TWO runs and there is no invocation that returns
+   * 83/83 — running everything with --token replaces the stub for every spec and
+   * legitimately fails the role-faked and stub-fabricated ones. Without this
+   * flag the second half of that bar could only be reached by naming seven specs
+   * by hand, which is a proof nobody re-runs. Now it is one command. */
+  if (argv.includes('--token-only')) {
+    if (!token) fail('--token-only needs --token <file>: these specs exist because the stub cannot reach them.');
+    specs = specs.filter((s) => s.tokenOnly);
+    if (!specs.length) fail(`no tokenOnly spec matching "${filter || '(all)'}".`);
+  }
   /* tokenOnly: skipped without --token, and the skip is PRINTED. Some panes
      cannot be reached by the stub at all — the processing tab needs a lead the
      signed-in user can actually load, and .single() returning no row makes the
@@ -4273,6 +4311,28 @@ if (adhocUrl) {
     }
     if (!specs.length) fail(`every spec matching "${filter}" is tokenOnly. Re-run with --token <file>.`);
   }
+
+  /* ownerOnly — EXCLUDED IN BOTH MODES, and announced in both.
+   *
+   * `tokenOnly` says "this needs a real session". `ownerOnly` says something
+   * narrower and harder: this needs RENE'S OWN session, and no automated run can
+   * supply it. A spec that cannot pass with any credential the harness can mint
+   * must not sit in either mode reporting red — a permanently red spec trains
+   * people to skim past red, which is the failure the tokenOnly split already
+   * exists to avoid.
+   *
+   * It is NOT deleted and NOT silently dropped: the coverage is real, it is just
+   * a manual run. Same third option `tokenOnly` takes, one notch further, and
+   * announced every time for the same reason allowConsole exclusions are. */
+  const ownerSkipped = specs.filter((s) => s.ownerOnly);
+  specs = specs.filter((s) => !s.ownerOnly);
+  if (ownerSkipped.length) {
+    console.log(`SKIPPED ALWAYS — needs rene@'s own session (${ownerSkipped.length}): ${ownerSkipped.map((s) => s.name).join(' | ')}`);
+    console.log('  dashboard/admin.html gates on a hardcoded ADMIN_EMAILS allowlist holding one address,');
+    console.log('  so every account this harness can authenticate as is redirected off the page.');
+    console.log('  Run it by hand with rene@\'s token; see the note on the spec.\n');
+  }
+  if (!specs.length) fail(`every spec matching "${filter}" is excluded (tokenOnly/ownerOnly).`);
 }
 
 const tmp = process.env.TEMP || process.env.TMPDIR || '.';
