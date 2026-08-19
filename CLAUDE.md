@@ -1162,11 +1162,61 @@ it has real data. `admin/va-people.html` is built on it.
 So: **"assigned" is a word on a form. "shared" is the permission.** When a request
 says "assigned to the VA", it almost certainly means shared.
 
-## Three things that keep biting in the Postgres function layer
+## Four things that keep biting in the Postgres function layer
 
 Each of these has now caught a second author after the first one wrote a warning
-about it. They are cheap to avoid and expensive to diagnose, because two of the
-three fail at RUNTIME with a message that points somewhere else.
+about it. They are cheap to avoid and expensive to diagnose, because most of
+them fail at RUNTIME with a message that points somewhere else — or, in the case
+of the first, do not fail at all.
+
+### `CREATE OR REPLACE` with a new defaulted parameter creates an OVERLOAD
+
+**It does not replace anything, and it reports success.** A different argument
+list is a different function, so
+
+```sql
+create or replace function f(a text, b text default null)   -- f already exists as f(a text)
+```
+
+leaves **both** live. Every existing caller supplies the old argument list and
+relies on defaults, which is exactly the shape that resolves ambiguously — and
+PostgREST will happily pick one until the day it picks the other.
+
+**Bitten twice in two days.** `task_upsert` on 2026-08-19 (dropped and recreated
+with all ten parameters, and the reason written into that migration), and then
+`quote_reply_match` hours later, adding `p_gmail_thread_id`. The lesson did not
+transfer, and the reason it did not is the whole problem: **a replace that
+silently adds looks identical to one that replaces.** Nothing errors, nothing
+warns, and the function you just wrote is live and working — beside the one you
+meant to remove.
+
+**THE DETECTION IS `tools/recapture-db-functions.mjs` WRITING TWO FILES FOR ONE
+NAME.** That is what caught it both times, and it is the cheapest check there is:
+
+```
+captured  quote_reply_match__p_in_reply_to_text_..._f0b761.sql
+captured  quote_reply_match__p_in_reply_to_text_..._fb528c.sql
+OK — 2 function file(s) refreshed from production.
+```
+
+One name, two files, disambiguated by an argument-list hash. If you see that,
+you created an overload. Recapture after every signature change, and read the
+count.
+
+So: **adding or removing a parameter means `drop function` first**, in the same
+transaction as the `create`. And remember the other half — **dropping takes the
+GRANTS with it**, which fails silently as `permission denied for function …` on
+a function that plainly exists. Capture `proacl` before, restore after:
+
+```sql
+select p.oid::regprocedure, p.proacl::text
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'the_function';
+```
+
+Changing a `RETURNS TABLE` forces the same drop for a different reason —
+Postgres refuses outright with `cannot change return type of existing function`.
+That one at least tells you.
 
 ### `auth.users.email` is `varchar(255)`, not `text`
 
