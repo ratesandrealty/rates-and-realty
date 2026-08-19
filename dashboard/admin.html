@@ -4945,11 +4945,31 @@ const _botState = {
   phoneFilter: '',
 };
 
+/* SENDS THE SIGNED-IN USER, not _SB_HEADERS. Step 1 of frontend-first, 2026-08-19.
+ *
+ * _SB_HEADERS is `{ apikey: _SB_KEY, Authorization: Bearer _SB_KEY }` where
+ * _SB_KEY is the ANON KEY, hardcoded as a literal a few hundred lines up. It
+ * satisfies the gateway and identifies nobody, which is why bot-admin — which
+ * reads and writes bot_settings, bot_conversations, bot_decisions and
+ * saved_searches with the service role — answers anonymous callers today.
+ *
+ * A requireStaff guard is coming, so this has to identify somebody first. It is
+ * shipped and confirmed on its own, while the function still accepts anything:
+ * in that order a mistake here is a page that still works, not an outage, and
+ * you can tell which half was wrong.
+ *
+ * fnFetch is mounted app-wide by auth-guard (see mountFnCall), so no script tag
+ * is needed here — but it is mounted asynchronously, so its absence is reported
+ * rather than silently falling back to the key that started this. The other
+ * three _SB_HEADERS call sites are PostgREST reads and are deliberately left
+ * alone; this changes one function, not a shared constant. */
 async function botAdmin(action, payload = {}) {
   try {
-    const res = await fetch(_BOT_URL, {
+    if (typeof window.fnFetch !== 'function') {
+      return { error: 'Not ready — fn-call.js has not mounted yet. Reload the page.' };
+    }
+    const res = await window.fnFetch('bot-admin', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ..._SB_HEADERS },
       body: JSON.stringify({ action, ...payload }),
     });
     return await res.json();

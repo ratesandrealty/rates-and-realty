@@ -14,6 +14,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -336,6 +337,35 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   const ok = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, "Content-Type": "application/json" } });
   const err = (m: string, s = 400) => new Response(JSON.stringify({ error: m }), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
+
+  /* STAFF OR SERVICE ONLY, BEFORE req.json(). Added 2026-08-19.
+   *
+   * This authenticated nothing while reading contacts, activity_events and
+   * sms_log and writing activity_events and lead_score_history with the service
+   * role. Measured open: an anonymous POST reached the dispatcher.
+   *
+   * STAFF_ROLES rather than admin-only, deliberately and unlike bot-admin. Its
+   * browser callers live on admin/lead-detail.html, which is a shared staff page
+   * — a va working a lead records score events and reads the panel — so
+   * narrowing to admin here would take a working surface away from her to close
+   * an endpoint. bot-admin went the other way because ITS only page is gated to
+   * one email. Match the guard to the page, in both directions.
+   *
+   * FOUR INTERNAL CALLERS all send the service key, which requireStaff accepts
+   * from either header: generate-preapproval, tour-public-view, tours-admin and
+   * track-event.
+   *
+   * FRONTEND FIRST: both browser call sites in lead-detail sent the anon key —
+   * the deal-analysis record_event and scorerApi — and were moved to fnFetch and
+   * deployed on their own before this landed. Confirmed against a live session
+   * by the render-check spec "lead-scorer panel calls scorerApi as the user",
+   * which drives the PAGE'S OWN function rather than the helper. */
+  const auth = await requireStaff(req, { what: 'Lead scoring' });
+  if (!auth.ok) {
+    return new Response(JSON.stringify({ error: auth.msg }), {
+      status: auth.status || 401, headers: { ...cors, "Content-Type": "application/json" },
+    });
+  }
 
   try {
     const body = await req.json();

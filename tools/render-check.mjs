@@ -746,6 +746,57 @@ const SPECS = [
       [`window._shNotice({ updated: 1, notified: false }, 'Date updated!').indexOf('has been notified') === -1`, true],
     ],
   },
+  /* bot-admin reached AS THE SIGNED-IN USER through fnFetch.
+   *
+   * WHAT THIS COVERS AND WHAT IT DOES NOT, said plainly because the gap is real:
+   * it proves the fnFetch → bot-admin pair works with a live session, which is
+   * the half a guard on bot-admin depends on. It does NOT load
+   * dashboard/admin.html, whose botAdmin() this change rewrote — that page gates
+   * on a hardcoded ADMIN_EMAILS allowlist containing only rene@, so the
+   * automation account is redirected off it and no automated run can open it.
+   * The dashboard's botAdmin() is a three-line wrapper over the same helper, and
+   * auth-guard mounts fn-call.js app-wide, but the page itself is confirmed by a
+   * human or not at all.
+   *
+   * tokenOnly: with the stubbed client fnFetch throws "Not signed in", which
+   * would say nothing about the guard.
+   * get_settings is a READ. */
+  /* The Lead Score panel calls lead-scorer AS THE SIGNED-IN USER.
+     Unlike the bot-admin spec this drives the PAGE'S OWN function — scorerApi is
+     what both converted call sites go through — so it covers the real wiring and
+     not just the helper. tokenOnly for the usual reason: with the stubbed client
+     fnFetch throws "Not signed in".
+     get_breakdown is a READ. */
+  {
+    name: 'lead-scorer panel calls scorerApi as the user',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    tokenOnly: true,
+    evals: [
+      [`(async function(){
+        if (typeof window.scorerApi !== 'function') return 'HARNESS: scorerApi absent';
+        var r = await window.scorerApi('get_breakdown', { contact_id: '${FIXTURE}', trigger: 'render-check' });
+        if (!r) return 'no response';
+        if (r.error) return 'error: ' + String(r.error).slice(0,120);
+        return 'ok';
+      })()`, 'ok'],
+    ],
+  },
+  {
+    name: 'bot-admin reachable as the signed-in user via fnFetch',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    tokenOnly: true,
+    evals: [
+      [`(async function(){
+        if (typeof window.fnFetch !== 'function') return 'HARNESS: fn-call.js not mounted';
+        var r = await window.fnFetch('bot-admin', { method:'POST', body: JSON.stringify({ action:'get_settings' }) });
+        var j = await r.json().catch(function(){ return {}; });
+        if (r.status !== 200) return 'HTTP ' + r.status + ' ' + JSON.stringify(j).slice(0,120);
+        return j && j.settings ? 'ok' : 'no settings in body: ' + JSON.stringify(j).slice(0,120);
+      })()`, 'ok'],
+    ],
+  },
   {
     name: 'maps double-load forced race',
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,

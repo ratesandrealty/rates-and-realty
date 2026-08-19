@@ -14,6 +14,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -29,6 +30,37 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   const ok = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, "Content-Type": "application/json" } });
   const err = (m: string, s = 400) => new Response(JSON.stringify({ error: m }), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
+
+  /* ADMIN ONLY, BEFORE req.json(). Added 2026-08-19.
+   *
+   * This authenticated nothing while reading and writing bot_settings,
+   * bot_conversations, bot_decisions and saved_searches with the service role.
+   * Measured open: an anonymous POST reached the dispatcher and was answered
+   * with the list of valid actions.
+   *
+   * roles:['admin'], NOT the default STAFF_ROLES, and that is deliberate.
+   * requireStaff defaults to ['admin','va','agent','loa'] — broader than the only
+   * surface that calls this. dashboard/admin.html gates on requireAdmin(), a
+   * hardcoded ADMIN_EMAILS allowlist holding one address, so accepting a va or
+   * agent here would make the DATA wider than the PAGE. That is exactly the
+   * insights-data mistake: the page said admin-only and its source said staff.
+   *
+   * FRONTEND FIRST: dashboard/admin.html's botAdmin() sent _SB_HEADERS — the
+   * anon key, hardcoded as a literal in that page — and was moved to fnFetch and
+   * deployed on its own before this landed. Proven with a live session by the
+   * render-check spec "bot-admin reachable as the signed-in user via fnFetch",
+   * which covers the fnFetch → bot-admin pair. The PAGE itself could not be
+   * covered: ADMIN_EMAILS contains only rene@, so the automation account is
+   * redirected off it and no automated run can open it. That half is confirmed
+   * by a human or not at all, and is called out in the handoff.
+   *
+   * No internal callers — nothing in supabase/functions calls this. */
+  const auth = await requireStaff(req, { roles: ['admin'], what: 'The AI Agent control panel' });
+  if (!auth.ok) {
+    return new Response(JSON.stringify({ error: auth.msg }), {
+      status: auth.status || 401, headers: { ...cors, "Content-Type": "application/json" },
+    });
+  }
 
   try {
     const body = await req.json();

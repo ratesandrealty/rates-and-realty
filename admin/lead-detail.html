@@ -22056,9 +22056,14 @@ async function exportDealAnalyzerPDF() {
         var _evtKey = 'event_fired_deal_analysis_' + cid + '_' + new Date().toISOString().slice(0, 10);
         if (!sessionStorage.getItem(_evtKey)) {
           sessionStorage.setItem(_evtKey, '1');
-          fetch(base + '/functions/v1/lead-scorer', {
+          /* SESSION, not the anon key. lead-scorer writes activity_events and
+             lead_score_history and reads contacts and sms_log with the service
+             role, and a guard is landing on it; the anon key identifies nobody.
+             fnFetch throws when there is no session — caught below by the
+             existing .then/.catch chain, which is fire-and-forget by design
+             here: a missed score event must not block the PDF. */
+          window.fnFetch('lead-scorer', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + anon, 'apikey': anon },
             body: JSON.stringify({
               action: 'record_event',
               contact_id: cid,
@@ -31369,12 +31374,17 @@ function renderScoreCard(lead, contact) {
 /* ── Lead Score panel — wired to /functions/v1/lead-scorer ──────── */
 const _SB_LS_URL = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || 'https://ljywhvbmsibwnssxpesh.supabase.co';
 const _SB_LS_KEY = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || '';
+/* SENDS THE SIGNED-IN USER. _SB_LS_KEY is the anon key and is left declared
+   because other code reads it; this function no longer uses it.
+   Frontend half of frontend-first: lead-scorer writes activity_events and
+   lead_score_history and reads contacts and sms_log with the service role, and
+   authenticated nobody. Shipped and confirmed before the guard, so a mistake
+   here shows up as a panel that still works rather than an outage. */
 async function scorerApi(action, payload) {
   payload = payload || {};
   try {
-    const r = await fetch(_SB_LS_URL + '/functions/v1/lead-scorer', {
+    const r = await window.fnFetch('lead-scorer', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: _SB_LS_KEY, Authorization: 'Bearer ' + _SB_LS_KEY },
       body: JSON.stringify(Object.assign({ action }, payload))
     });
     return await r.json();
