@@ -922,6 +922,20 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
       border-bottom: 1px solid var(--border2);
     }
     .task-row:last-child { border-bottom: none; }
+    /* The header that says selection exists. Quiet — it is a signpost, not a
+       control anybody needs to notice twice. */
+    .tk-listhead {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-bottom: 1px solid rgba(255,255,255,.07);
+      font-size: 0.7rem; color: rgba(255,255,255,.42); letter-spacing: .3px;
+    }
+    .tk-listhead-n { margin-left: auto; color: rgba(255,255,255,.3); }
+    /* STICKY, and the reason is the long list. The bar sits above the rows, so
+       ticking a row far down put the confirmation — and Delete — above the fold,
+       where you cannot see what you selected while acting on it. Sticking it to
+       the top of the scroll container keeps the count and the verbs visible for
+       every row in the list. */
+    #task-bulkbar { position: sticky; top: 0; z-index: 5; backdrop-filter: blur(3px); }
     /* Bulk bar controls. Deliberately quiet except Delete, which is the only one
        that cannot be undone and is the only one coloured as a warning. */
     .tk-bulk-btn {
@@ -933,6 +947,18 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
     /* Tag chips. Quieter than the assignee chip — whose the task is matters more
        than what it is about — and width-capped so a long company name cannot
        squeeze the title out. Full value is in the tooltip. */
+    /* PROVENANCE, from tasks.origin — never a heuristic. 320 of 331 tasks are
+       machine-made and an ordinary one looked exactly like something Rene typed.
+       The compound rule this replaced (related_table, or a clickup_automation_log
+       entry) misclassified 210 machine rows as human, which is why `origin`
+       exists and why the chip reads the column directly.
+       Only the MACHINE case is marked. Human is the unmarked default: 11 rows
+       carry it, and badging both would double the furniture to say the same
+       thing twice. */
+    .tk-chip-auto {
+      background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1);
+      color: rgba(255,255,255,.42); margin-right: 4px;
+    }
     .tk-chip-tag {
       background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12);
       color: #a9a396; max-width: 170px; overflow: hidden; text-overflow: ellipsis;
@@ -954,7 +980,17 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
       font-size: 0.75rem; color: var(--muted);
       margin-top: 2px;
     }
-    .task-due.overdue { color: #f87171; }
+    /* FOUR DUE STATES, NOT TWO. `bucket` has always had overdue / today /
+       upcoming / no_date and only overdue was rendered — so a task nobody has
+       scheduled looked exactly like one due next week, and that is the MAJORITY
+       state: 29 of 42 live tasks have no due date.
+       no_date is deliberately the quietest of the four rather than a warning. It
+       is not a fault, it is an unmade decision, and 29 amber rows would be a wall
+       of alarm that teaches people to ignore the colour that matters. */
+    .task-due.overdue  { color: #f87171; font-weight: 700; }
+    .task-due.today    { color: #C9A84C; font-weight: 700; }
+    .task-due.upcoming { color: rgba(255,255,255,.55); }
+    .task-due.nodate   { color: rgba(255,255,255,.32); font-style: italic; }
     .task-priority {
       margin-left: auto; padding: 3px 10px;
       border-radius: 999px; font-size: 0.68rem; font-weight: 700;
@@ -7431,6 +7467,44 @@ function _tkTagChips(t) {
   return html;
 }
 
+/* THE DUE LINE, ALWAYS RENDERED — including when there is no date.
+ *
+ * It used to be `t.due_date ? … : ''`, so 29 of the 42 live tasks showed nothing
+ * at all where the date goes and were indistinguishable from one due next week.
+ * "No due date" is a real state and the most common one; leaving the space blank
+ * made the majority case invisible.
+ *
+ * The bucket comes from the SERVER (task_list computes it in UTC, which is what
+ * tasks.due_date holds) rather than being recomputed here — a second rule for
+ * "is this overdue" would drift from the one the VA's board uses. `overdue` is
+ * still passed in because it also accounts for done/cancelled, which bucket does
+ * not: finished work cannot be late.
+ */
+function _tkDueHtml(t, done, overdue) {
+  if (!t.due_date) {
+    return '<div class="task-due nodate" title="Nobody has scheduled this yet">No due date</div>';
+  }
+  if (overdue) return '<div class="task-due overdue">⚠ Due ' + fmtDate(t.due_date) + '</div>';
+  if (done)    return '<div class="task-due upcoming">Due ' + fmtDate(t.due_date) + '</div>';
+  const cls = t.bucket === 'today' ? 'today' : 'upcoming';
+  const lead = t.bucket === 'today' ? 'Due today · ' : 'Due ';
+  return '<div class="task-due ' + cls + '">' + lead + fmtDate(t.due_date) + '</div>';
+}
+
+/* WHO MADE IT, from tasks.origin. Machine-made is marked; human is the unmarked
+   default, because 320 of 331 are machine-made and badging both would say the
+   same thing twice at twice the width.
+   task_list exposes this as `provenance` ('auto' | 'human'), computed from the
+   column — not from related_table, which misclassified 210 machine rows as human
+   before `origin` existed. */
+function _tkOriginChip(t) {
+  if (t.provenance !== 'auto') return '';
+  const why = t.related_table === 'auto_followup_lead' ? 'Raised automatically — stale-lead sweep'
+            : t.loan_order_id || t.related_table === 'loan_orders' ? 'Raised automatically — order reminder'
+            : 'Created by automation, not typed by a person';
+  return '<span class="tk-chip tk-chip-auto" title="' + esc(why) + '">⚙ auto</span>';
+}
+
 function _tkRow(t) {
   const done = t.status === 'completed';
   /* _rrD, not new Date(): tasks.due_date is `timestamp WITHOUT time zone` and
@@ -7447,10 +7521,9 @@ function _tkRow(t) {
         <button class="task-check ${done ? 'done' : ''}" onclick="toggleTask('${t.id}', ${done})" title="${done ? 'Mark open' : 'Mark done'}"></button>
         <div style="flex:1;min-width:0;">
           <div class="task-title ${done ? 'done' : ''}">${esc(t.title)}</div>
-          ${t.due_date ? `<div class="task-due ${overdue ? 'overdue' : ''}">
-            ${overdue ? '⚠ ' : ''}Due ${fmtDate(t.due_date)}
-          </div>` : ''}
+          ${_tkDueHtml(t, done, overdue)}
         </div>
+        ${_tkOriginChip(t)}
         ${_tkTagChips(t)}
         <span class="tk-chip ${b.cls}" title="Assignee">${esc(b.label)}</span>
         <span class="task-priority tp-${t.priority || 'normal'}">${t.priority || 'normal'}</span>
@@ -7564,8 +7637,33 @@ function renderTasks() {
     html += `<div class="tk-sec tk-sec-done">Done <span class="tk-sec-n">${done.length}</span></div>`
           + done.map(_tkRow).join('');
   }
-  el.innerHTML = html;
+  /* THE HEADER IS WHAT MAKES SELECTION DISCOVERABLE. Measured before adding it:
+     the bar works and is fully wired — checkbox 14x14, bar none -> flex with all
+     six controls — but it only EXISTS once something is ticked, so nothing on
+     screen said selection was possible. A bare 14px box beside the round
+     complete-toggle reads as decoration. This names it before you touch it. */
+  el.innerHTML = _tkListHeaderHtml(tasksData) + html;
   _tkRenderBulkBar();
+}
+
+/* Select-all + a label, above the rows. Counts only what is SELECTABLE and
+   VISIBLE, which is every rendered row — "all" must mean what the person can
+   see, never rows a folder is hiding. */
+function _tkListHeaderHtml(rows) {
+  const n = (rows || []).length;
+  if (!n) return '';
+  return '<div class="tk-listhead">'
+    + '<input type="checkbox" id="tk-selall" onchange="tkSelAllToggle(this.checked)" '
+    +   'title="Select every task shown" style="margin:0 8px 0 0;cursor:pointer;accent-color:#C9A84C;width:14px;height:14px;">'
+    + '<label for="tk-selall" style="cursor:pointer;">Select for bulk actions</label>'
+    + '<span class="tk-listhead-n">' + n + ' shown</span>'
+    + '</div>';
+}
+
+/* One control, both directions — a select-all that cannot unselect is a trap,
+   because the only way back would be ticking every box again by hand. */
+function tkSelAllToggle(on) {
+  if (on) tkSelAll(); else tkSelClear();
 }
 
 /* ── BULK SELECTION ───────────────────────────────────────────────────────
@@ -7583,12 +7681,16 @@ var _tkSel = new Set();
 
 function tkSelToggle(id, on){
   if (on) _tkSel.add(id); else _tkSel.delete(id);
+  _tkSyncSelAll();
   _tkRenderBulkBar();
 }
 
 function tkSelClear(){
   _tkSel.clear();
   document.querySelectorAll('.tk-sel').forEach(function(c){ c.checked = false; });
+  /* The header box is a second display of the same state; leaving it ticked
+     after Clear would show two controls disagreeing about what is selected. */
+  const all = document.getElementById('tk-selall'); if (all) all.checked = false;
   _tkRenderBulkBar();
 }
 
@@ -7604,6 +7706,17 @@ function tkSelAll(){
 }
 
 function _tkSelIds(){ return Array.from(_tkSel); }
+
+/* Keep the header box honest as individual rows are ticked: it reads "all of
+   them" and must not claim that while one is unticked. */
+function _tkSyncSelAll(){
+  const all = document.getElementById('tk-selall');
+  if (!all) return;
+  const boxes = document.querySelectorAll('.tk-sel');
+  const ticked = document.querySelectorAll('.tk-sel:checked').length;
+  all.checked = boxes.length > 0 && ticked === boxes.length;
+  all.indeterminate = ticked > 0 && ticked < boxes.length;
+}
 
 function _tkRenderBulkBar(){
   const bar = document.getElementById('task-bulkbar');
@@ -13256,10 +13369,49 @@ function lpFocusOrderType(type){
   })();
 }
 
+/* Open-task counts per order, keyed by loan_order_id. ONE query for the whole
+   pane rather than one per card — six order rows would otherwise be six round
+   trips to answer the same question.
+   Counts OPEN tasks only: a completed reminder is not something to chase, and a
+   card reading "3 tasks" that are all done would send somebody looking for work
+   that is finished. */
+var _lpOrderTaskCounts = {};
+async function _lpLoadOrderTaskCounts(cid){
+  _lpOrderTaskCounts = {};
+  try{
+    const r = await _authClient().rpc('task_list', {
+      p_scope: 'lead', p_filters: { contact_id: cid, status_group: 'live' }
+    });
+    if (r.error) throw r.error;
+    (r.data || []).forEach(function(t){
+      if (!t.loan_order_id) return;
+      const c = _lpOrderTaskCounts[t.loan_order_id] || (_lpOrderTaskCounts[t.loan_order_id] = { open: 0 });
+      c.open++;
+    });
+  }catch(e){
+    /* Soft: the count is an extra, and an order card that cannot show it must
+       still render the order. */
+    console.warn('[order task counts]', e && e.message);
+  }
+}
+
+/* Jump to the Tasks tab. The count is only useful if it leads somewhere — a
+   number you cannot open is a number you learn to ignore. */
+function lpOrderShowTasks(orderId){
+  const btn = Array.from(document.querySelectorAll('.ld-tab-btn'))
+    .find(function(b){ return b.textContent.trim() === 'Tasks'; });
+  if (typeof switchTab === 'function') switchTab('tasks', btn);
+  if (typeof showToast === 'function') {
+    const c = _lpOrderTaskCounts[orderId];
+    showToast((c && c.open ? c.open : 0) + ' open task(s) for this order — shown in this lead’s task list.');
+  }
+}
+
 async function lpLoadOrders(cid){
   const body = document.getElementById('lpOrdersBody'); if(!body) return;
   try{
     const cl = _authClient();
+    await _lpLoadOrderTaskCounts(cid);   // before render; the cards read it
     const oRes = await cl.from('loan_orders')
       /* id and the THREAD COLUMNS are selected here, not assumed. This list did
          not carry gmail_thread_id, so the follow-up button read it as absent on
@@ -14407,6 +14559,21 @@ function lpRenderOrders(){
           +(o.gmail_thread_id?'Replies in the existing thread':'⚠ No stored thread — this starts a NEW conversation')
           +'" style="background:transparent;border:none;color:'+(o.gmail_thread_id?'#C9A84C':'#d9a441')+';font-size:10px;cursor:pointer;padding:0;font-family:inherit;">'
           +(o.gmail_thread_id?'📨 Follow up':'📨 Follow up ⚠ new thread')+'</button>'
+        /* TASKS ON THIS ORDER — the reminder's own output, finally visible next
+           to the thing it is about. 38 tasks carry loan_order_id and every one of
+           them was raised by order_reminders_run, which until now could only be
+           seen in the Tasks tab with nothing saying which order it came from.
+           Rendered from _lpOrderTaskCounts, filled once per load rather than one
+           query per card. Silent when the count is zero: a "0 tasks" label on
+           every order is furniture, and most orders have none. */
+        +(function(){
+           var c = _lpOrderTaskCounts[o.id];
+           if (!c || !c.open) return '';
+           return '<button type="button" onclick="lpOrderShowTasks(\''+o.id+'\')" '
+             +'title="Open tasks raised for this order — click to see them in the Tasks tab" '
+             +'style="background:transparent;border:none;color:#C9A84C;font-size:10px;cursor:pointer;padding:0;font-family:inherit;">'
+             +'📋 '+c.open+' open task'+(c.open===1?'':'s')+'</button>';
+         })()
         +'</div><div id="lpRowNotes-'+o.id+'" style="display:none;"></div>';
     }
     return html+lpDropZoneHtml(row.type)+'</div>';

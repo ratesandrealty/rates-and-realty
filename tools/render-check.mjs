@@ -892,6 +892,84 @@ const SPECS = [
       })()`, 'ok'],
     ],
   },
+  /* THE TASK ROW'S VISIBLE STATES, all asserted together and self-cleaning.
+     Each of these was a signal the data already carried and the row threw away,
+     so the assertion is on what RENDERS — a column present in task_list proves
+     nothing about what a person sees. */
+  {
+    name: 'task row shows due state, provenance and the select-all header',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    tokenOnly: true,
+    evals: [
+      [`(async function(){
+        var cl = window._authClient(); var made = []; var FIX = '${FIXTURE}';
+        var mk = async function(title, due){
+          var r = await cl.rpc('task_upsert', { p_title:title, p_contact_id:'${FIXTURE}', p_due_date:due });
+          if (r.error) throw new Error(r.error.message);
+          made.push(r.data.id); return r.data.id;
+        };
+        var text = function(id){
+          var rows = document.querySelectorAll('.task-row');
+          for (var i=0;i<rows.length;i++){
+            var b = rows[i].querySelector('.tk-sel');
+            if (b && b.dataset.id === id) return rows[i];
+          }
+          return null;
+        };
+        try {
+          var pastISO   = new Date(Date.now() - 3*86400000).toISOString().slice(0,19);
+          var futureISO = new Date(Date.now() + 6*86400000).toISOString().slice(0,19);
+          var idNone = await mk('ZZ-TEST vis no date', null);
+          var idPast = await mk('ZZ-TEST vis overdue', pastISO);
+          var idFut  = await mk('ZZ-TEST vis upcoming', futureISO);
+          /* A MACHINE-ORIGIN ROW, created by the spec so the auto-chip assertion
+             is never vacuous. task_upsert cannot make one -- tg_tasks_set_origin
+             stamps 'user' for anything a signed-in human creates -- so this
+             inserts directly with an explicit origin, which the trigger honours
+             ('explicit wins'). Asserting only that a HUMAN row lacks the chip
+             would pass for a chip that never renders at all. */
+          var ins = await cl.from('tasks').insert({
+            title: 'ZZ-TEST vis machine', contact_id: FIX, status: 'open',
+            priority: 'normal', origin: 'system', related_table: 'auto_followup_lead'
+          }).select('id').single();
+          if (ins.error) return 'HARNESS: could not create a machine row - ' + ins.error.message;
+          made.push(ins.data.id);
+
+          var tb = Array.prototype.slice.call(document.querySelectorAll('.ld-tab-btn'))
+                     .filter(function(b){ return b.textContent.trim()==='Tasks'; })[0];
+          if (tb) window.switchTab('tasks', tb);
+          await window.loadTasks();
+
+          var out = [];
+          var rNone = text(idNone), rPast = text(idPast), rFut = text(idFut);
+          if (!rNone || !rPast || !rFut) return 'HARNESS: a fixture row did not render';
+
+          out.push('nodate=' + (rNone.querySelector('.task-due.nodate') ? rNone.querySelector('.task-due.nodate').textContent.trim() : 'MISSING'));
+          out.push('overdue=' + (rPast.querySelector('.task-due.overdue') ? 'yes' : 'MISSING'));
+          out.push('upcoming=' + (rFut.querySelector('.task-due.upcoming') ? 'yes' : 'MISSING'));
+          // human-made fixtures must NOT carry the auto chip
+          out.push('humanNoAutoChip=' + (rNone.querySelector('.tk-chip-auto') ? 'WRONG' : 'yes'));
+          // the header exists before anything is ticked
+          var head = document.querySelector('.tk-listhead');
+          var auto = document.querySelector('.tk-chip-auto');
+          out.push('autoChipRenders=' + (auto ? auto.textContent.trim() : 'MISSING'));
+          out.push('header=' + (head && /Select for bulk actions/.test(head.textContent) ? 'yes' : 'MISSING'));
+          // select-all ticks every visible box and the bar counts them
+          window.tkSelAllToggle(true);
+          await new Promise(function(r){ setTimeout(r,150); });
+          var bar = document.getElementById('task-bulkbar');
+          var boxes = document.querySelectorAll('.tk-sel').length;
+          out.push('selectAll=' + (bar && bar.textContent.indexOf(boxes + ' selected') === 0 ? 'yes' : 'got:' + (bar ? bar.textContent.slice(0,18) : 'none')));
+          out.push('sticky=' + (bar ? getComputedStyle(bar).position : 'none'));
+          window.tkSelAllToggle(false);
+          return out.join(' ');
+        } catch(e) { return 'threw: ' + ((e && e.message)||e); }
+        finally { if (made.length) { try { await cl.rpc('task_delete_bulk', { p_ids: made, p_force: true }); } catch(e){} } }
+      })()`,
+       'nodate=No due date overdue=yes upcoming=yes humanNoAutoChip=yes autoChipRenders=⚙ auto header=yes selectAll=yes sticky=sticky'],
+    ],
+  },
   {
     name: 'tasks folder names the single other assignee',
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,
