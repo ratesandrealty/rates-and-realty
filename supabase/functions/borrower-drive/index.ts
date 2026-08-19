@@ -14,43 +14,34 @@ const GDRIVE_LENDERS_ROOT   = '1Pg6GkbwzgiIp3PfZqP4oXycw7tLKUN8p';
 const GDRIVE_GUIDELINES_ROOT= '1lHCzRSy5Louw9N2ooqjdfnDXNLKYVniM';
 const GDRIVE_BASE = 'https://drive.google.com/drive/folders/';
 
-// Known borrower folders from Drive (pre-seeded from existing folders)
-const KNOWN_BORROWER_FOLDERS: Record<string, {id:string, url:string}> = {
-  'jose joey cruz':       { id:'1Wl8j-OOlsDOXGHWCJkwXzWs6QhdGx6SS', url:'https://drive.google.com/drive/folders/1Wl8j-OOlsDOXGHWCJkwXzWs6QhdGx6SS' },
-  'patricio garces':      { id:'1e89tt-iuuhBLBrxgUN0BpVNjEM9qzYAt', url:'https://drive.google.com/drive/folders/1e89tt-iuuhBLBrxgUN0BpVNjEM9qzYAt' },
-  'erika enciso refi':    { id:'1HbGAmJmvkWjf8zxeHJ3fLOjuDsW7NfJo', url:'https://drive.google.com/drive/folders/1HbGAmJmvkWjf8zxeHJ3fLOjuDsW7NfJo' },
-  'erika enciso':         { id:'1HbGAmJmvkWjf8zxeHJ3fLOjuDsW7NfJo', url:'https://drive.google.com/drive/folders/1HbGAmJmvkWjf8zxeHJ3fLOjuDsW7NfJo' },
-  'ismael mora docs':     { id:'1o8ofJXnQHAt8hsjfVzXkGLkcSZajNW9m', url:'https://drive.google.com/drive/folders/1o8ofJXnQHAt8hsjfVzXkGLkcSZajNW9m' },
-  'ismael mora':          { id:'1o8ofJXnQHAt8hsjfVzXkGLkcSZajNW9m', url:'https://drive.google.com/drive/folders/1o8ofJXnQHAt8hsjfVzXkGLkcSZajNW9m' },
-  'josue ramos':          { id:'1SncZZLAp1wUISjZfWKT2W0_gn12xeE_F', url:'https://drive.google.com/drive/folders/1SncZZLAp1wUISjZfWKT2W0_gn12xeE_F' },
-  'josh ramos':           { id:'1SncZZLAp1wUISjZfWKT2W0_gn12xeE_F', url:'https://drive.google.com/drive/folders/1SncZZLAp1wUISjZfWKT2W0_gn12xeE_F' },
-  'karina beltran buyer': { id:'1__ncO_lYLMx_juBnVzJ84amC3b8oEHfG', url:'https://drive.google.com/drive/folders/1__ncO_lYLMx_juBnVzJ84amC3b8oEHfG' },
-  'karina beltran':       { id:'1__ncO_lYLMx_juBnVzJ84amC3b8oEHfG', url:'https://drive.google.com/drive/folders/1__ncO_lYLMx_juBnVzJ84amC3b8oEHfG' },
-  'isabel heloc':         { id:'10zo3q4Z549hCGTPfFcyeFQjFo_SYADg9', url:'https://drive.google.com/drive/folders/10zo3q4Z549hCGTPfFcyeFQjFo_SYADg9' },
-  'manny nieto refi':     { id:'1eM6MLvO8nWpQRhgMDrTdVRNcsGoe9DAW', url:'https://drive.google.com/drive/folders/1eM6MLvO8nWpQRhgMDrTdVRNcsGoe9DAW' },
-  'manny nieto':          { id:'1eM6MLvO8nWpQRhgMDrTdVRNcsGoe9DAW', url:'https://drive.google.com/drive/folders/1eM6MLvO8nWpQRhgMDrTdVRNcsGoe9DAW' },
-  'bridge deal jesse':    { id:'1eG1FrPNfn2pnadwu8P7UC4WD71wz8rQf', url:'https://drive.google.com/drive/folders/1eG1FrPNfn2pnadwu8P7UC4WD71wz8rQf' },
-  'jesse':                { id:'1eG1FrPNfn2pnadwu8P7UC4WD71wz8rQf', url:'https://drive.google.com/drive/folders/1eG1FrPNfn2pnadwu8P7UC4WD71wz8rQf' },
-};
-
-function normalize(s: string) { return s.toLowerCase().replace(/[^a-z0-9 ]/g,'').trim(); }
-
-function searchKnownFolders(firstName: string, lastName: string): {id:string,url:string,name:string}|null {
-  const full = normalize(`${firstName} ${lastName}`);
-  const first = normalize(firstName);
-  const last = normalize(lastName);
-  
-  // Exact full name match first
-  for (const [key, val] of Object.entries(KNOWN_BORROWER_FOLDERS)) {
-    if (key === full) return { ...val, name: key };
-  }
-  // Partial: last name + first name in any folder key
-  for (const [key, val] of Object.entries(KNOWN_BORROWER_FOLDERS)) {
-    if (key.includes(last) && key.includes(first)) return { ...val, name: key };
-    if (key.includes(last)) return { ...val, name: key };
-  }
-  return null;
-}
+/* KNOWN_BORROWER_FOLDERS AND ITS MATCHER WERE REMOVED 2026-08-19.
+ *
+ * The map held NINE REAL BORROWER NAMES hardcoded in source -- several with
+ * the loan type in the key ("… refi", "… heloc", "… buyer") -- together with
+ * the Drive folder id for each. This function has no caller authentication of
+ * any kind, so search_borrower_folder returned that entire list, deduped, to
+ * ANY anonymous caller: measured, HTTP 200 with no credential at all.
+ *
+ * It was also wrong. The fallback arm matched on last name alone --
+ *     if (key.includes(last)) return { ...val, name: key };
+ * -- and normalize("") is "", which every key contains. So a contact with an
+ * empty last name matched the FIRST entry in the map, and the API default is
+ * auto_save = true, which writes that folder id onto the contact. A borrower
+ * with no surname would have been linked to a different borrower's documents.
+ * The UI never triggered it (lead-detail passes auto_save:false), so this was
+ * a live defect reachable only by calling the function directly -- which
+ * anyone could.
+ *
+ * NOTHING REPLACES IT, deliberately. The real mechanism is
+ * contacts.gdrive_folder_id, checked first in findOrCreateBorrowerFolder and
+ * untouched by this change: a contact whose folder is linked still resolves.
+ * What is lost is a convenience for nine hardcoded people; every other
+ * contact already took the create-a-folder path, which is what they now get
+ * too. If folder discovery by name is wanted again it belongs in Drive (a
+ * files.list query against the Borrowers root) or in a table -- not in a
+ * constant that ages, cannot be corrected without a deploy, and is served to
+ * the public.
+ */
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
@@ -92,31 +83,17 @@ async function findOrCreateBorrowerFolder(body: any) {
     }
   }
 
-  // 2. Search known existing folders by name
+  /* 2. NO NAME SEARCH ANY MORE. The only source of "an existing folder for this
+     borrower" was the hardcoded map removed above, so every contact whose
+     gdrive_folder_id is unset now takes the create-a-folder path below -- which
+     is the path all but nine of them already took.
+
+     `auto_save` survives in the request shape and now governs nothing, because
+     the only write it ever gated was the one that linked a guessed folder. It is
+     left accepted-and-ignored rather than rejected so the existing caller keeps
+     working unchanged; lead-detail sends auto_save:false. */
   const fn = first_name || '';
   const ln = last_name || '';
-  const match = searchKnownFolders(fn, ln);
-
-  if (match) {
-    // Found existing folder — link it to contact if we have the ID
-    if (contact_id && auto_save) {
-      await sb.from('contacts').update({
-        gdrive_folder_id: match.id,
-        gdrive_folder_url: match.url,
-        gdrive_folder_name: match.name
-      }).eq('id', contact_id);
-    }
-    return new Response(JSON.stringify({
-      success: true,
-      found: true,
-      already_linked: false,
-      folder_id: match.id,
-      folder_url: match.url,
-      folder_name: match.name,
-      drive_root: `${GDRIVE_BASE}${GDRIVE_BORROWERS_ROOT}`,
-      message: `Found existing Drive folder: "${match.name}"`
-    }), { headers: { ...cors, 'Content-Type': 'application/json' } });
-  }
 
   // 3. No existing folder found — return instructions to create one
   // (Actual folder creation requires Google Drive API write access via OAuth)
@@ -139,29 +116,19 @@ async function findOrCreateBorrowerFolder(body: any) {
 }
 
 // Search only — don't auto-link
-async function searchBorrowerFolder(body: any) {
-  const { first_name, last_name } = body;
-  const match = searchKnownFolders(first_name || '', last_name || '');
-  
-  if (match) {
-    return new Response(JSON.stringify({
-      success: true, found: true,
-      folder_id: match.id, folder_url: match.url, folder_name: match.name
-    }), { headers: { ...cors, 'Content-Type': 'application/json' } });
-  }
+/* THIS ACTION WAS THE DISCLOSURE. It answered a no-match by returning
+   `all_known_folders` -- every borrower name and Drive folder id in the map --
+   and nothing authenticates this function, so an anonymous POST received the
+   lot. Measured before the fix: HTTP 200 with no credential, nine names.
 
-  // Return all known folders for manual matching
-  const allFolders = Object.entries(KNOWN_BORROWER_FOLDERS).map(([name, info]) => ({
-    name, folder_id: info.id, folder_url: info.url
-  }));
-  // Deduplicate by folder_id
-  const seen = new Set();
-  const unique = allFolders.filter(f => { if (seen.has(f.folder_id)) return false; seen.add(f.folder_id); return true; });
-
+   The action is KEPT rather than deleted so an unknown caller gets an honest
+   negative instead of "Unknown action", but it has nothing left to search and
+   never enumerates anything. No repo caller invokes it; the lead-detail modal
+   uses find_or_create_borrower_folder. */
+async function searchBorrowerFolder(_body: any) {
   return new Response(JSON.stringify({
     success: true, found: false,
-    message: 'No matching folder found',
-    all_known_folders: unique
+    message: 'Folder search by name is no longer available. Link a folder explicitly with link_folder_to_contact, or open the Borrowers Drive folder.',
   }), { headers: { ...cors, 'Content-Type': 'application/json' } });
 }
 
@@ -190,6 +157,6 @@ async function getDriveConfig() {
     borrowers: { folder_id: GDRIVE_BORROWERS_ROOT, folder_url: `${GDRIVE_BASE}${GDRIVE_BORROWERS_ROOT}` },
     lenders:   { folder_id: GDRIVE_LENDERS_ROOT,   folder_url: `${GDRIVE_BASE}${GDRIVE_LENDERS_ROOT}` },
     guidelines:{ folder_id: GDRIVE_GUIDELINES_ROOT, folder_url: `${GDRIVE_BASE}${GDRIVE_GUIDELINES_ROOT}` },
-    known_borrower_folders: Object.keys(KNOWN_BORROWER_FOLDERS).length
+    known_borrower_folders: 0
   }), { headers: { ...cors, 'Content-Type': 'application/json' } });
 }
