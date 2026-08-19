@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { requireStaff } from '../_shared/require-staff.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -45,6 +46,33 @@ const GDRIVE_BASE = 'https://drive.google.com/drive/folders/';
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+
+  /* STAFF ONLY, and BEFORE req.json() -- a guard placed after body parsing is
+     one a later-added action can be written in front of by accident.
+
+     Until 2026-08-19 this function authenticated nothing. link_folder_to_contact
+     takes a contact_id and a folder_id from the body and writes them onto
+     contacts with the service role, so an anonymous caller could repoint any
+     borrower's document folder at a Drive folder of their own. Measured open:
+     HTTP 200 with no credential.
+
+     No borrower path exists to break. Borrowers hold no Supabase accounts at all
+     -- the portal is unauthenticated by design and uses row-held tokens -- and
+     nothing in public/ calls this. Managing a borrower's Drive folder is staff
+     work, so the default STAFF_ROLES set is right; there is no narrower role
+     that needs it and no broader one that should have it.
+
+     FRONTEND FIRST: admin/lead-detail.html's callBorrowerDrive was moved to
+     fnFetch (the signed-in user's token) and confirmed working against a real
+     session before this landed -- render-check spec "lead-detail Drive panel
+     calls borrower-drive as the user", which is tokenOnly for that reason. */
+  const auth = await requireStaff(req, { what: 'Borrower Drive folder management' });
+  if (!auth.ok) {
+    return new Response(JSON.stringify({ error: auth.msg }), {
+      status: auth.status || 401, headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
+
   try {
     const body = await req.json();
     const { action } = body;

@@ -674,6 +674,38 @@ const SPECS = [
      Measured against the unfixed code it returns 2; the fix (places-autocomplete
      marking its tag data-gmaps-js="1", so both guards see each other) is what
      brings it to 1. */
+  /* The Drive panel calls borrower-drive as the SIGNED-IN USER, and a guard is
+     landing on that function. This is the frontend half of the frontend-first
+     order, asserted rather than assumed.
+
+     tokenOnly, because it is the whole point: with the stubbed client there is
+     no session, fnFetch throws "Not signed in", and the spec would pass or fail
+     for reasons that say nothing about the guard. Only a real session exercises
+     what production does.
+
+     READ-ONLY. find_or_create_borrower_folder with auto_save:false performs no
+     write, and the contact is the ZZ-TEST fixture rather than a borrower. */
+  {
+    name: 'lead-detail Drive panel calls borrower-drive as the user',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    tokenOnly: true,
+    evals: [
+      [`(async function(){
+        if (typeof window.callBorrowerDrive !== 'function') return 'HARNESS: callBorrowerDrive absent';
+        if (typeof window.fnFetch !== 'function') return 'HARNESS: fn-call.js not loaded';
+        var r = await window.callBorrowerDrive({
+          action: 'find_or_create_borrower_folder',
+          contact_id: '${FIXTURE}',
+          first_name: 'ZZ-TEST', last_name: 'Fixture Borrower',
+          auto_save: false
+        });
+        if (!r) return 'no response';
+        if (r.error) return 'error: ' + r.error;
+        return r.success === true ? 'ok' : 'unexpected: ' + JSON.stringify(r).slice(0,120);
+      })()`, 'ok'],
+    ],
+  },
   {
     name: 'maps double-load forced race',
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,

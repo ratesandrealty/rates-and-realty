@@ -15,9 +15,12 @@
 // Headers:
 //   Authorization: Bearer <supabase_access_token>
 //
-// Auth: the bearer is a Supabase user JWT. We verify it via sb.auth.getUser()
-// using the service-role client — the service role only verifies the JWT; it
-// does not write any storage objects.
+// Auth: requireStaff(req) — a real session whose auth_user_roles.role is staff,
+// or the service key. This was getUser() alone until 2026-08-19, which admitted
+// ANY valid session regardless of role; see the note at the check itself for why
+// that was safe only by accident and stops being safe the moment borrowers hold
+// accounts. The service role is used to verify and to read the Drive token; it
+// writes no table and no storage object.
 //
 // Google Drive auth: uses the same user OAuth refresh token flow as
 // gdrive-sync / gdrive-proxy (GOOGLE_DRIVE_REFRESH_TOKEN + GOOGLE_CLIENT_ID
@@ -28,6 +31,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { getDriveAccessToken } from "../_shared/google-user-token.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { PDFDocument, degrees } from "https://esm.sh/pdf-lib@1.17.1";
+import { requireStaff } from "../_shared/require-staff.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -61,15 +65,32 @@ Deno.serve(async (req: Request) => {
   const err = (m: string, s = 400) => new Response(JSON.stringify({ error: m }), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
 
   try {
-    // 1. Verify Supabase JWT from Authorization header.
-    const authHeader = req.headers.get("Authorization") || "";
-    const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (!jwt) return err("Missing Authorization header", 401);
+    /* 1. STAFF ONLY.
+     *
+     * This used to be getUser() alone: any VALID SESSION passed, whatever role
+     * it held. That was equivalent to staff-only by accident of the user table
+     * rather than by design -- auth.users holds three rows and all three are
+     * staff. It refused the public anon key correctly (measured: 401 "Invalid or
+     * expired session"), so it was never open to the internet.
+     *
+     * THE BORROWER PORTAL MIGRATION IS WHAT BREAKS THE ACCIDENT. The moment
+     * borrowers hold auth.users rows, every one of them satisfies getUser() and
+     * this function rotates or crops ANY Drive file by id -- including another
+     * borrower's, since the id comes from the request body and nothing checks
+     * ownership. The role check costs nothing today and is load-bearing the day
+     * that lands, which is why it goes in before the portal work rather than
+     * after.
+     *
+     * requireStaff also accepts the service key from either header, so an
+     * internal caller keeps working; there is none today. No frontend change was
+     * needed -- both call sites in admin/lead-detail.html already send the
+     * signed-in user's access token, so the frontend half of frontend-first was
+     * already satisfied when this landed. */
+    const auth = await requireStaff(req, { what: 'Document rotate and crop' });
+    if (!auth.ok) return err(auth.msg || 'Not permitted', auth.status || 401);
 
     const sb = createClient(SUPABASE_URL, SERVICE_KEY);
-    const { data: userData, error: authErr } = await sb.auth.getUser(jwt);
-    if (authErr || !userData?.user) return err("Invalid or expired session", 401);
-    const userEmail = userData.user.email || "(no email)";
+    const userEmail = auth.userId ? `uid:${auth.userId}` : `role:${auth.role}`;
 
     // 2. Parse body and figure out the operation.
     //    Dispatch: if `crop` object is set → crop. Else if rotation_degrees → rotate.

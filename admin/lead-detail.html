@@ -6242,19 +6242,32 @@ _ldGateTabs();
 window._leadDriveFolderId = null;
 window._leadDriveFolderUrl = null;
 
+/* SENDS THE SIGNED-IN USER, not the anon key. This is step 1 of the
+   frontend-first order: borrower-drive has no in-function guard today, and
+   link_folder_to_contact lets its caller repoint any contact's Drive folder, so
+   a requireStaff() guard is coming. It cannot land until this call identifies
+   somebody -- the anon key is printed in /api/env.js and identifies nobody.
+
+   Shipped and confirmed working BEFORE the guard, deliberately. In this order a
+   mistake here shows up as a page that still works, because the function is not
+   enforcing yet. Done backwards it is an outage, and you cannot tell whether the
+   token or the guard is at fault because both changed at once.
+
+   fnFetch builds a raw fetch, so no x-client-info is sent and no preflight
+   change is needed. It throws rather than falling back to the anon key when
+   there is no session; the catch turns that into the same {error} shape the two
+   callers already render. */
 async function callBorrowerDrive(payload) {
-  const cfg = window.APP_CONFIG || {};
-  const res = await fetch(`${cfg.SUPABASE_URL}/functions/v1/borrower-drive`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${cfg.SUPABASE_ANON_KEY}`,
-      'apikey': cfg.SUPABASE_ANON_KEY
-    },
-    body: JSON.stringify(payload)
-  });
-  const text = await res.text();
-  try { return JSON.parse(text); } catch(e) { return { error: 'Invalid response: ' + text.slice(0,200) }; }
+  try {
+    const res = await fnFetch('borrower-drive', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    const text = await res.text();
+    try { return JSON.parse(text); } catch(e) { return { error: 'Invalid response: ' + text.slice(0,200) }; }
+  } catch (e) {
+    return { error: (e && e.message) || 'Could not reach borrower-drive' };
+  }
 }
 
 /* SAY WHICH STATE THIS IS IN, rather than swapping the control silently.

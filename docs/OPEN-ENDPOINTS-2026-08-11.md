@@ -115,7 +115,7 @@ Send count corrected from 11 to **9**.
 | `treasury-yields` | SERVICE-ROLE,WRITES-DB |
 | `upload-guideline` | SERVICE-ROLE,WRITES-DB,STORAGE |
 | `weekly-backup` | SERVICE-ROLE,WRITES-DB,DRIVE |
-| `borrower-drive` | SERVICE-ROLE,WRITES-DB,DRIVE |
+| ~~`borrower-drive`~~ | **CLOSED 2026-08-19 — `requireStaff(req)`.** Was fully open: HTTP 200 with no credential, disclosing nine hardcoded borrower names + Drive folder ids, and `link_folder_to_contact` allowed anonymous rewrites of any contact's Drive folder pointer. Frontend moved to the session token first, confirmed with a real session, then guarded. Proof: `docs/BORROWER-DRIVE-AND-SAVE-DOCUMENT-GUARDS-2026-08-19.md` |
 
 ### Everything else
 
