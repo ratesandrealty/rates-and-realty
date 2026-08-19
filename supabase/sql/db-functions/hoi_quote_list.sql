@@ -1,11 +1,11 @@
--- hoi_quote_list(p_contact_id uuid)
+-- hoi_quote_list(p_contact_id uuid, p_include_archived boolean)
 -- language: sql   SECURITY DEFINER
--- Captured from production 2026-08-17. This layer had NO git history:
+-- Captured from production 2026-08-19. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
 
-CREATE OR REPLACE FUNCTION public.hoi_quote_list(p_contact_id uuid)
+CREATE OR REPLACE FUNCTION public.hoi_quote_list(p_contact_id uuid, p_include_archived boolean DEFAULT false)
  RETURNS jsonb
  LANGUAGE sql
  STABLE SECURITY DEFINER
@@ -31,7 +31,15 @@ AS $function$
 
      NOT TWICE: voe-inbound-poll already writes inbound replies into email_log, so
      a message can genuinely be in both tables. The email_log side excludes any
-     row already carried as a reply for this request. */
+     row already carried as a reply for this request.
+
+     ARCHIVED ROWS ARE FILTERED HERE, AT DISPLAY, AND NOWHERE ELSE. archived_at
+     means "not pursuing" — a decision of ours, distinct from the agent having
+     declined, which is what status carries. The filter lives in this function
+     rather than in quote_reply_match on purpose: correlation must keep working on
+     an archived request, because a reply that arrives after you have given up is
+     precisely the one worth surfacing. Passing p_include_archived => true brings
+     them back so they can be un-archived. */
   select coalesce(
     jsonb_agg(s.row_json order by s.sent_at desc nulls last, s.created_at desc),
     '[]'::jsonb)
@@ -91,5 +99,6 @@ AS $function$
            ) as row_json
     from public.hoi_quote_requests h
     where h.contact_id = p_contact_id
+      and (p_include_archived or h.archived_at is null)
   ) s;
 $function$;

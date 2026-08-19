@@ -1,6 +1,6 @@
 -- vendor_directory_upsert(p_id uuid, p_role text, p_name text, p_company text, p_phone text, p_email text, p_website text, p_notes text)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-05. This layer had NO git history:
+-- Captured from production 2026-08-19. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -66,6 +66,11 @@ begin
       website=coalesce(p_website,website), usage_count=coalesce(usage_count,0)+1, last_used_at=now(), updated_at=now()
     where id=v_dupe returning * into v_row;
     return v_row;
+  end if;
+
+  /* NO IDENTITY, NO NEW ROW. See the note at the top of this migration. */
+  if not v_email_ok and nullif(trim(coalesce(p_company,'')),'') is null then
+    raise exception 'A vendor needs a complete email address or a company name. Without one of them this cannot be matched to the same person next time, and every save would create another row.';
   end if;
 
   insert into public.vendor_directory(role, category, name, first_name, last_name, company, phone, email, website, notes, usage_count, last_used_at)

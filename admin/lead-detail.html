@@ -13182,7 +13182,21 @@ async function lpVendorSaveRow(role){
   const name=(g('first_name')+' '+g('last_name')).trim(), company=g('company'), email=g('email');
   const _ph=_lpPhoneForSave(g('phone')), phone=(_ph===undefined?null:_ph);
   const toastFn = window.showToast||window.toast||function(){};
+  /* A NAME ALONE IS NOT AN IDENTITY, and this is what minted the fragments.
+     vendor_directory_match's only tier that runs without a complete email keys
+     on exact name AND exact company, so with no company "Alex" and "Alex Duarte"
+     are two different vendors: saving while a name is half-typed created a row
+     per prefix. Measured 2026-08-17/18 — Alex, Alex Duarte, Duarte, Rosie,
+     Rosie Quattrocchi, euni. Six rows, two people.
+     Same standard the HOI recipient save already applies ("Add an agent email
+     for the recipient"), and the RPC refuses this case too — both halves, as the
+     loan_contacts fix put it, because either alone still leaves the pickers full
+     of prefixes. */
   if(!name && !company){ toastFn('Add a name or company first.', true); return; }
+  if(!company && !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email)){
+    toastFn('Add an email or a company before saving to the directory — without one of them this cannot be matched to the same person next time.', true);
+    return;
+  }
   try{
     const r = await _authClient().rpc('vendor_directory_upsert', { p_id:null, p_role:role, p_name:name||null, p_company:company||null, p_phone:phone||null, p_email:email||null, p_website:null, p_notes:null });
     if(r.error) throw r.error;
@@ -13894,8 +13908,25 @@ function lpHoiRecipSearch(inputEl){
     try{
       let res=await _authClient().rpc('vendor_directory_search',{ p_role:'hoi_agent', p_query:q, p_limit:8 });
       if(!res.error) rows=res.data||[];
+      /* The 'hoi' tier matches NOTHING today — vendor_directory holds no row with
+         that role (measured 2026-08-19: hoi_agent 7, and no 'hoi' at all). Kept as
+         the legacy-vocabulary net, and it costs a round trip only when hoi_agent
+         has already come back empty. */
       if(!rows.length){ const a=await _authClient().rpc('vendor_directory_search',{ p_role:'hoi', p_query:q, p_limit:8 }); if(!a.error) rows=a.data||[]; }
       if(!rows.length){ const a=await _authClient().rpc('vendor_directory_search',{ p_role:null, p_query:q, p_limit:8 }); if(!a.error) rows=a.data||[]; }
+      /* MATCHES FOR THIS ROW FIRST — the same sort the Orders picker got in
+         8277b4e (2026-08-11). That commit was about the Orders picker and never
+         touched this function, which had carried the identical all-roles fallback
+         since d4c72f7 (2026-07-07): fixed in one picker, missed in the other.
+         Without it, once the fallback fires the list is every role mixed together
+         in usage order, so the actual insurance agent can sit fourth behind a
+         title officer. Stable sort — exact-role rows keep their relative ranking,
+         everything else follows. */
+      rows = rows.slice().sort(function(a,b){
+        const am = (a && a.role === 'hoi_agent') ? 0 : 1;
+        const bm = (b && b.role === 'hoi_agent') ? 0 : 1;
+        return am - bm;
+      });
     }catch(e){}
     if(!rows.length){ drop.style.display='none'; drop.innerHTML=''; return; }
     drop._map={};
@@ -14045,15 +14076,43 @@ async function lpHoiSendAll(){
   if(ok>0){ _lpHoiRecipients=[]; lpHoiCloseModal(); }
   if(ok>0 || fail>0) lpHoiLoadList();
 }
+/* Whether the panel is currently showing archived requests too. Per-page, not
+   persisted: "show me the ones I gave up on" is a thing you do once to find
+   something, not a mode you want to come back to tomorrow. */
+let _lpHoiShowArchived = false;
+let _lpHoiArchivedCount = 0;
 async function lpHoiLoadList(){
   const box=document.getElementById('lpHoiQuotes'); if(!box) return;
   const cid=lpCid(); if(!cid){ box.innerHTML=''; return; }
   try{
-    const r=await _authClient().rpc('hoi_quote_list',{ p_contact_id:cid });
+    /* The COUNT is a separate head request rather than something hoi_quote_list
+       returns, because that function's contract is a jsonb ARRAY and every caller
+       treats it as one. A count is needed even when the list is filtered — the
+       toggle has to be able to say how many are hidden, and a toggle that reads
+       "Show archived" with nothing behind it is furniture. */
+    const cnt=await _authClient().from('hoi_quote_requests')
+      .select('id',{ count:'exact', head:true })
+      .eq('contact_id',cid).not('archived_at','is',null);
+    _lpHoiArchivedCount = cnt.error ? 0 : (cnt.count||0);
+    const r=await _authClient().rpc('hoi_quote_list',{ p_contact_id:cid, p_include_archived:_lpHoiShowArchived });
     if(r.error) throw r.error;
     _lpHoiList=r.data||[];
     lpHoiRenderList(_lpHoiList);
   }catch(e){ console.warn('[hoi_quote_list]', e&&e.message); }
+}
+function lpHoiToggleArchived(){ _lpHoiShowArchived=!_lpHoiShowArchived; lpHoiLoadList(); }
+/* Archiving is a plain column write, the same way status and quote_amount are
+   written from this panel — no RPC, because there is no decision to make
+   server-side and a one-line guard would just be RLS restated. */
+async function lpHoiArchive(id, on){
+  try{
+    const r=await _authClient().from('hoi_quote_requests')
+      .update({ archived_at: on ? new Date().toISOString() : null, updated_at:new Date().toISOString() })
+      .eq('id',id);
+    if(r.error) throw r.error;
+    _lpHoiToast(on ? 'Archived — a late reply will still attach to it.' : 'Restored.');
+    lpHoiLoadList();
+  }catch(e){ _lpHoiToast((on?'Archive':'Restore')+' failed: '+((e&&e.message)||e), true); }
 }
 /* ── HOI QUOTE REQUESTS — GRID + COLLAPSE, the treatment VOE got ─────────────
  *
@@ -14305,7 +14364,12 @@ function _lpHoiActivityHtml(r){
 }
 function lpHoiRenderList(rows){
   const box=document.getElementById('lpHoiQuotes'); if(!box) return;
-  if(!rows||!rows.length){ box.innerHTML=''; return; }
+  /* NOT `if(!rows.length) return` any more. A contact whose every request is
+     archived has an empty list AND something to show — bailing here would paint
+     nothing, with no toggle, and the archived rows would be unreachable from the
+     page that archived them. Silent only when there is genuinely nothing. */
+  if((!rows||!rows.length) && !_lpHoiArchivedCount){ box.innerHTML=''; return; }
+  rows = rows || [];
   const ctl='background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:#ddd;font-size:11px;padding:3px 6px;';
   /* Default open only for a single request, closed when there are several —
      one quote is the common case and nothing changes for it. Recomputed each
@@ -14328,7 +14392,13 @@ function lpHoiRenderList(rows){
     const key=_lpActState(r.status, 'outbound');
     const failed=(key==='failed');
     const open=!!_lpHoiOpen[r.id];
-    return '<div data-hoi-id="'+lpEsc(r.id)+'" style="position:relative;border:1px solid '+(seld?'rgba(80,200,120,.5)':(failed?'rgba(229,72,77,.45)':'rgba(255,255,255,.08)'))+';'+_lpActRowCss(key)+'border-radius:8px;padding:8px;">'
+    /* An archived card is only reachable with the toggle on, so it is never a
+       surprise — it is dimmed rather than recoloured, because archived is not a
+       STATE of the request. The status chip still says what the agent did; the
+       dimming says we stopped chasing it. Two different facts, two different
+       channels, which is the whole reason archived_at is not a status value. */
+    const arch=!!r.archived_at;
+    return '<div data-hoi-id="'+lpEsc(r.id)+'" style="position:relative;'+(arch?'opacity:.55;':'')+'border:1px solid '+(seld?'rgba(80,200,120,.5)':(failed?'rgba(229,72,77,.45)':'rgba(255,255,255,.08)'))+';'+_lpActRowCss(key)+'border-radius:8px;padding:8px;">'
       /* The whole header is the toggle — a caret alone is a small target in a
          dense panel, and there is nothing else in the strip to click. */
       +'<div onclick="lpHoiToggle(\''+r.id+'\')" style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;min-width:0;">'
@@ -14338,6 +14408,8 @@ function lpHoiRenderList(rows){
             +'<span style="font-size:12px;font-weight:600;color:'+(failed?'#FFD9D9':'#e2e2e2')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+lpEsc(r.company_name||r.agent_name||'(company)')+'</span>'
             +_lpActChip(key)
             +(seld?'<span style="color:#50c878;font-size:10px;font-weight:700;flex-shrink:0;">✓ Selected</span>':'')
+            /* Dimming alone reads as a rendering fault. The word says which. */
+            +(arch?'<span style="color:#8f8f8f;font-size:9.5px;font-weight:700;flex-shrink:0;border:1px solid rgba(255,255,255,.14);border-radius:4px;padding:0 4px;">ARCHIVED</span>':'')
           +'</span>'
           /* THE AMOUNT IS IN THE HEADER. Comparing quotes is the whole reason
              this list exists, and it was the one number you had to open a row
@@ -14361,6 +14433,11 @@ function lpHoiRenderList(rows){
           +'<select onchange="lpHoiStatusChange(\''+r.id+'\',this.value)" style="'+ctl+'">'+stOpts+'</select>'
           +'<input placeholder="$ quote" value="'+lpEsc(amt)+'" onchange="lpHoiQuoteAmount(\''+r.id+'\',this.value)" style="'+ctl+'width:88px;">'
           +(seld?'<span style="font-size:11px;color:#50c878;font-weight:700;">Winner</span>':'<button onclick="lpHoiSelect(\''+r.id+'\')" style="background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;cursor:pointer;">Select ✓</button>')
+          /* NOT a delete and not a status. It is offered on the winner too —
+             a selected quote can still be one you stop chasing, and hiding the
+             control there would mean the only way to tidy the panel was to
+             un-select the agent you actually went with. */
+          +'<button onclick="lpHoiArchive(\''+r.id+'\','+(arch?'false':'true')+')" title="'+(arch?'Bring this request back into the panel':'Hide this request. It is not deleted, and a late reply still attaches to it.')+'" style="'+ctl+'cursor:pointer;margin-left:auto;">'+(arch?'Restore':'Archive')+'</button>'
         +'</div>'
         /* THE AGENT'S REPLY, if the poller correlated one to THIS request.
            hoi_quote_list carries them per request (q.row_id = h.id), so a
@@ -14385,7 +14462,16 @@ function lpHoiRenderList(rows){
   /* The heading stays OUTSIDE the grid — dropping it in would make it a cell and
      stand it beside the first card instead of above them all. Same reason
      lpVoeCards holds only cards. */
-  box.innerHTML='<div style="font-size:10px;font-weight:700;color:#8f8f8f;text-transform:uppercase;letter-spacing:.5px;margin:2px 0 5px;">Quote requests ('+rows.length+')</div>'
+  /* The count in the heading counts what is ON SCREEN. When the toggle is off
+     the archived ones are not shown and are not counted; the toggle beside it
+     says how many are being withheld, so the two numbers cannot disagree about
+     the same set. A heading that counted hidden rows would be the same defect as
+     an order card advertising completed tasks. */
+  const archToggle = _lpHoiArchivedCount
+    ? '<button onclick="lpHoiToggleArchived()" style="background:none;border:none;color:#8f8f8f;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;cursor:pointer;padding:0;text-decoration:underline;font-family:inherit;">'
+        +(_lpHoiShowArchived?'Hide archived':('Show archived ('+_lpHoiArchivedCount+')'))+'</button>'
+    : '';
+  box.innerHTML='<div style="display:flex;align-items:baseline;gap:8px;margin:2px 0 5px;"><div style="font-size:10px;font-weight:700;color:#8f8f8f;text-transform:uppercase;letter-spacing:.5px;">Quote requests ('+rows.length+')</div>'+archToggle+'</div>'
     /* auto-fill + minmax, matching VOE: two or three across a wide processing
        pane, one on a narrow one, with no breakpoint to keep in step. */
     +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:8px;align-items:start;">'+cards+'</div>';
