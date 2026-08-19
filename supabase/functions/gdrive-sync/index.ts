@@ -9,6 +9,7 @@ import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2';
  * there is something to sync, and the next upload was Rene's live MMS test.
  * `deno check` catches both errors in one second. */
 import { getDriveAccessToken } from '../_shared/google-user-token.ts';
+import { requireStaff } from '../_shared/require-staff.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -162,6 +163,29 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
   const ok  = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, 'Content-Type': 'application/json' } });
   const err = (m: string, s = 400) => new Response(JSON.stringify({ error: m }), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+
+  /* STAFF OR SERVICE ONLY, BEFORE req.json(). Added 2026-08-19.
+   *
+   * This authenticated nothing while syncing borrower documents into Drive with
+   * the service role, and reading and writing contacts and uploaded_documents.
+   * Measured open: an anonymous POST reached the action dispatcher
+   * (400 "Unknown action. Use: sync_document, sync_all_pending").
+   *
+   * NO FRONTEND STEP WAS NEEDED, which is why this one went first of the four
+   * remaining. It has ZERO browser callers -- nothing under admin/, dashboard/,
+   * components/, api/ or public/ references it. Its three callers are all edge
+   * functions holding the service key, which requireStaff accepts from either
+   * header: gdrive-health-monitor, portal-data and upload-guideline.
+   *
+   * So the frontend-first rule is satisfied vacuously rather than skipped: there
+   * is no caller to move. That was established by search before the guard was
+   * written, not assumed from the absence of an obvious one. */
+  const auth = await requireStaff(req, { what: 'Drive document sync' });
+  if (!auth.ok) {
+    return new Response(JSON.stringify({ error: auth.msg }), {
+      status: auth.status || 401, headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
 
   try {
     const body = await req.json();

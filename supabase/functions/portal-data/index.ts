@@ -199,6 +199,24 @@ async function recordNoticeFailure(ids: string[], error: string): Promise<void> 
   }
 }
 
+/* A LATER SUCCESS CLEARS AN EARLIER FAILURE, and this was missed on the first
+   pass -- found by proving both directions rather than only the failure one.
+   Without it the stamp is permanent: the same showing row that failed once kept
+   staff_notify_failed_at set through a subsequent successful notice, so
+   "which tour changes was Rene never told about" would list rows he HAD been
+   told about, forever. A flag that only ever accumulates stops being read. */
+async function clearNoticeFailure(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  try {
+    await sb.from('showings')
+      .update({ staff_notify_failed_at: null, staff_notify_error: null })
+      .in('id', ids)
+      .not('staff_notify_failed_at', 'is', null);   // touch only rows actually flagged
+  } catch (e) {
+    console.error('[portal-data] could not clear notice failure:', String(e));
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
   const ok = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, 'Content-Type': 'application/json' } });
@@ -767,7 +785,9 @@ Deno.serve(async (req: Request) => {
       if ((data || []).length && wasConfirmed) {
         const res = await notifyStaff(`⚠ Tour CANCELLED: a borrower cancelled their CONFIRMED showing. Batch ${String(batch_id).slice(0, 8)}. Check CRM.`);
         notified = res.ok;
-        if (!res.ok) await recordNoticeFailure((data || []).map((r: any) => r.id), res.error || 'unknown');
+        const _ids = (data || []).map((r: any) => r.id);
+        if (res.ok) await clearNoticeFailure(_ids);
+        else await recordNoticeFailure(_ids, res.error || 'unknown');
       }
       return ok({ success: true, updated: (data || []).length, notified });
     }
@@ -811,7 +831,9 @@ Deno.serve(async (req: Request) => {
           `${preferred_time ? ' ' + preferred_time : ''}. Batch ${String(batch_id).slice(0, 8)}. Check CRM.`,
         );
         notified = res.ok;
-        if (!res.ok) await recordNoticeFailure((data || []).map((r: any) => r.id), res.error || 'unknown');
+        const _ids = (data || []).map((r: any) => r.id);
+        if (res.ok) await clearNoticeFailure(_ids);
+        else await recordNoticeFailure(_ids, res.error || 'unknown');
       }
       return ok({ success: true, updated: (data || []).length, notified });
     }

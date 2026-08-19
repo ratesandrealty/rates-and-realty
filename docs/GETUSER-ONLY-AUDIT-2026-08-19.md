@@ -245,17 +245,93 @@ source and `config.toml` pin removed.
 
 ### The remaining leg, still NOT proven
 
-**`portal-data`'s `notifyStaff()` has not been observed firing end to end.** The
-credential path it uses is proven — identical headers to the probe above, same
-function, `200` — but the notice itself has not been watched leaving the
-building, because doing so means a real text to Rene's handset and a live send
-was explicitly out of bounds for this work.
+## The notice is now surfaced, and both directions are proven
 
-What is proven: the service key reaches `sms-service` and is accepted; the
-handler only calls `notifyStaff` when rows actually changed; and the cancel path
-reads the batch's prior status so it still only fires for a **confirmed** tour.
+**~~`portal-data`'s `notifyStaff()` has not been observed firing end to end.~~**
+Closed 2026-08-19. The first fix moved the *sending* server-side and left the
+*telling* alone: `portal-data` returned success whether or not the notice went,
+so the borrower was still assured either way — the same both-ends-satisfied shape
+one layer down.
 
-**To confirm it in one action:** reschedule or cancel a confirmed tour in the
-borrower portal and watch the handset. If it does not arrive, the edge log for
-`portal-data` now says why — `notifyStaff` logs a non-2xx from `sms-service`
-rather than swallowing it, which is the specific failure being corrected.
+Three changes:
+
+1. **`notifyStaff` returns a verdict** (`{ok, error}`) instead of `void`.
+2. **HTTP 200 is not success.** `sms-service` answers `200` with `sent:false` when
+   the recipient opted out, when quiet hours block, or when a bypass is rejected.
+   Judging on `r.ok` would call every one of those delivered. The verdict is
+   `sent === true` read from the **body**. This was not theoretical: the forced
+   failure below returned exactly that shape.
+3. **The failure lands in a row, not a log line** — see the column choice below —
+   and the toast branches on a **three-valued** `notified`: `true` sent,
+   `false` due-but-failed, `null` none due.
+
+### Where the row lands: `showings`, not `showing_batches`, not `activity_events`
+
+- **`showing_batches` would silently miss.** 10 of the 11 batches on `showings`
+  have a `showing_batches` row; **one does not**. A stamp there would match no
+  row for borrower-created batches — the exact "a write that matched nothing is
+  not a success" trap `portal-data` already carries a comment about.
+- **`showings` is the table the handler already updated**, so the rows are known
+  to exist and their ids are in hand. `showings.sms_sent` / `sms_sent_at` already
+  record SMS state per row; this is the same kind of fact in the same place.
+- **`activity_events` is the borrower-facing CRM timeline.** An internal delivery
+  failure is operational, not borrower activity, and querying it would mean
+  matching a title string — the pattern this repo already warns about.
+
+```sql
+select batch_id, staff_notify_failed_at, staff_notify_error
+from showings where staff_notify_failed_at is not null;
+```
+
+### Proven in BOTH directions, against unmodified shipped code
+
+No code was stubbed or branched for the test. `RENE_PHONE` is read only by
+`portal-data` (`sms-service` has its own hardcoded constant), so pointing that
+one secret at test numbers exercises the real path end to end. **Nothing reached
+a human handset.**
+
+| direction | recipient | result |
+|---|---|---|
+| **failure** | `+1 555 555 0142` — NPA 555 is unassignable | `notified:false`, row stamped: `not sent: {"success":true,"sent":false,"error":"Invalid 'To' Phone Number"}` |
+| **success** | `+1 714 555 0142` — NANPA fictional range | `notified:true`, **and the earlier failure flag cleared** |
+
+Both runs returned `success:true, updated:1` — the reschedule itself succeeded in
+both, which is the point: a text that did not go must not fail the borrower's
+change.
+
+Toast, asserted as **two separate specs** so a hedge cannot pass as a fix:
+
+```
+notified:true  -> "Date updated! Rene has been notified."
+notified:false -> "Date updated! Rene will see it in the CRM."   (no "has been notified")
+notified:null  -> "Tour cancelled."                              (says nothing about Rene)
+```
+
+A toast hard-coded to the cautious sentence would pass a failure-only test and be
+wrong for every borrower whose notice actually sent, which is why the success case
+is its own spec.
+
+### What proving both directions caught
+
+**A later success did not clear an earlier failure.** The same showing row kept
+`staff_notify_failed_at` set through a subsequent successful notice, so
+"which tour changes was Rene never told about" would have listed rows he *had*
+been told about — permanently, and a flag that only accumulates stops being read.
+Fixed with `clearNoticeFailure()` and re-proven: the failure run stamps, the
+success run clears.
+
+A failure-only test would have passed and shipped that.
+
+### Cleanup
+
+The `RENE_PHONE` secret was **unset** afterwards (verified absent, so
+`portal-data` falls back to the real number) and the ZZ-TEST fixture batch was
+deleted. The fixture was a ZZ-TEST row throughout; no borrower's showing was
+touched.
+
+**The one thing still not observed** is a notice arriving on Rene's own handset,
+because every proof above deliberately used an unroutable number. What that
+leaves unproven is Twilio delivery to that specific phone — not the code path,
+which is exercised end to end in both directions. Rescheduling a confirmed tour
+in the portal would close it; if nothing arrives, the row and the edge log now
+both say why instead of swallowing it.

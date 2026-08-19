@@ -115,6 +115,7 @@ Send count corrected from 11 to **9**.
 | `treasury-yields` | SERVICE-ROLE,WRITES-DB |
 | `upload-guideline` | SERVICE-ROLE,WRITES-DB,STORAGE |
 | `weekly-backup` | SERVICE-ROLE,WRITES-DB,DRIVE |
+| ~~`gdrive-sync`~~ | **CLOSED 2026-08-19 — `requireStaff(req)`.** Was open: an anonymous POST reached the action dispatcher while it synced borrower documents to Drive with the service role and wrote `contacts` / `uploaded_documents`. **No frontend step was needed** — zero browser callers anywhere, and its three callers (`gdrive-health-monitor`, `portal-data`, `upload-guideline`) are edge functions holding the service key, which `requireStaff` accepts. Proof: no-credential 401, public anon key 401, admin session reaches the dispatcher |
 | ~~`borrower-drive`~~ | **CLOSED 2026-08-19 — `requireStaff(req)`.** Was fully open: HTTP 200 with no credential, disclosing nine hardcoded borrower names + Drive folder ids, and `link_folder_to_contact` allowed anonymous rewrites of any contact's Drive folder pointer. Frontend moved to the session token first, confirmed with a real session, then guarded. Proof: `docs/BORROWER-DRIVE-AND-SAVE-DOCUMENT-GUARDS-2026-08-19.md` |
 
 ### Everything else
