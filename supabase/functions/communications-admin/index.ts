@@ -59,7 +59,7 @@ async function requireAdmin(req: Request): Promise<{ ok: boolean; userId: string
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey, x-client-info",
 };
 
 function last10(p: string): string { return (p || "").replace(/\D/g, "").slice(-10); }

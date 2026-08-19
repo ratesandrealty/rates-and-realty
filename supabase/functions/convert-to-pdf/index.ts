@@ -4,7 +4,7 @@ import { PDFDocument, rgb, StandardFonts } from 'https://esm.sh/pdf-lib@1.17.1';
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey'
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info'
 };
 
 function base64ToUint8Array(b64: string): Uint8Array {

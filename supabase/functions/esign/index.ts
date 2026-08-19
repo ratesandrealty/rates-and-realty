@@ -13,7 +13,7 @@ const EXPIRES_DAYS = 14;
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey'
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info'
 };
 const svc = () => createClient(SUPABASE_URL, SERVICE, { auth: { persistSession: false } });
 const json = (d: any, s = 200) => new Response(JSON.stringify(d), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
