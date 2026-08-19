@@ -30,7 +30,21 @@ begin
            coalesce(nullif(trim(c.first_name||' '||coalesce(c.last_name,'')),''), 'the borrower') as who
     from loan_orders o
     left join contacts c on c.id = o.contact_id
-    where coalesce(o.status,'') not in ('received','not_required','cancelled','complete','completed')
+    /* 'paid' IS TERMINAL and was missing. The appraisal ladder puts Paid AFTER
+       Received, so a paid appraisal has nothing left to chase -- yet it stayed in
+       this loop and kept raising reminders asking for a document that had already
+       arrived and been invoiced. One order is in that state today.
+       KNOWN CAVEAT, measured rather than assumed: that order has received_at
+       NULL, because the status dropdown lets Paid be chosen without passing
+       through Received. So 'paid' is trusted here as the user's assertion that
+       the order is done, exactly as 'received' and 'not_required' are -- it is
+       not evidence the document is in hand. If Paid ever starts being used to
+       mean "invoice settled, report still outstanding", this line is where that
+       breaks.
+       NOTE the sibling list differs on purpose: voe_orders_awaiting_reply uses
+       ('received','cancelled','not_required','not_ordered') because a VOE never
+       takes 'paid' and DOES need not_ordered excluded. Two lists, two questions. */
+    where coalesce(o.status,'') not in ('received','not_required','cancelled','complete','completed','paid')
   loop
     /* EVIDENCE OF DELIVERY, before the duplicate check so the order is annotated
        even when a reminder already exists. Only for a VOE that CLAIMS to be
@@ -69,13 +83,11 @@ begin
                      form coming back on reply-all does NOT count as one - that is
                      the case that would otherwise close a VOE nobody filled in.
        'no_document' they replied and we DID capture the attachments and nothing
-                     qualifies. Worth a different nudge: chasing "no response" when
-                     they have in fact responded reads as not having looked.
+                     qualifies. Worth a different nudge.
        'unknown'     a reply exists but its attachment metadata was never captured.
-                     Falls through to the ORDINARY reminder deliberately. The order
-                     is genuinely still outstanding, so a nudge is right - but it
-                     must not assert the vendor attached nothing, because we do not
-                     know that. Same discipline as the suppression notice.
+                     Falls through to the ORDINARY reminder deliberately: the order
+                     is genuinely outstanding, but we must not assert the vendor
+                     attached nothing, because we do not know that.
        'no_reply'    unchanged behaviour. */
     v_doc := public.order_document_status(r.id);
 
@@ -109,9 +121,7 @@ begin
                     then upper(r.order_type) || ' replied, no document - ' || r.who
                     else upper(r.order_type) || ' still outstanding - ' || r.who end
                || coalesce(' (' || nullif(trim(coalesce(r.employer_name, r.label, '')),'') || ')', '');
-    /* loan_order_id IS WRITTEN ALONGSIDE the old pair, not instead of it. The
-       new column is the one to read; the pair stays until nothing reads it, so
-       this changeover never has a moment where a reader sees neither. */
+    /* loan_order_id IS WRITTEN ALONGSIDE the old pair, not instead of it. */
     insert into tasks(contact_id, lead_id, title, description, due_date, status, priority,
                       related_table, related_id, loan_order_id, origin, created_at, updated_at)
     values (r.contact_id, r.contact_id, v_title,
