@@ -76,6 +76,19 @@ function discoverSlugs() {
       const src = readFileSync(f, 'utf8');
       for (const m of src.matchAll(/functions\.invoke\(\s*['"]([a-z0-9-]+)['"]/g)) add(m[1], 'invoke', f);
       for (const m of src.matchAll(/functions\/v1\/([a-z0-9-]+)/g)) add(m[1], 'fetch', f);
+      /* THE THIRD CALL SHAPE, and it was invisible here until 2026-08-19.
+         admin/js/fn-call.js wraps the URL up: fnFetch('slug') names the function
+         without the /functions/v1/ path, so neither pattern above sees it. Eight
+         real browser callers — call-intelligence, delete-contacts,
+         generate-1003-pdf, generate-cma, generate-deal-analysis, generate-mismo,
+         generate-mismo-data, pull-comps — had dropped out of the default sweep
+         entirely, and the run still reported OK. All eight happened to allow
+         x-client-info, so nothing was hidden; the point is that nothing would
+         have SAID so if they had not.
+         Classified 'fetch', not 'invoke': fnFetch builds a raw fetch and picks
+         its own headers, so it sends no x-client-info and survives a narrow
+         allow-list exactly like a hand-rolled one. Latent, not blocked. */
+      for (const m of src.matchAll(/\bfnFetch\(\s*['"]([a-z0-9-]+)['"]/g)) add(m[1], 'fetch', f);
     }
   }
   return found;

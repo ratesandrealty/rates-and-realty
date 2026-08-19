@@ -89,6 +89,14 @@ refusal is the rule working: an unpinned slug is one the CLI can silently defaul
 to `true`, which is how every `send-scheduled-sms` cron run returned
 `UNAUTHORIZED_NO_AUTH_HEADER` for days with nothing alerting.
 
+**Re-read after deploying, because pinning at a measured value is only safe if
+the deploy did not move it.** All 13 checked again once live: pre-deploy value ==
+pin in `config.toml` == live value == `false`, all ACTIVE, and every version
+incremented by exactly one (e.g. `submit-lead` v35→v36, `borrower-drive` v72→v73)
+— one deploy each, no value moved. The wrapper asserts this per deploy too; this
+is the independent read, because the thing being checked is precisely whether the
+deploy changed what was pinned.
+
 **A pin is not a guard.** Several of these are `false` with no in-function check,
 which means open — `borrower-drive` and `save-document` both hold service-role
 access to borrower records. Pinning them did not close them, and this pass did not
@@ -101,14 +109,55 @@ claim to. They remain tracked in `docs/PINNED-NOT-GUARDED.md` and
 node tools/browser-cors-check.mjs
 ```
 
-| | ok | latent | blocked |
-|---|---|---|---|
-| before | 30 | **25** | 0 |
-| after | **55** | **0** | 0 |
+| | swept | ok | latent | blocked |
+|---|---|---|---|---|
+| before | 55 | 30 | **25** | 0 |
+| after | 55 | **55** | **0** | 0 |
+| after, with the discovery gap below closed | **63** | **63** | **0** | **0** |
+
+### Reconciling with the 64 in `d90d1bc`
+
+That figure was **`--all`**, not this sweep: 141 functions, 64 latent, *of which 25
+had a real browser caller via raw `fetch()`*. Those 25 are exactly the ones fixed
+here. The other 39 had no browser caller.
+
+Today `--all` sweeps **128** functions and reports **38** latent. Both numbers
+moved, for reasons that are individually accounted for:
+
+- **141 → 128 functions.** Directory count, not a measurement — `supabase/functions`
+  holds 128 dirs today.
+- **64 → 38 latent.** −25 fixed here, and −1 for `generate-1003`, which was
+  undeployed and deleted on 2026-08-19 and had been in the no-browser-caller half.
+  64 − 25 − 1 = 38, which is what it reports.
 
 All 25 deployed through `tools/deploy-function.sh`, one at a time, stopping at the
 first failure. None failed. Each run re-read the live function afterwards and
 confirmed deployed source matches this repo and `verify_jwt` matches its pin.
+
+### The sweep was covering 8 fewer functions than it appeared to
+
+Found while reconciling the count against the figure in `d90d1bc`. The tool
+discovered browser callers with two patterns — `functions.invoke('slug')` and
+`functions/v1/slug`. **`admin/js/fn-call.js` introduced a third**: `fnFetch('slug')`
+names the function without the `/functions/v1/` path, so it matched neither.
+
+Eight real browser callers had silently dropped out of the default sweep:
+`call-intelligence`, `delete-contacts`, `generate-1003-pdf`, `generate-cma`,
+`generate-deal-analysis`, `generate-mismo`, `generate-mismo-data`, `pull-comps`.
+The run still printed OK, because a slug it never checked cannot fail.
+
+**All eight allow `x-client-info` already**, so nothing was hidden — but nothing
+would have *said* so if they had not, and that is the same shape as every other
+trap in `CLAUDE.md`: the check reported fewer problems than existed, which reads
+as good news and therefore survives. The irony is specific: `fn-call.js` exists to
+migrate call sites off hand-rolled fetches, so **the more that migration
+progressed, the blinder this checker became.**
+
+`discoverSlugs()` now matches `fnFetch(` too, classified as `fetch` rather than
+`invoke` — it builds a raw fetch and chooses its own headers, so it sends no
+`x-client-info` and survives a narrow allow-list exactly like a hand-rolled one.
+
+Default sweep: **55 → 63 slugs**, all ok.
 
 ### What `--all` still reports, and why it is not this list
 
