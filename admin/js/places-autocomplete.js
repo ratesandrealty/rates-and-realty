@@ -90,6 +90,20 @@
       var s = document.createElement('script');
       s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(k) + '&libraries=places';
       s.async = true; s.defer = true;
+      /* MARK IT, because the other loader only looks for the mark.
+         public/js/map-controls.js guards on script[data-gmaps-js="1"] and sets
+         that attribute on the tag IT appends; the guard above matches any
+         maps/api/js tag and used to set nothing. The two guards were therefore
+         one-directional: map-controls-first was adopted here and stayed at one
+         tag, but places-first was invisible to map-controls, which appended a
+         second and made Google log "the Google Maps JavaScript API multiple
+         times". lead-detail.html loads both, so it was a coin toss decided by
+         how long loadGoogleMaps() spent awaiting /config before it appended.
+         One attribute makes the guards symmetric in both directions.
+         Reproduced deliberately before this line existed, by the render-check
+         spec "maps double-load forced race" -- 2 tags with it removed, 1 with
+         it present. */
+      s.setAttribute('data-gmaps-js', '1');
       s.onload = function () { resolve(); };
       s.onerror = function () { _loading = null; reject(new Error('Places failed to load')); };
       document.head.appendChild(s);

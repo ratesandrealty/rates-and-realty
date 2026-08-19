@@ -106,6 +106,112 @@ const RC_BOARD_BOTH_ROLES = `(function(){
   }
 })()`;
 
+/* FORCE the Maps double-load rather than waiting for it — PART 1, at
+ * document-start, because that is the only place the race exists.
+ *
+ * The flake is a LATENCY race, so this pins the latency instead of hoping for
+ * it. Two interventions, both timing, neither faking a result:
+ *
+ *   1. /config is delayed 2500ms. map-controls' loadGoogleMaps() claims
+ *      window._gmapsLoadPromise and then AWAITS that fetch before appending its
+ *      tag, so the delay widens a gap that already exists on every cold load —
+ *      sessionStorage holds no cached key in a fresh context.
+ *   2. At DOMContentLoaded — by which time places-autocomplete's deferred script
+ *      has run — a probe input is attached through RRPlaces. That lands INSIDE
+ *      the gap, which is precisely the interleaving production hits by chance.
+ *
+ * Nothing about the loaders is stubbed or reimplemented; both run their own
+ * code. The only thing chosen is WHEN.
+ *
+ * Why not do this from an eval: evals run after readyState=complete, and by then
+ * places-autocomplete's module-private _loading is a resolved promise, so
+ * load() returns early and never appends again. Measured — the first version of
+ * this probe reported "appended 0 tags" for exactly that reason. State that
+ * cannot be reset cannot be raced twice in one document.
+ *
+ * No backticks below: template literal. */
+const RC_MAPS_RACE_SETUP = `(function(){
+  try { sessionStorage.removeItem('gmapsKey'); } catch(e) {}
+  var Q = 'script[src*="maps.googleapis.com/maps/api/js"]';
+  var f = window.fetch;
+  window.fetch = function(u, o){
+    var s = (typeof u === 'string') ? u : ((u && u.url) || '');
+    if (s.indexOf('/config') !== -1) {
+      return new Promise(function(res, rej){
+        setTimeout(function(){ f.call(window, u, o).then(res, rej); }, 2500);
+      });
+    }
+    return f.call(window, u, o);
+  };
+  window.__rrRace = 'no DOMContentLoaded';
+  document.addEventListener('DOMContentLoaded', function(){
+    try {
+      if (!window.RRPlaces || typeof window.RRPlaces.attachCombined !== 'function') {
+        window.__rrRace = 'RRPlaces absent at DOMContentLoaded'; return;
+      }
+      var pre = document.querySelectorAll(Q).length;
+      var inp = document.createElement('input');
+      inp.id = 'rrMapsRaceProbe'; inp.type = 'text';
+      (document.body || document.documentElement).appendChild(inp);
+      window.RRPlaces.attachCombined('rrMapsRaceProbe', {});
+      window.__rrRace = 'attached (tags before=' + pre + ', after=' + document.querySelectorAll(Q).length + ')';
+    } catch(e) { window.__rrRace = 'threw: ' + (e && e.message); }
+  });
+})()`;
+
+/* FORCE the Maps double-load rather than waiting for it.
+ *
+ * lead-detail is the only page that loads BOTH Maps loaders, and their guards
+ * are one-directional:
+ *
+ *   public/js/map-controls.js      appends a tag CARRYING data-gmaps-js="1",
+ *                                  and looks only for script[data-gmaps-js="1"]
+ *   admin/js/places-autocomplete.js appends a tag with NO marker,
+ *                                  and looks for any maps/api/js tag
+ *
+ * So places-first is the losing order: map-controls cannot see the tag places
+ * appended and adds a second one. The window exists because loadGoogleMaps()
+ * claims window._gmapsLoadPromise and then AWAITS fetch('/config') before it
+ * appends — always, in a fresh context, since sessionStorage holds no key. Each
+ * module's own idempotence guard is invisible to the other.
+ *
+ * Waiting for that order to happen by itself is what made this a flake: 31
+ * consecutive clean runs were captured while the suite kept failing elsewhere.
+ * This drives the interleaving deliberately — start loadGoogleMaps(), then
+ * attach a Places field synchronously inside its /config gap — so the count is
+ * a measurement rather than a coin toss.
+ *
+ * RETURNS A NUMBER on success and a 'HARNESS: …' STRING when it could not set
+ * the race up. That distinction is the point: places-autocomplete's _loading is
+ * module-private, so if something already loaded Places on this page the probe
+ * CANNOT force the order, and a silent 1 would read as the bug being fixed. A
+ * string fails the eval loudly instead of passing vacuously.
+ *
+ * No backticks anywhere below — this is a template literal. */
+const RC_MAPS_FORCE_RACE = `(async function(){
+  var Q = 'script[src*="maps.googleapis.com/maps/api/js"]';
+  function count(){ return document.querySelectorAll(Q).length; }
+
+  /* Every one of these returns a STRING, not a number, and that is the point:
+     places-autocomplete's loader is un-resettable, so a probe that failed to set
+     the race up would otherwise report a perfectly healthy 1 and read as the bug
+     being fixed. A string fails the eval loudly. */
+  var st = window.__rrRace || '(document-start setup never ran)';
+  if (st.indexOf('attached') !== 0) return 'HARNESS: ' + st;
+  if (st.indexOf('before=0') === -1) return 'HARNESS: a Maps tag already existed when the probe attached, so the /config gap was NOT open - ' + st;
+  if (st.indexOf('after=1') === -1) return 'HARNESS: places-autocomplete appended no tag of its own - ' + st;
+
+  /* The losing order is now established: places appended the only tag on the
+     page while map-controls was still awaiting /config. Let map-controls come
+     back and decide. Poll rather than sleep a fixed span, so a slow /config
+     cannot report a false 1. */
+  for (var i = 0; i < 60; i++) {
+    if (count() > 1) break;
+    await new Promise(function(r){ setTimeout(r, 100); });
+  }
+  return count();
+})()`;
+
 /* The boundary DIFFERS BY MODE. Printing the stubbed one during a real-session
    run is the same defect this file exists to catch: it understates what the run
    proved AND misdescribes what it did. */
@@ -561,6 +667,30 @@ const SPECS = [
        Counting the tags says whether that is a second <script> or something
        else — a warning alone does not. */
     rowCount: { selector: 'script[src*="maps.googleapis.com/maps/api/js"]', expect: 1 },
+  },
+  /* The @1440 spec above counts the tags in whatever order the page happened to
+     take. This one CHOOSES the losing order and counts again — the difference
+     between observing a flake and reproducing it. See RC_MAPS_FORCE_RACE.
+     Measured against the unfixed code it returns 2; the fix (places-autocomplete
+     marking its tag data-gmaps-js="1", so both guards see each other) is what
+     brings it to 1. */
+  {
+    name: 'maps double-load forced race',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    atDocumentStart: RC_MAPS_RACE_SETUP,
+    evals: [
+      [RC_MAPS_FORCE_RACE, 1],
+    ],
+    /* NO allowConsole, deliberately. The first draft of this spec excluded
+       "included multiple times" so the count could be read on its own — and the
+       exclusion never matched anything, because Google's actual wording is
+       "...the Google Maps JavaScript API multiple times...". A silencer that
+       matches nothing is the quietest kind of blind spot.
+       It is also unnecessary in the direction that matters: once the guards are
+       symmetric there is no second bootstrap, so there is no warning to allow.
+       Pre-fix this spec fails twice over — the count AND Google's own complaint
+       — which is the correct shape for a break test. */
   },
   {
     name: 'pipeline strip legible @1100',
@@ -3557,6 +3687,17 @@ async function runSpec(spec, opts) {
       await b.send('Page.addScriptToEvaluateOnNewDocument', {
         source: stubSource(spec.role || 'admin', 'render-check@local', spec.stubRow, spec.rpc, spec.fetchMap, spec.rpcFns, spec.staleRole, spec.invoke, spec.tables),
       });
+    }
+
+    /* PER-SPEC DOCUMENT-START SCRIPT, installed after the stub so it wraps
+       whatever the stub installed rather than being overwritten by it.
+       Some defects only exist during page load and cannot be reached from an
+       eval, which runs after readyState=complete. The Maps double-load is one:
+       both loaders latch module-private state on their first call, so by the
+       time an eval runs the outcome is already decided and unrepeatable. A
+       spec that can only observe the aftermath cannot force the cause. */
+    if (spec.atDocumentStart) {
+      await b.send('Page.addScriptToEvaluateOnNewDocument', { source: spec.atDocumentStart });
     }
 
     const url = spec.url.startsWith('file://') || spec.url.startsWith('http') ? spec.url : BASE + spec.url;
