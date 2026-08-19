@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { requireStaff } from '../_shared/require-staff.ts';
 
 const cors = { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,Authorization,apikey,x-client-info' };
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
@@ -111,6 +112,37 @@ Deno.serve(async (req: Request) => {
     }
 
     // Get activity timeline for a contact
+    /* THE TWO READ ACTIONS ARE STAFF-ONLY; THE TWO WRITE ACTIONS ARE NOT.
+     *
+     * A blanket requireStaff() here would be wrong, and this is the case that
+     * proves the getUser()-only shape cannot be swept mechanically. This
+     * function is verify_jwt = false and public/unified-portal.html calls it
+     * with NO credential at all -- trackPageView() sends `page_view` and the
+     * portal also sends `track_event`. Both work today (measured: 200 with no
+     * auth header). Guarding the whole function logs the borrower portal out of
+     * its own analytics.
+     *
+     * The READS are different in kind. get_timeline and get_page_views return
+     * CRM activity across contacts -- who was called, what was viewed, when --
+     * which is staff data whatever the writes are. They are gated here and the
+     * writes are left alone.
+     *
+     * KNOWN AND DELIBERATE, so it is not mistaken for an oversight: page_view
+     * and track_event remain writable by anyone. track_event inserts
+     * activity_events and touches contacts.last_contact_date, so an anonymous
+     * caller can still write noise into a contact's timeline. Narrowing that
+     * needs the portal to carry a credential of its own (its own row token, the
+     * way lender-portal does) -- a portal change, not a guard change, and one
+     * that belongs with the portal migration rather than smuggled in here. */
+    if (action === 'get_timeline' || action === 'get_page_views') {
+      const auth = await requireStaff(req, { what: 'Reading activity history' });
+      if (!auth.ok) {
+        return new Response(JSON.stringify({ error: auth.msg }), {
+          status: auth.status || 401, headers: { ...cors, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     if (action === 'get_timeline') {
       const { contact_id, limit = 50, offset = 0 } = body;
       if (!contact_id) return ok({ events: [] });

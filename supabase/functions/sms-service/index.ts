@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { requireStaff } from '../_shared/require-staff.ts';
 
 const cors = { 'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,Authorization,apikey,x-client-info' };
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
@@ -376,6 +377,50 @@ Deno.serve(async (req:Request) => {
   if (req.method==='OPTIONS') return new Response(null,{status:204,headers:cors});
   const ok=(d:any)=>new Response(JSON.stringify(d),{headers:{...cors,'Content-Type':'application/json'}});
   const err=(m:string,s=400)=>new Response(JSON.stringify({error:m}),{status:s,headers:{...cors,'Content-Type':'application/json'}});
+
+  /* STAFF OR SERVICE ONLY, BEFORE req.json(). Added 2026-08-19.
+   *
+   * This function had NO authorization of its own. callerUid() below reads the
+   * caller's identity for ATTRIBUTION and its result was never used to refuse
+   * anything -- the comment above it even said a real guard was "deliberately
+   * NOT made in this pass". The pin is verify_jwt = true, which stops nothing:
+   * the anon key is a project-signed JWT served to the world at /api/env.js.
+   * Measured before this guard: anon key + {} -> 400 "trigger required", i.e.
+   * business logic, from an anonymous caller, on a function that SENDS SMS FROM
+   * THE BUSINESS LINE.
+   *
+   * That makes it a TCPA problem, not only an access one. Consent, quiet hours
+   * and the bypass allow-list are all enforced INSIDE this function on a body
+   * the caller controls; none of it binds someone who simply calls the endpoint
+   * directly. An unauthenticated sender can text any number, from Rene's brand,
+   * declaring whichever quiet_hours_bypass it likes.
+   *
+   * WHY requireStaff IS THE RIGHT SHAPE HERE, checked caller by caller:
+   *   - 18 internal edge functions call it; 17 send the service key in
+   *     Authorization and/or apikey, which requireStaff accepts from either.
+   *   - Every admin browser caller already sends the signed-in user's session:
+   *     lead-detail (5 sites, _rnrAuthHeaders), email-marketing (2,
+   *     _smsAuthHeaders), staff-chat (_scAuthHeaders), power-dialer (2, via
+   *     supabase-js invoke). All are no-anon-fallback helpers. So the frontend
+   *     half of frontend-first was ALREADY satisfied and nothing had to move.
+   *
+   * THREE CALLERS SEND NO CREDENTIAL AT ALL AND ARE ALREADY BROKEN -- they were
+   * broken before this guard, by the verify_jwt=true pin, and this does not
+   * change their behaviour:
+   *     public/unified-portal.html x2  (tour reschedule + cancel notices)
+   *     listing-alert-actions          (fetch with Content-Type only)
+   * All three are fire-and-forget, so the 401 is swallowed and nothing alerts.
+   * The portal UI says "Rene will be notified" and he is not. Deliberately NOT
+   * papered over here: making this guard permissive enough to admit them would
+   * re-open the function to the internet. They need a caller-side fix (send the
+   * service key from the server side, or route through a function that holds
+   * one) and that is a separate change. */
+  const _auth = await requireStaff(req, { what: 'Sending SMS' });
+  if (!_auth.ok) {
+    return new Response(JSON.stringify({ error: _auth.msg }), {
+      status: _auth.status || 401, headers: { ...cors, 'Content-Type': 'application/json' },
+    });
+  }
 
   _actorUid = await callerUid(req);   // null unless a real user session was sent
 

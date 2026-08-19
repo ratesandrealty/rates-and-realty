@@ -103,6 +103,59 @@ const sb = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 );
 
+/* STAFF TOUR NOTICES, MOVED HERE FROM THE BROWSER 2026-08-19.
+ *
+ * unified-portal.html used to POST sms-service itself when a borrower
+ * rescheduled or cancelled a tour. It sent NO auth header, and sms-service is
+ * pinned verify_jwt = true, so the gateway answered 401 UNAUTHORIZED and the
+ * call was fire-and-forget with a bare .catch() -- nothing surfaced.
+ *
+ * MEASURED: not one of those notices has EVER been delivered. sms_log holds no
+ * row in that message format across the whole history of the feature
+ * (added 2026-04-04), while the portal told the borrower "Rene has been
+ * notified." Four and a half months of a promise the software did not keep.
+ *
+ * The browser could never have been fixed in place. It holds no credential that
+ * sms-service will accept, and it must not: the only one that would work is the
+ * service key, which would then be printed in a page served to borrowers. So
+ * the notice moves to the side that already holds the key -- this function,
+ * which is what performs the reschedule and the cancel in the first place.
+ *
+ * staff_alert is the correct bypass and remains correct HERE for the same reason
+ * it was correct there: the recipient is Rene's own handset, so this is a notice
+ * to staff rather than a message to a consumer. IF THE RECIPIENT EVER BECOMES
+ * THE BORROWER, DELETE THE BYPASS IN THE SAME EDIT.
+ *
+ * Never throws. A tour that was rescheduled successfully must not report failure
+ * because a text did not go out -- but the status IS logged, because "sent
+ * nothing and said nothing" is the failure being corrected here. */
+const RENE_PHONE = Deno.env.get('RENE_PHONE') || '+17144728508';
+
+async function notifyStaff(message: string): Promise<void> {
+  try {
+    const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    const r = await fetch((Deno.env.get('SUPABASE_URL') || '') + '/functions/v1/sms-service', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SERVICE,
+        'Authorization': `Bearer ${SERVICE}`,
+      },
+      body: JSON.stringify({
+        trigger: 'manual',
+        to_phone: RENE_PHONE,
+        quiet_hours_bypass: 'staff_alert',
+        params: { message },
+      }),
+    });
+    if (!r.ok) {
+      console.error(`[portal-data] staff notice FAILED ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    }
+  } catch (e) {
+    console.error('[portal-data] staff notice threw:', String(e));
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
   const ok = (d: any) => new Response(JSON.stringify(d), { headers: { ...cors, 'Content-Type': 'application/json' } });
@@ -642,11 +695,27 @@ Deno.serve(async (req: Request) => {
          deleted_at. One action, one explicit flag, rather than two that differ
          by a field nobody would notice. */
       if (soft_delete) patch.deleted_at = now;
+      /* WAS THIS A CONFIRMED TOUR? Read it BEFORE the update, which overwrites
+         status with 'cancelled'.
+         This preserves the browser's own condition exactly: unified-portal only
+         raised a staff notice when cancelling a CONFIRMED showing, because a
+         borrower dropping a request nobody has committed to is not worth a text.
+         Moving the notice server-side must not quietly widen it into "every
+         cancellation pages Rene". */
+      const { data: priorRows } = await sb.from('showings')
+        .select('status').eq('batch_id', batch_id).is('deleted_at', null);
+      const wasConfirmed = (priorRows || []).some((r: any) => r.status === 'confirmed');
       let q = sb.from('showings').update(patch).eq('batch_id', batch_id);
       const scoped = scopeToCaller(q, body);
       if (scoped.err) return err(scoped.err);
       const { data, error } = await scoped.q.select('id');
       if (error) return err(error.message, 500);
+      /* Only when rows actually changed. A cancel that matched nothing is not an
+         event worth waking someone for, and scopeToCaller means "matched
+         nothing" includes "not this borrower's batch". */
+      if ((data || []).length && wasConfirmed) {
+        await notifyStaff(`⚠ Tour CANCELLED: a borrower cancelled their CONFIRMED showing. Batch ${String(batch_id).slice(0, 8)}. Check CRM.`);
+      }
       return ok({ success: true, updated: (data || []).length });
     }
 
@@ -682,6 +751,12 @@ Deno.serve(async (req: Request) => {
       if (scoped.err) return err(scoped.err);
       const { data, error } = await scoped.q.select('id');
       if (error) return err(error.message, 500);
+      if ((data || []).length) {
+        await notifyStaff(
+          `Tour update: a borrower changed their showing to ${preferred_date}` +
+          `${preferred_time ? ' ' + preferred_time : ''}. Batch ${String(batch_id).slice(0, 8)}. Check CRM.`,
+        );
+      }
       return ok({ success: true, updated: (data || []).length });
     }
 

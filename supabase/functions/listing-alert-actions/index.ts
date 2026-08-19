@@ -167,8 +167,21 @@ Deno.serve(async (req: Request) => {
       // SMS — use try/catch
       if (userPhone) {
         try {
-          await fetch(SMS_URL, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
+          /* SENDS THE SERVICE KEY. It used to send Content-Type only, and
+             sms-service is pinned verify_jwt = true, so the gateway answered
+             401 UNAUTHORIZED_NO_AUTH_HEADER and this whole block did nothing.
+             The try/catch does not help: a 401 is a RESPONSE, not a throw, and
+             nothing here reads the status.
+             This function already holds the key -- it is used for its own
+             PostgREST calls -- so the fix is to put it on the request. */
+          const SMS_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+          const smsRes = await fetch(SMS_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': SMS_SERVICE_KEY,
+              'Authorization': `Bearer ${SMS_SERVICE_KEY}`,
+            },
             body: JSON.stringify({
               trigger: 'listing_alert_created', to_phone: userPhone,
               params: { firstName, alertName: alert.name },
@@ -176,6 +189,12 @@ Deno.serve(async (req: Request) => {
               borrower_id: borrower_id || null, trigger_id: newAlert.id
             })
           });
+          /* READ THE STATUS. Not reading it is how this stayed broken: the
+             request succeeded as an HTTP exchange and failed as a send, and a
+             catch block only ever sees the former. */
+          if (!smsRes.ok) {
+            console.error(`[listing-alert-actions] SMS FAILED ${smsRes.status}: ${(await smsRes.text()).slice(0, 200)}`);
+          }
         } catch(smsErr) { console.warn('SMS error:', smsErr); }
       }
 

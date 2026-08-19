@@ -48,6 +48,28 @@ async function verifyTurnstile(token: string | undefined, ip: string | null): Pr
 }
 
 // Admin exemption: a valid GoTrue session (only admins have these) bypasses Turnstile / authorizes admin actions.
+/* DO NOT "FIX" THIS INTO requireStaff(). Reviewed 2026-08-19 and left as it is.
+ *
+ * A sweep for "getUser() with no role check" flags this function alongside
+ * sms-service, google-drive-upload and activity-tracker, which were all wrong in
+ * that shape and were guarded on the same day. This one is not, and the reason
+ * is what it IS: portal-auth is the BORROWER authentication surface. Its callers
+ * are public/unified-portal.html, public/portal.html, public/search-homes.html
+ * and portal-auth-modal.js -- pages served to borrowers who by definition do not
+ * yet hold a session, and who are not staff and never will be. It is pinned
+ * verify_jwt = false for the same reason.
+ *
+ * Requiring staff to reach the login endpoint would lock every borrower out of
+ * the portal, which is the outage version of a security fix.
+ *
+ * verifyAdminJwt below is a NARROW, CORRECT use: it asks "is this caller a
+ * signed-in CRM user" for the admin-side actions on this function only, and the
+ * borrower paths never touch it. If those admin actions ever grow, gate THOSE by
+ * role -- do not put a guard in front of the whole function.
+ *
+ * The general lesson, since the same shape recurs: getUser()-only is wrong
+ * wherever the audience is staff and right where the audience is the public.
+ * Judge it by who is meant to call, never by the pattern. */
 async function verifyAdminJwt(jwt: string | undefined): Promise<boolean> {
   if (!jwt) return false;
   try {

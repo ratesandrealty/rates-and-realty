@@ -9365,14 +9365,19 @@ async function convertDocToPdf(doc) {
     const pdfPath = (doc.file_path || doc.storage_path || '').replace(/\.[^.]+$/, '') + '.pdf';
     const uploadRes = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/google-drive-upload`, {
       method: 'POST',
-      /* Session token when there is one, anon key otherwise. The anon key
-         identifies nobody, which is why uploaded_documents.uploaded_by was
-         stamped null on every upload from this page. Falling back rather than
-         replacing means a missing session degrades to today's behaviour instead
-         of failing the upload — attribution is optional, the upload is not. */
-      headers: _atTok
-        ? { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_atTok}` }
-        : { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}` },
+      /* SESSION ONLY. THE ANON FALLBACK IS GONE, 2026-08-19.
+         It read "attribution is optional, the upload is not" — true while
+         google-drive-upload authenticated nothing, and false the moment it does.
+         A requireStaff guard is landing on that function: it writes to the
+         borrower-documents bucket and inserts uploaded_documents with the
+         service role, so an anon-key caller is an anonymous write to a
+         borrower's file. Once the guard is live the fallback cannot degrade
+         gracefully — it would 401, and the "missing session" case it was written
+         for is exactly the case that must not upload.
+         This is the frontend half of frontend-first: shipped and confirmed
+         BEFORE the guard, while the function still accepts anything, so a
+         mistake here surfaces as a page that still works. */
+      headers: await _rnrAuthHeaders(),
       body: JSON.stringify({
         action: 'upload_to_storage',
         file_base64: convData.pdf_base64,

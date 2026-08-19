@@ -2095,19 +2095,16 @@ async function saveEditDate(batchId) {
     }), 'rescheduled');
     // Notify Rene via SMS
     var first = (currentUser && currentUser.first_name) || 'Borrower';
-    fetch(_shSb() + '/functions/v1/sms-service', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        trigger:'manual', to_phone:'+17144728508',
-        /* staff_alert is valid ONLY because to_phone above is Rene's number.
-           This is a notice TO STAFF that a borrower changed their tour — not a
-           message to a consumer, so quiet hours do not apply. IF YOU EVER CHANGE
-           to_phone TO TEXT THE BORROWER, DELETE THIS BYPASS IN THE SAME EDIT:
-           it would otherwise become a TCPA hole that no test would catch. */
-        quiet_hours_bypass:'staff_alert',
-        params:{ message:'Tour update: '+first+' changed their showing to '+newDate+' '+newTime+'. Batch '+batchId.slice(0,8)+'. Check CRM.' }
-      })
-    }).catch(function(){});
+    /* THE NOTICE IS SENT BY portal-data, server-side, as part of
+       reschedule_batch — not from here. This used to POST sms-service directly
+       with no auth header at all, against a function pinned verify_jwt = true,
+       so the gateway returned 401 and the bare .catch() swallowed it. MEASURED:
+       sms_log contains no notice in this format across the entire life of the
+       feature. The toast below has been telling borrowers "Rene has been
+       notified" since 2026-04-04 while nothing was ever sent.
+       A browser cannot fix this itself: the only credential sms-service accepts
+       here is the service key, and that must never be in a page served to
+       borrowers. See notifyStaff() in portal-data. */
     showToast('Date updated! Rene has been notified.');
     loadShowings();
   } catch(e) { showToast('Error: ' + e.message); }
@@ -2120,22 +2117,15 @@ async function cancelBatch(batchId) {
   if (!confirm(msg)) return;
   try {
     _shChanged(await _shCall('cancel_batch', { batch_id: batchId, soft_delete: true }), 'cancelled');
-    if (isConfirmed) {
-      var first = (currentUser && currentUser.first_name) || 'Borrower';
-      fetch(_shSb() + '/functions/v1/sms-service', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          trigger:'manual', to_phone:'+17144728508',
-        /* staff_alert is valid ONLY because to_phone above is Rene's number.
-           This is a notice TO STAFF that a borrower changed their tour — not a
-           message to a consumer, so quiet hours do not apply. IF YOU EVER CHANGE
-           to_phone TO TEXT THE BORROWER, DELETE THIS BYPASS IN THE SAME EDIT:
-           it would otherwise become a TCPA hole that no test would catch. */
-        quiet_hours_bypass:'staff_alert',
-          params:{ message:'\u26a0 Tour CANCELLED: '+first+' cancelled their CONFIRMED showing for batch '+batchId.slice(0,8)+'. Check CRM.' }
-        })
-      }).catch(function(){});
-    }
+    /* THE CONFIRMED-CANCELLATION NOTICE IS SENT BY portal-data, server-side,
+       as part of cancel_batch. The condition was preserved rather than
+       widened: portal-data reads the batch's status BEFORE the update and
+       texts only when a row was 'confirmed' -- exactly what the isConfirmed
+       check here used to decide.
+       Removed from the browser because it never worked from here: no auth
+       header against a verify_jwt = true function, 401, swallowed by a bare
+       .catch(). sms_log has no notice in this format, ever. See notifyStaff()
+       in portal-data. */
     showToast('Tour cancelled');
     loadShowings();
   } catch(e) { showToast('Error: ' + e.message); }

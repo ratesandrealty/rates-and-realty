@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireStaff } from '../_shared/require-staff.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -8,6 +9,32 @@ const corsHeaders = {
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+
+  /* STAFF ONLY, BEFORE req.json(). Added 2026-08-19.
+   *
+   * This wrote to the borrower-documents storage bucket and inserted
+   * uploaded_documents rows WITH THE SERVICE ROLE, which bypasses storage RLS,
+   * while authenticating nothing. The getUser() call below is ATTRIBUTION -- it
+   * stamps uploaded_by and returns null for an anon key rather than refusing.
+   * So an anonymous caller could file a document against any borrower.
+   *
+   * Its one browser caller (admin/lead-detail.html, the convert-to-PDF path)
+   * used to send the session token when it had one and FALL BACK to the anon
+   * key when it did not. The fallback was removed and deployed first, on its
+   * own, while this function still accepted anything -- frontend-first, so a
+   * mistake there showed up as a page that still works. The fallback's stated
+   * reasoning ("attribution is optional, the upload is not") was correct only
+   * while nothing here enforced identity; it inverts the moment this guard
+   * exists, because the missing-session case is exactly the one that must not
+   * upload.
+   *
+   * No internal caller exists -- nothing in supabase/functions calls this. */
+  const auth = await requireStaff(req, { what: 'Uploading borrower documents' })
+  if (!auth.ok) {
+    return new Response(JSON.stringify({ error: auth.msg }), {
+      status: auth.status || 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
+  }
 
   try {
     const body = await req.json()
