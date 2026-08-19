@@ -13109,7 +13109,15 @@ async function lpLoadOrders(cid){
   try{
     const cl = _authClient();
     const oRes = await cl.from('loan_orders')
-      .select('order_type,status,vendor_id,reference,notes,ordered_at,received_at,revision_note,reminder_note,client_paid,client_paid_at,inspection_date')
+      /* id and the THREAD COLUMNS are selected here, not assumed. This list did
+         not carry gmail_thread_id, so the follow-up button read it as absent on
+         every order and permanently offered to start a new thread — announcing
+         the warning correctly and for the wrong reason, which is worse than no
+         warning because it trains people to ignore it.
+         hr_contact_* and label come along for the same reason: the composer
+         addresses and titles the follow-up from them, and a missing column here
+         becomes an empty To field two screens away. */
+      .select('id,order_type,status,vendor_id,reference,notes,ordered_at,received_at,revision_note,reminder_note,client_paid,client_paid_at,inspection_date,label,hr_contact_email,hr_contact_name,gmail_thread_id,rfc_message_id,last_follow_up_at')
       .eq('contact_id',cid);
     _lpOrders = {}; (oRes.data||[]).forEach(o=>{ if(o.order_type!=='voe') _lpOrders[o.order_type]=o; });
     // Resolve names for any already-selected single-row vendors.
@@ -14237,6 +14245,16 @@ function lpRenderOrders(){
       html+='<div style="margin-top:4px;display:flex;align-items:center;gap:12px;">'
         +'<button type="button" onclick="lpToggleRowNotes(\''+o.id+'\',this)" style="background:transparent;border:none;color:#C9A84C;font-size:10px;cursor:pointer;padding:0;font-family:inherit;">💬 Notes ('+(o.note_count||0)+')'+(o.last_follow_up_at?(' · last follow-up '+_lpFmtDT(o.last_follow_up_at)):'')+' ▾</button>'
         +'<button type="button" onclick="lpOrderEmail(\''+o.id+'\')" style="background:transparent;border:none;color:#C9A84C;font-size:10px;cursor:pointer;padding:0;font-family:inherit;">✉️ Email</button>'
+        /* FOLLOW UP — and the thread state is on the BUTTON, not hidden in the
+           composer. Same shape as the VOE and HOI cards: whether this replies
+           into the conversation the vendor already has, or opens a new one, is
+           the single thing worth knowing before clicking, and a button that
+           looks identical in both cases is how the VOE follow-up spent a while
+           announcing "replies in the original thread" while starting new ones. */
+        +'<button type="button" onclick="lpOrderFollowUp(\''+o.id+'\')" title="'
+          +(o.gmail_thread_id?'Replies in the existing thread':'⚠ No stored thread — this starts a NEW conversation')
+          +'" style="background:transparent;border:none;color:'+(o.gmail_thread_id?'#C9A84C':'#d9a441')+';font-size:10px;cursor:pointer;padding:0;font-family:inherit;">'
+          +(o.gmail_thread_id?'📨 Follow up':'📨 Follow up ⚠ new thread')+'</button>'
         +'</div><div id="lpRowNotes-'+o.id+'" style="display:none;"></div>';
     }
     return html+lpDropZoneHtml(row.type)+'</div>';
@@ -16395,6 +16413,125 @@ function lpPdTlRowHtml(r){
     +'</div></div>';
 }
 /* ── Email from an order (rene / processing sender; logged back into the order's notes) ── */
+/* ═══ THIRD-PARTY ORDER FOLLOW-UP ═══════════════════════════════════════════
+ *
+ * The same shape as the VOE and HOI cards, deliberately, down to the wording:
+ * reply into the stored Gmail thread when there is one, say so plainly when
+ * there is not, and adopt the thread afterwards so the NEXT follow-up has one.
+ *
+ * WHY NOT lpOrderEmail. That modal composes a fresh message through
+ * order_email_envelope and sends no thread_id and no in_reply_to, so every
+ * message it sends opens a new conversation. That is right for the FIRST
+ * contact and wrong for a chase — a vendor being chased for the third time
+ * should see one conversation, not three, and our own correlation depends on
+ * the reply carrying a header we recognise.
+ *
+ * loan_orders already carries gmail_thread_id / rfc_message_id / gmail_message_id
+ * for every order type, not just VOE, so nothing new is stored to make this work.
+ */
+function lpOrderFollowUp(orderId){
+  const o=_lpOrderById(orderId)||{};
+  const to=String(o.hr_contact_email||o.vendor_email||'').trim();
+  if(!to){ showToast('No email on this order — add one before following up.', true); return; }
+  const threaded=!!o.gmail_thread_id;
+  const what=String(o.label||o.order_type||'order').trim();
+  const whoName=String(o.hr_contact_name||o.vendor_name||'').trim();
+  const base=(what.charAt(0).toUpperCase()+what.slice(1))+' request';
+  openEmailComposer({
+    to: to,
+    /* 'Re:' only when it really is a reply — prefixing a brand new thread with
+       Re: makes it look like a continuation the recipient never saw. */
+    subject: threaded ? ('Re: '+base) : base,
+    bodyHtml: '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'
+      + 'Hello'+(whoName?(' '+lpEsc(whoName.split(/\s+/)[0])):'')+',<br><br>'
+      + 'Following up on the '+lpEsc(what)+' we requested. Could you let me know where it stands?<br><br>'
+      + 'Thank you.</div>',
+    title: threaded ? '📨 Follow up — replies in the existing thread'
+                    : '📨 Follow up — ⚠ starts a NEW thread',
+    sendLabel: 'Send follow-up &#10148;',
+    hideDraftSchedule: true,
+    onSend: function(){ return _lpOrderFollowUpSend(o); }
+  });
+}
+
+async function _lpOrderFollowUpSend(o){
+  const to=(getChipEmails('toChips')[0]||'').trim();
+  if(!to){ showToast('Recipient email required', true); return; }
+  const subject=(document.getElementById('subjectInput')?.value||'').trim();
+  const editor=document.getElementById('emailEditor');
+  const bodyHtml='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'
+    + stripMarkdownFences(editor?.innerHTML?.trim()||'') + '</div>';
+  const btn=document.getElementById('ecSendBtn');
+  const restore=()=>{ if(btn){ btn.disabled=false; btn.innerHTML='Send follow-up &#10148;'; } };
+  if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
+  try{
+    const body={ action:'send', mailbox:'processing@ratesandrealty.com',
+      to:to, subject:subject, body_html:bodyHtml };
+    const cc=getChipEmails('ccChips');
+    if(cc && cc.length) body.cc=Array.isArray(cc)?cc.join(', '):cc;
+    /* BOTH, or the reply comes back looking like a fresh message. thread_id puts
+       it in the same GMAIL conversation; in_reply_to is what makes the
+       RECIPIENT's client thread it and what makes their reply carry a header we
+       can correlate on.
+       THE PARAMETER IS thread_id, NOT threadId — every param gmail-inbox reads
+       is snake_case, and the camelCase spelling is silently dropped, which is
+       how the VOE follow-up once opened new conversations while announcing the
+       opposite. `references` is deliberately not sent: gmail-inbox chains it off
+       the thread's last message, which beats us guessing. */
+    if(o.gmail_thread_id) body.thread_id=o.gmail_thread_id;
+    if(o.rfc_message_id)  body.in_reply_to=o.rfc_message_id;
+    const resp=await _authClient().functions.invoke('gmail-inbox',{ body:body });
+    const data=resp&&resp.data, error=resp&&resp.error;
+    if(error||!data||data.ok!==true) throw new Error(await _lpFnError(error, data, 'send failed'));
+
+    /* ADOPT THE THREAD. Without this an order with no gmail_thread_id starts a
+       brand new conversation on every follow-up, forever.
+       voe_set_thread is order-generic despite its name — it updates loan_orders
+       by id and touches only the thread columns — so this reuses it rather than
+       adding a second function that must agree with it.
+       THE GUARD IS THIS `if`, NOT THE RPC: its coalesce protects against a blank
+       argument, not against replacing a populated row. Only the caller knows
+       whether this is an adoption or a deliberate re-send.
+       Best-effort: the mail has gone, so failing to record the id must not read
+       as failing to send. */
+    let _adopted=false;
+    if(!o.gmail_thread_id && data && data.thread_id){
+      try{
+        const _sr=await _authClient().rpc('voe_set_thread',{
+          p_order_id:o.id, p_gmail_message_id:data.message_id||null,
+          p_gmail_thread_id:data.thread_id||null, p_rfc_message_id:data.rfc_message_id||null });
+        if(_sr && _sr.error) throw _sr.error;
+        _adopted=true;
+      }catch(te){
+        console.warn('[order voe_set_thread]', te&&te.message);
+        showToast('Follow-up sent, but the thread id could not be stored — the next one will start another new thread.', true);
+      }
+    }
+    /* The toast states which of the three things actually happened, rather than
+       a single cheerful line that reads the same whether the thread was joined,
+       created and saved, or created and lost. */
+    showToast('Follow-up sent to '+to+(o.gmail_thread_id
+      ? ' (in the original thread) ✓'
+      : (_adopted ? ' — new thread started and saved; replies from here stay together ✓'
+                  : ' (new thread) ✓')));
+    closeEmailComposer();
+    /* Record it through the SAME function lpOrderEmailSend uses, with its real
+       signature — it writes an order_notes row whose is_follow_up flag is what
+       the card's "last follow-up" line reads back. Best-effort and AFTER the
+       send, so the note describes a result rather than an intention. */
+    try{
+      await _authClient().rpc('order_email_note', {
+        p_order_id:o.id, p_to_email:to,
+        p_to_name:(o.hr_contact_name||o.vendor_name||null),
+        p_subject:subject, p_from_key:'processing', p_ok:true });
+    } catch(ne){ console.warn('[order_email_note]', ne&&ne.message); }
+    if(typeof lpLoadOrders==='function') lpLoadOrders(lpCid());
+    else if(typeof lpRenderOrders==='function') lpRenderOrders();
+  }catch(e){
+    restore(); showToast('Follow-up failed: '+((e&&e.message)||e), true);
+  }
+}
+
 function lpOrderEmail(orderId){
   const o=_lpOrderById(orderId)||{};
   const toEmail=o.hr_contact_email||o.vendor_email||'';

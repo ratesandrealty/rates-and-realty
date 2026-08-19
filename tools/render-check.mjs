@@ -861,6 +861,59 @@ const SPECS = [
       })()`, "Rene Duarte's tasks | Aubrey Ayson's tasks | Someone else's"],
     ],
   },
+  /* The order card's follow-up button STATES the thread situation.
+     Whether a chase joins the conversation the vendor already has or opens a
+     new one is the one thing worth knowing before clicking, and a button that
+     looks identical either way is how the VOE follow-up spent a while
+     announcing "replies in the original thread" while starting new ones.
+     Driven by the caller, which sets gmail_thread_id on the fixture order and
+     runs this twice. tokenOnly: the orders pane needs a real session. */
+  {
+    name: 'order card follow-up button states the thread',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    tokenOnly: true,
+    evals: [
+      /* Creates its own order, reads the button in BOTH thread states, and
+         deletes it — so the spec needs no fixture row anybody has to remember
+         to keep, and cannot pass vacuously against a contact that happens to
+         have no orders. Asserting only the un-threaded wording would pass for a
+         button hard-coded to warn, which is the more dangerous of the two. */
+      [`(async function(){
+        if (typeof window.lpOrderFollowUp !== 'function') return 'HARNESS: lpOrderFollowUp absent';
+        var cl = window._authClient();
+        var made = null;
+        var label = async function(){
+          await window.lpLoadOrders('${FIXTURE}');
+          for (var i=0;i<40;i++){
+            var b = Array.prototype.slice.call(document.querySelectorAll('button'))
+              .filter(function(x){ return (x.getAttribute('onclick')||'').indexOf('lpOrderFollowUp') === 0; });
+            if (b.length) return b[0].textContent.replace(/\\s+/g,' ').trim();
+            await new Promise(function(r){ setTimeout(r, 150); });
+          }
+          return '(no button)';
+        };
+        try {
+          var ins = await cl.from('loan_orders').insert({
+            order_type:'escrow', status:'ordered', contact_id:'${FIXTURE}',
+            label:'ZZ-TEST followup spec', hr_contact_email:'zz@example.invalid'
+          }).select('id').single();
+          if (ins.error) return 'HARNESS: could not create order — ' + ins.error.message;
+          made = ins.data.id;
+
+          var noThread = await label();
+          var up = await cl.from('loan_orders')
+            .update({ gmail_thread_id:'zz-test-thread', rfc_message_id:'<zz@example.invalid>' })
+            .eq('id', made);
+          if (up.error) return 'HARNESS: could not set thread — ' + up.error.message;
+          var withThread = await label();
+          return noThread + ' :: ' + withThread;
+        } finally {
+          if (made) { try { await cl.from('loan_orders').delete().eq('id', made); } catch (e) {} }
+        }
+      })()`, '📨 Follow up ⚠ new thread :: 📨 Follow up'],
+    ],
+  },
   {
     name: 'lead-scorer panel calls scorerApi as the user',
     url: `/admin/lead-detail?contact_id=${FIXTURE}`,
