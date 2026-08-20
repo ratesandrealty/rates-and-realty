@@ -15941,12 +15941,21 @@ function _lpRenderEmailBody(host, o){
    * A caller that does not pass them keeps exactly the old behaviour, so this is
    * additive and no call site is obliged to change at once. */
   (function(){
-    const msg = o.message;
-    if(!f || !msg || !o.client || !o.mailbox) return;
+    if(!f || !o.client || !o.mailbox) return;
     if(typeof GI.resolveInlineImages !== 'function' || typeof GI.rewriteCidSrc !== 'function') return;
-    if(!msg.inline_images || !msg.inline_images.length) return;
+    /* Nothing to resolve unless the body actually references a cid:. Checked
+       BEFORE the provider runs, so a message with no inline images costs no
+       Gmail round trip at all. */
     if(typeof GI.hasCidRefs === 'function' && !GI.hasCidRefs(html)) return;
-    GI.resolveInlineImages(o.client, o.mailbox, msg).then(function(map){
+    /* o.message: the parts are already in hand. o.messageProvider: fetch them,
+       which is the email_log case — the body is stored, the MIME parts are not. */
+    const get = o.message ? Promise.resolve(o.message)
+              : (typeof o.messageProvider === 'function' ? o.messageProvider() : null);
+    if(!get) return;
+    Promise.resolve(get).then(function(msg){
+      if(!msg || !msg.inline_images || !msg.inline_images.length) return null;
+      return GI.resolveInlineImages(o.client, o.mailbox, msg);
+    }).then(function(map){
       if(!map || !Object.keys(map).length) return;
       const live = document.getElementById(frameId);
       if(live) live.srcdoc = wrap(GI.rewriteCidSrc(split.main || html, map));
@@ -16035,7 +16044,30 @@ async function lpVoeEmailOpen(emailId, ownerKey){
     frameId: 'lpVoeEmailFrame',
     html: d.body_html || '',
     text: d.body_text || '',
-    attachments: d.attachments
+    attachments: d.attachments,
+    /* INLINE cid: IMAGES. email_log stores the BODY but not the MIME parts, so
+     * an <img src="cid:…"> here has nothing local to resolve against and used to
+     * render as a broken image — 196 of 792 stored bodies carry such refs.
+     *
+     * messageProvider is called ONLY after the text has painted, and only when
+     * the body actually contains a cid: ref, so a message without inline images
+     * costs nothing. It fetches the part LIST for this one message through
+     * gmail-inbox `get_inline_images` — a read-only action that does NOT persist
+     * messages, run matchContact or fire the escrow suggester, unlike get_thread.
+     * Viewing must not file mail.
+     *
+     * Legacy rows predating Gmail threading have no ids; the provider returns
+     * null and the reader keeps exactly its old behaviour.
+     *
+     * The mailbox is passed straight back to the server, which re-checks it
+     * against the caller's role in resolveMailbox before any Gmail call. A va
+     * cannot reach a rene@ message by holding its id. */
+    client: _authClient(),
+    mailbox: d.mailbox || null,
+    messageProvider: (d.gmail_message_id && d.mailbox) ? async function(){
+      const r = await window.GmailInbox.call(_authClient(), d.mailbox, 'get_inline_images', { message_id: d.gmail_message_id });
+      return { id: d.gmail_message_id, body_html: d.body_html || '', inline_images: (r && r.inline_images) || [] };
+    } : null
   });
 }
 function lpVoeField(k,field,val){ const v=_lpVoeFind(k); if(!v) return; v[field]=(val||'').trim(); lpVoeSave(k); }

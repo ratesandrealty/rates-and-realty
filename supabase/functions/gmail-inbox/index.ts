@@ -688,6 +688,47 @@ serve(async (req) => {
      * a thread. Gmail hands back base64url, so a 25MB file is ~33MB of JSON;
      * pulling every attachment of every message on open would be an OOM waiting
      * to happen. */
+    /* ── get_inline_images ────────────────────────────────────────────────────
+     *
+     * The inline-part list for ONE message, and nothing else.
+     *
+     * WHY NOT get_thread. get_thread is the only other producer of
+     * inline_images, and it is not read-only: persistMessages files EVERY
+     * message in the thread into email_log whenever a participant matches a
+     * known contact or vendor. That is right when somebody deliberately expands
+     * a thread; it is wrong as a side effect of VIEWING one stored message,
+     * which would file mail nobody opened into the table the timeline, the
+     * activity feed and hoi_quote_list all read. The upsert is idempotent
+     * (onConflict gmail_message_id, ignoreDuplicates) so repeats are harmless —
+     * it is the FIRST call that changes the record. Viewing should not file.
+     *
+     * This writes nothing. It mirrors get_attachment below, which already does a
+     * per-message `messages/{id}?format=full` read with no persist, no
+     * matchContact and no escrowSuggestion.
+     *
+     * collectInlineImages is the SAME helper get_thread uses, so the two paths
+     * cannot come to describe a message's inline parts differently.
+     *
+     * The mailbox gate is inherited, not re-implemented: resolveMailbox has
+     * already run for this request and refused any mailbox this role may not
+     * open. A va asking for a rene@ message is refused here exactly as anywhere
+     * else, and this action does not widen that by a single line. */
+    if (action === 'get_inline_images') {
+      const inlineMsgId = String(body.message_id || '').trim()
+      if (!inlineMsgId) return err('message_id required', 400)
+      const mr = await gmailApi(mailbox, `messages/${encodeURIComponent(inlineMsgId)}?format=full`)
+      if (!mr.ok) return err(`forbidden: message not in ${mailbox}`, 403)
+      const mj = await mr.json()
+      /* messageToRow is what get_thread uses to derive body_html, so the html
+         collectInlineImages is filtered against is identical on both paths.
+         Nothing here is persisted — the row is built and discarded. */
+      const row: any = messageToRow(mailbox, String(mj?.threadId || ''), mj)
+      return ok({
+        message_id: inlineMsgId,
+        inline_images: collectInlineImages(mj?.payload, row?.body_html || ''),
+      })
+    }
+
     if (action === 'get_attachment') {
       const messageId = String(body.message_id || '').trim()
       const attachmentId = String(body.attachment_id || '').trim()
