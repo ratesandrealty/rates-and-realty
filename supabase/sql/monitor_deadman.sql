@@ -1,3 +1,19 @@
+-- ⚠ THIS FILE IS THE ORIGINAL INSTALL RECORD, NOT THE LIVE DEFINITION.
+--
+-- On 2026-08-20 monitor_deadman_check was extended to watch a SECOND heartbeat —
+-- deploy-watch — and to key its cooldown on the SORTED SET of dead monitors
+-- rather than returning at the first one found. The body below predates that and
+-- watches gdrive-health-monitor only.
+--
+-- The authoritative copy is supabase/sql/db-functions/monitor_deadman_check.sql,
+-- captured from production by tools/recapture-db-functions.mjs. Read that one.
+--
+-- This file is kept because it carries what the capture cannot: the cron.schedule
+-- install line at the foot, and the 2026-08-01 ${RED} incident that is the reason
+-- a dead-man's switch exists at all. Do not edit the function body here expecting
+-- it to take effect — CLAUDE.md's rule about leaving two copies applies, and this
+-- header is the disambiguation.
+--
 -- ── DEAD-MAN'S SWITCH FOR gdrive-health-monitor ─────────────────────────────
 --
 -- WHY THIS IS SQL AND NOT MORE TYPESCRIPT
