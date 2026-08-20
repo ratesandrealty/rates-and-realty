@@ -859,9 +859,29 @@ async function testSend() {
   showToast(`✓ Test queued for ${email} (requires MailerLite edge function)`);
 }
 
+/* Session headers for reads of borrower data. `H` above carries the ANON KEY and
+ * nothing upgrades it — it is a `const` and this file contains no getSession call.
+ * contacts_secure is a DEFINER view over `contacts`, so it is not subject to that
+ * table's RLS and an anon read walks straight past it; that is how contacts_live
+ * exposed 1,046 borrower records (docs/ANON-VIEW-DISCLOSURE-2026-08-20.md).
+ *
+ * NO ANON FALLBACK, deliberately — same discipline as email-marketing's
+ * _smsAuthHeaders. A read of borrower data that cannot be attributed to a
+ * signed-in user should fail loudly, not succeed as nobody. */
+async function _contactsAuthHeaders() {
+  let jwt = null;
+  try {
+    const c = window._supabaseClient || (window.supabase && window.supabase.auth ? window.supabase : null);
+    const s = c && c.auth ? await c.auth.getSession() : null;
+    if (s && s.data && s.data.session) jwt = s.data.session.access_token;
+  } catch (_) {}
+  if (!jwt) throw new Error('Not signed in — reload the page and sign in again.');
+  return { apikey: KEY, Authorization: 'Bearer ' + jwt, 'Content-Type': 'application/json' };
+}
+
 // ── CONTACTS ─────────────────────────────────────────────────
 async function loadContacts() {
-  const r = await fetch(`${SB}/rest/v1/contacts_secure?select=id,first_name,last_name,email,phone,contact_type,source&not.email.is.null&order=created_at.desc&limit=200`, { headers: H });
+  const r = await fetch(`${SB}/rest/v1/contacts_secure?select=id,first_name,last_name,email,phone,contact_type,source&not.email.is.null&order=created_at.desc&limit=200`, { headers: await _contactsAuthHeaders() });
   _contacts = await r.json();
   _filtered = [..._contacts];
   renderContactList();

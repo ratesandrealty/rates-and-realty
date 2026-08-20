@@ -140,3 +140,61 @@ has no record of.**
 3. Revoke anon on `contacts_secure`, `contacts_secure_live` and
    `mortgage_applications_secure` — they return `[]` today by predicate, and
    nothing reads them as anon.
+
+---
+
+# The three `_secure` views: revoke HELD, and why
+
+**Not revoked. Frontend-first, per `CLAUDE.md`.** These have real browser callers
+and two of them send the anon key, so revoking first would be an outage — the
+exact failure that gated `email-service` for twelve minutes.
+
+Every browser call site, with the identity it actually sends:
+
+| call site | identity | effect of a revoke |
+|---|---|---|
+| `admin/drip-builder.html:864` | **anon key** — `const H` at :357, never upgraded, no `getSession` in the file | **hard break** |
+| `admin/email-marketing.html:791` | **anon key** — inline at the call site | **hard break** |
+| `admin/communications.html:292` | session if resolved, else anon in a `catch` that logs "using anon" | breaks on a race |
+| `admin/earnings-dashboard.html:334` | session if resolved, else anon in a `catch` | breaks on a race |
+| `admin/lead-detail.html:30543` | `Bearer (_sjwt \|\| anon)` — falls back to anon | breaks on a race |
+| `admin/lead-detail.html` (~20 sites) | `_authClient()` — session | fine |
+| `admin/pipeline.html:215`, `admin/people.html` | session | fine |
+
+## Step 1 done: the two hard breakers now send a session
+
+- **`drip-builder`** — added `_contactsAuthHeaders()`, an async session-header
+  helper with **no anon fallback**: it throws "Not signed in". Used for the
+  `contacts_secure` read.
+- **`email-marketing`** — the `contacts_secure` export now uses the file's
+  existing `_smsAuthHeaders()`, which already throws rather than falling back.
+
+Both pages load `auth-guard.js`, so `window._supabaseClient` is available.
+
+The three race-prone sites were deliberately **left alone**: they already prefer
+the session and only reach anon inside a `catch`. After the revoke that fallback
+becomes a clean 42501 instead of a silent leak — the right direction — and
+widening the diff would make the confirmation pass harder to review. They are
+listed here so the confirmation covers them.
+
+## Step 2 pending: a human must confirm the pages still work
+
+Load and exercise, signed in:
+
+- `/admin/drip-builder` — the contact list populates
+- `/admin/email-marketing` — the audience/contact export populates
+- `/admin/communications` — the call-contact search returns results
+- `/admin/earnings-dashboard` — the earnings table populates
+- `/admin/lead-detail` — a lead opens and the application panel renders
+
+## Step 3, only then
+
+```sql
+revoke all on public.contacts_secure              from anon;
+revoke all on public.contacts_secure_live         from anon;
+revoke all on public.mortgage_applications_secure from anon;
+```
+
+`node tools/check-view-exposure.mjs` returns **exit 1** naming exactly these three
+until that lands, and **exit 0** afterwards. That is the gate; it does not need a
+person to remember.

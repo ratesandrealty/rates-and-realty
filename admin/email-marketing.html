@@ -788,9 +788,13 @@ async function loadContacts() {
     do {
       const url = SB_URL + '/rest/v1/contacts_secure?select=id,first_name,last_name,email,phone,pipeline_status,source,loan_type,tags'
         + '&order=created_at.desc,id.desc&limit=' + pageSize + '&offset=' + offset;
-      const res = await fetch(url, {
-        headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY }
-      });
+      /* SESSION, not the anon key. contacts_secure is a DEFINER view over
+       * `contacts`, so it is not subject to that table's RLS — an anon read walks
+       * past it, which is exactly how contacts_live exposed 1,046 borrower
+       * records (docs/ANON-VIEW-DISCLOSURE-2026-08-20.md). _smsAuthHeaders throws
+       * when there is no session rather than falling back, which is the right
+       * direction for a full contact export. */
+      const res = await fetch(url, { headers: await _smsAuthHeaders() });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       batch = await res.json();
       if (!Array.isArray(batch) || !batch.length) break;
