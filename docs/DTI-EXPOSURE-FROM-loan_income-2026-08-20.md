@@ -143,3 +143,73 @@ needs. **The fix should copy this rather than invent a second pattern** — the 
 reasoning as the liabilities panel. It is also further evidence the MISMO import's
 plain insert was an omission and not a design choice: two of the three writers
 into this table already dedupe, and MISMO is the one that does not.
+
+---
+
+# CORRECTED — 2026-08-20, later
+
+Three rows deactivated. **`is_active = false`, not `DELETE`** — the Santana
+precedent, and reversible from the ids below.
+
+## Before → after
+
+| owner | type | amount | import | now |
+|---|---|---|---|---|
+| Daniel Garcia | Base | 5858.67 | 2026-08-19 | **ACTIVE** |
+| Daniel Garcia | Bonus | 4260 | 2026-08-19 | **ACTIVE** |
+| America Jaimes | Base | 4680 | 2026-08-19 | **ACTIVE** |
+| Daniel Garcia | Base | 5858.67 | 2026-07-15 | deactivated `400b5166` |
+| Daniel Garcia | Bonus | 4260 | 2026-07-15 | deactivated `46d750fd` |
+| America Jaimes | Base | 4106.27 | 2026-07-15 | deactivated `656e0220` |
+
+## Why those three
+
+**Every `source='mismo'` row from the FIRST import (2026-07-15); the 2026-08-19
+set survives.** Not an arbitrary pick within each pair:
+
+- **America Jaimes** is the one that matters — her amount genuinely *changed*
+  (4106.27 → 4680). The newer row is the correct one, so "keep the later import"
+  is the substantively right rule, not a tie-break.
+- **Daniel Garcia's** two pairs are byte-identical, so which survives cannot move
+  any total. Keeping the same import date across all three makes the surviving set
+  exactly what a re-import under the new `replaceMismoIncome()` would leave — so
+  the record now matches what the fixed code produces.
+
+The update was guarded: it aborted unless exactly 3 rows changed, exactly 3
+remained active, and the active sum equalled 14,798.67.
+
+## Both surfaces confirmed
+
+| | before | after |
+|---|---|---|
+| `loan_income` active sum | 29,023.61 | **14,798.67** |
+| `loan_scenarios.total_monthly_income` | 29,023.61 | **14,798.67** |
+| `loan_scenarios.front_end_dti` | 22.13% | **43.39%** |
+| `loan_scenarios.back_end_dti` | 23.10% | **45.31%** |
+| `borrower_qualifying_snapshot.total_documented_monthly` | 29,023.61 | **14,798.67** |
+| `…max_back_end_piti_at_43_dti` | 12,480.15 | **6,363.43** |
+| `…max_back_end_piti_at_50_dti` | 14,511.81 | **7,399.34** |
+
+**They did not both update the same way, and the difference matters.**
+
+`borrower_qualifying_snapshot` is a VIEW filtering `is_active = true`, so it
+corrected itself the moment the rows flipped — no action needed.
+
+**`loan_scenarios` is a stored cache written by the page** (`_lsAutoSave`), so it
+did **not** move. It still read 29,023.61 / 23.10% after the deactivation, and
+would have kept reading it until somebody happened to open the lead. It was
+updated explicitly, recomputing from the same stored PITIA (6,421.59) and debt
+(283) that the page uses:
+
+```
+front = 6421.59 / 14798.67 * 100 = 43.39%
+back  = (6421.59 + 283) / 14798.67 * 100 = 45.31%
+```
+
+Those match the corrected figures predicted before any change was made.
+
+**One definitional note, not an error.** `max_back_end_piti_at_50_dti` is
+`income × 0.50` — it does **not** net out the 283 of existing debt. Read as "total
+back-end capacity" that is right; read as "PITI you can still afford" it is ~283
+optimistic. The view is now internally consistent either way; whether it should
+subtract known debt is a separate question from this fix.
