@@ -10,7 +10,7 @@ session's work.
 
 ### What went out
 
-Two messages through the **real send path** (`email-service` action `send`, the
+**Three** messages through the **real send path** (`email-service` action `send`, the
 same one `sendEmailFromComposer` uses), each carrying five labelled lines:
 
 | # | representation | what it tests |
@@ -29,9 +29,9 @@ renewaterrace@outlook.com      msg 6a8790ee4580fe1c00b42cf6   email_log e9e1f933
 
 All three carry the **identical body** — same source file, 1,533 bytes each.
 
-### Verified: all four representations survived the send path byte-intact
+### Verified: all four representations survive the send path unaltered
 
-Read back off `email_log.body_html`, both messages, 1,533 bytes each:
+Read back off `email_log.body_html`, all three messages:
 
 ```
 <font color="#C00000">                    present
