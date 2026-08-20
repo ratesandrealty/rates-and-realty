@@ -345,7 +345,7 @@
     function mountHelpButton() {
       if (document.querySelector('script[src*="/admin/js/help-button.js"]')) return;
       const hb = document.createElement('script');
-      hb.src = '/admin/js/help-button.js?v=8d39f2c87b';
+      hb.src = '/admin/js/help-button.js?v=eebd5521d8';
       document.head.appendChild(hb);
     }
     // Universal task capture (📌 + Ctrl+Shift+K). Same reasoning as the two
@@ -355,7 +355,7 @@
     function mountTaskCapture() {
       if (document.querySelector('script[src*="/admin/js/task-capture.js"]')) return;
       const tc = document.createElement('script');
-      tc.src = '/admin/js/task-capture.js?v=c1f474defe';
+      tc.src = '/admin/js/task-capture.js?v=1d09ed5f8d';
       document.head.appendChild(tc);
     }
     /* One FAB in the bottom-right corner, replacing the two independent floating
@@ -420,7 +420,7 @@
     function mountRRTime() {
       if (window.RRTime || document.querySelector('script[src*="/admin/js/rr-time.js"]')) return;
       const rt = document.createElement('script');
-      rt.src = '/admin/js/rr-time.js?v=7f96fd2d69';
+      rt.src = '/admin/js/rr-time.js?v=99a4c33576';
       document.head.appendChild(rt);
     }
     /* One phone helper, app-wide, for the same reason as RRTime: four separate
@@ -441,13 +441,13 @@
     function mountDialer() {
       if (window._rrDialerLoaded || document.querySelector('script[src*="/admin/js/dialer.js"]')) return;
       const dl = document.createElement('script');
-      dl.src = '/admin/js/dialer.js?v=0cefcb0375';
+      dl.src = '/admin/js/dialer.js?v=cf4b1032f5';
       document.head.appendChild(dl);
     }
     function mountActionFab() {
       if (document.querySelector('script[src*="/admin/js/action-fab.js"]')) return;
       const af = document.createElement('script');
-      af.src = '/admin/js/action-fab.js?v=29b3a995e5';
+      af.src = '/admin/js/action-fab.js?v=2d1b99b251';
       document.head.appendChild(af);
     }
     if (document.readyState === 'loading') {

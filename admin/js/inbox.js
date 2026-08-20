@@ -1559,8 +1559,17 @@
       var key = _cidKey(msg.id, cid.toLowerCase());
       if (_cidCache[key]) { map[cid.toLowerCase()] = _cidCache[key]; continue; }
       /* Size ceiling. The 15MB server cap still applies; this is about not
-       * pulling megabytes to draw a footer nobody asked for. */
-      if (p.size && p.size > INLINE_MAX) continue;
+       * pulling megabytes to draw a footer nobody asked for.
+       *
+       * `p.size && …` WAS THE BUG: a part reporting no size — absent, null or 0 —
+       * skipped the comparison entirely and was fetched whatever its true size.
+       * The cap read like a bound and was not one. Gmail normally supplies size,
+       * so this was latent rather than active, which is exactly why it would have
+       * stayed. A part with an UNKNOWN size is now treated as over the cap and
+       * left as a broken image: refusing to fetch an unbounded blob is the safe
+       * direction, and the failure stays visible either way. */
+      var psize = (p.size == null || p.size === '') ? null : Number(p.size);
+      if (psize === null || !isFinite(psize) || psize > INLINE_MAX) continue;
       try {
         var r = await invoke(cl, mailbox, 'get_attachment', {
           message_id: msg.id, attachment_id: p.attachment_id, part_id: p.part_id || ''
@@ -4105,6 +4114,25 @@
   window.GmailInbox = {
     mount: mount, openThread: openThread, openCompose: openCompose, call: invoke,
     sanitize: sanitize, sanitizerReady: sanitizerReady, PURIFY_CFG: PURIFY_CFG,
-    splitQuoted: splitQuoted, wrapBody: wrapBody
+    splitQuoted: splitQuoted, wrapBody: wrapBody,
+    /* INLINE cid: IMAGES, exported so lead-detail's reader uses THIS
+     * implementation rather than growing a second one.
+     *
+     * lead-detail had no cid: handling at all — it set srcdoc directly — so every
+     * embedded image in an HOI or VOE thread rendered as a broken image with its
+     * alt text, and signatures (mostly a table of cid: logos) appeared to vanish.
+     * The same message opened in the Communications inbox rendered correctly,
+     * because only this file knew how.
+     *
+     * Two functions, used together and in this order:
+     *   resolveInlineImages(client, mailbox, msg) -> { cid: blobUrl }   (async)
+     *   rewriteCidSrc(html, map) -> html with src="blob:…"
+     * plus hasCidRefs(html) to skip the round trip when there is nothing to do.
+     *
+     * The blob cache is module-level and shared, so a message opened in both
+     * places fetches each part once. */
+    resolveInlineImages: resolveInlineImages,
+    rewriteCidSrc: rewriteCidSrc,
+    hasCidRefs: hasCidRefs
   };
 })();

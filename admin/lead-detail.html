@@ -28,7 +28,7 @@
     .pac-icon{display:none!important;}
     .pac-logo::after{display:none!important;}
   </style>
-  <script src="/admin/js/auth-guard.js?v=f7336ae2eb"></script>
+  <script src="/admin/js/auth-guard.js?v=88424f52ac"></script>
   <script src="/admin/js/lead-tiers.js?v=a7de61c5e5"></script>
   <!-- Loaded after auth-guard so window._supabaseClient exists when fnFetch reads it. -->
   <script src="/admin/js/fn-call.js?v=85d03d2a98"></script>
@@ -41,7 +41,7 @@
        runtime, and removes any load-order question on the page where the dialer
        matters most. Both mounts are idempotent (window._rrDialerLoaded plus the
        script-src check in auth-guard), so this does not double-load. -->
-  <script src="/admin/js/dialer.js?v=0cefcb0375"></script>
+  <script src="/admin/js/dialer.js?v=cf4b1032f5"></script>
   <script src="/admin/js/crm-comms.js?v=d37133d86b"></script>
   <script src="/admin/js/notif-bell.js?v=ce05693d65"></script>
   <script>
@@ -1885,7 +1885,7 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
           integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
           crossorigin="anonymous" defer></script>
     <script src="/admin/js/attachment-viewer.js?v=e8f2b14c9f"></script>
-  <script src="/admin/js/inbox.js?v=27b0eaf787" defer></script>
+  <script src="/admin/js/inbox.js?v=6ebfd5692e" defer></script>
   <!-- Places loads its own Maps bundle ON DEMAND, when a field is attached — not
        on every lead-detail open. This tag is only the ~4KB helper. -->
   <script src="/public/js/mi-factors.js"></script>
@@ -13841,7 +13841,25 @@ function _lpHoiBody(afn){
 function _lpHoiSignatureHtml(){
   const s=(_lpHoiMeta&&_lpHoiMeta.signature)||{};
   if(s.custom_html) return '<div style="margin-top:18px;">'+s.custom_html+'</div>';
-  const nd=[]; if(s.nmls) nd.push('NMLS #'+lpEsc(String(s.nmls))); if(s.dre) nd.push('DRE #'+lpEsc(String(s.dre)));
+  /* NO PREFIX. email_settings stores the LABEL INSIDE THE VALUE —
+   * signature_nmls = "NMLS #1795044", signature_dre = "DRE #02035220" — because
+   * the settings form labels those inputs "NMLS #" and "DRE #" (:39703), so what
+   * was typed into them already carried it. Prepending here produced
+   *     NMLS #NMLS #1795044 · DRE #DRE #02035220
+   * on TWELVE quote-request emails sent to insurance agents between 2026-06-17
+   * and 2026-08-19, measured off email_log.
+   *
+   * The VOE path found this first and says so at _lpVoeDefaultBody:
+   *   "broker.nmls already carries the 'NMLS #...' prefix — do NOT prepend again"
+   * and the HOI path was never updated. Same divergence shape as the vendor
+   * pickers.
+   *
+   * FIX THE TEMPLATE, NOT THE DATA. Four renderers display the stored value
+   * verbatim — lead-detail :39290 and :39757, email-service :459, and the
+   * settings preview — and would show "1795044 | 02035220" with no label at all
+   * if the prefix were stripped from the table.
+   * docs/HOI-CONVERSATION-VIEW-2026-08-20.md */
+  const nd=[]; if(s.nmls) nd.push(lpEsc(String(s.nmls))); if(s.dre) nd.push(lpEsc(String(s.dre)));
   const ew=[]; if(s.email) ew.push(lpEsc(s.email)); if(s.website) ew.push(lpEsc(s.website));
   let h='<div style="margin-top:18px;padding-top:10px;border-top:1px solid #e5e5e5;font-family:Arial,sans-serif;font-size:12px;color:#777;line-height:1.5;">';
   if(s.name) h+='<div style="font-weight:600;color:#444;">'+lpEsc(s.name)+'</div>';
@@ -13855,7 +13873,8 @@ function _lpHoiSignatureText(){
   const s=(_lpHoiMeta&&_lpHoiMeta.signature)||{};
   if(s.custom_html) return String(s.custom_html).replace(/<\s*br\s*\/?\s*>/gi,'\n').replace(/<\/(div|p|tr|li|h[1-6])\s*>/gi,'\n').replace(/<[^>]+>/g,'').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/\n{2,}/g,'\n').trim();
   const lines=[]; if(s.name) lines.push(s.name); if(s.title) lines.push(s.title); if(s.phone) lines.push(s.phone);
-  const nd=[]; if(s.nmls) nd.push('NMLS #'+s.nmls); if(s.dre) nd.push('DRE #'+s.dre); if(nd.length) lines.push(nd.join(' · '));
+  /* No prefix — the stored value carries it. See _lpHoiSignatureHtml above. */
+  const nd=[]; if(s.nmls) nd.push(s.nmls); if(s.dre) nd.push(s.dre); if(nd.length) lines.push(nd.join(' · '));
   const ew=[]; if(s.email) ew.push(s.email); if(s.website) ew.push(s.website); if(ew.length) lines.push(ew.join(' · '));
   return lines.join('\n');
 }
@@ -13868,7 +13887,13 @@ function lpHoiEnsureModal(){
   const ABTN='background:rgba(201,168,76,.14);border:1px solid rgba(201,168,76,.4);color:#C9A84C;border-radius:7px;font-size:11px;font-weight:600;padding:6px 12px;cursor:pointer;font-family:inherit;';
   ov=document.createElement('div'); ov.id='lpHoiOverlay';
   ov.style.cssText='display:none;position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.62);align-items:flex-start;justify-content:center;padding:34px 16px;overflow:auto;';
-  ov.innerHTML='<div style="background:#141310;border:1px solid rgba(201,168,76,.3);border-radius:14px;max-width:680px;width:100%;box-shadow:0 24px 60px rgba(0,0,0,.6);">'
+  /* 680px was the narrow column. This modal is HOI-ONLY — its own #lpHoiOverlay,
+   * built here and used nowhere else — so widening it cannot affect the VOE
+   * composer or the Email Threads panel, which are separate renderers.
+   * `width:100%` keeps it responsive, so on a narrow window it still fills the
+   * viewport minus the overlay's 16px padding; the cap only decides how much of
+   * a wide screen it is allowed to use. */
+  ov.innerHTML='<div style="background:#141310;border:1px solid rgba(201,168,76,.3);border-radius:14px;max-width:1040px;width:100%;box-shadow:0 24px 60px rgba(0,0,0,.6);">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.08);"><span style="font-size:15px;font-weight:700;color:#C9A84C;">📨 Request HOI Quotes</span><button onclick="lpHoiCloseModal()" style="background:transparent;border:none;color:#888;font-size:20px;cursor:pointer;line-height:1;">✕</button></div>'
     +'<div style="padding:16px 18px;max-height:72vh;overflow:auto;">'
       +'<div style="font-size:11px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Send to — add one or more companies</div>'
@@ -15306,7 +15331,7 @@ function lpVoeEmpPick(k, i){
     : ('Filled ' + (r.employer||'') + ' — HR ' + r.hr_full)) + borrowerNote, false);
 }
 // 2. SEND TO HR — composer (single recipient, VOE PDF attached, cc rene@+processing@).
-function _lpVoeSigText(b){ b=b||{}; const L=[]; if(b.name)L.push(b.name); if(b.title)L.push(b.title); if(b.phone)L.push(b.phone); if(b.nmls)L.push('NMLS #'+b.nmls); if(b.email)L.push(b.email); return L.join('\n'); }
+function _lpVoeSigText(b){ b=b||{}; const L=[]; if(b.name)L.push(b.name); if(b.title)L.push(b.title); if(b.phone)L.push(b.phone); if(b.nmls)L.push(b.nmls); if(b.email)L.push(b.email); return L.join('\n'); }
 function _lpVoeDefaultBody(pf, hrName, employer, hrFirst, borrowerName){
   pf=pf||{};
   const bk=pf.broker||{};
@@ -15893,6 +15918,44 @@ function _lpRenderEmailBody(host, o){
   const f = document.getElementById(frameId);
   if(f) f.srcdoc = wrap(split.main || html);
   _lpEmailBody[frameId] = { quoted: split.quoted ? wrap(split.quoted) : '', atts: atts };
+
+  /* ── INLINE cid: IMAGES ───────────────────────────────────────────────────
+   *
+   * This reader had NO cid: handling: it set srcdoc from the raw body, so every
+   * <img src="cid:…"> — which is how mail embeds its own images — rendered as a
+   * broken image showing its alt text, and signatures, mostly a table of cid:
+   * logos, appeared to vanish. The same message in the Communications inbox
+   * rendered correctly, because only inbox.js knew how.
+   *
+   * PORTED, NOT REWRITTEN. inbox.js now exports resolveInlineImages /
+   * rewriteCidSrc / hasCidRefs and this calls them, so there is one
+   * implementation, one blob cache and one size ceiling. Writing a second copy
+   * here is how the two would drift — which is precisely how this reader ended
+   * up without the fix in the first place.
+   *
+   * TEXT FIRST, IMAGES FILL IN — the same order inbox.js uses. srcdoc is already
+   * set above; this re-sets it once the blobs exist. Awaiting the fetch before
+   * the first paint would hold a readable message hostage to a footer logo.
+   *
+   * Needs o.client, o.mailbox and o.message (with id, body_html, inline_images).
+   * A caller that does not pass them keeps exactly the old behaviour, so this is
+   * additive and no call site is obliged to change at once. */
+  (function(){
+    const msg = o.message;
+    if(!f || !msg || !o.client || !o.mailbox) return;
+    if(typeof GI.resolveInlineImages !== 'function' || typeof GI.rewriteCidSrc !== 'function') return;
+    if(!msg.inline_images || !msg.inline_images.length) return;
+    if(typeof GI.hasCidRefs === 'function' && !GI.hasCidRefs(html)) return;
+    GI.resolveInlineImages(o.client, o.mailbox, msg).then(function(map){
+      if(!map || !Object.keys(map).length) return;
+      const live = document.getElementById(frameId);
+      if(live) live.srcdoc = wrap(GI.rewriteCidSrc(split.main || html, map));
+      /* The quoted trailer too — a forwarded rate sheet keeps its images — but
+         only in the stashed copy, which _lpEmailQuoteToggle paints on demand. */
+      const st = _lpEmailBody[frameId];
+      if(st && split.quoted) st.quoted = wrap(GI.rewriteCidSrc(split.quoted, map));
+    }).catch(function(e){ console.warn('[lp-email] inline images', e && e.message); });
+  })();
 }
 
 function _lpEmailQuoteToggle(frameId){
@@ -44183,6 +44246,6 @@ async function recordNewVoicemail() {
 })();
 </script>
 
-  <script src="/admin/js/loom-recorder.js?v=dd270bf9c0"></script>
+  <script src="/admin/js/loom-recorder.js?v=742fc14ace"></script>
 </body>
 </html>
