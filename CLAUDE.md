@@ -913,6 +913,116 @@ guard (`getUser` + `auth_user_roles`, as in `communications-admin` and
 `calendar-data`) or, where the caller has no session, a row-held token validated
 in-function (as `lender-portal` does with `lenders.form_token`).
 
+## Every function in `public` is anon-executable at birth, and the obvious fix is a no-op
+
+`ALTER DEFAULT PRIVILEGES` on schema `public` grants `EXECUTE ON FUNCTIONS` to
+`anon`, `authenticated` and `service_role` (`pg_default_acl`, set by both
+`postgres` and `supabase_admin`). So a function is anon-executable the moment it
+exists, before anyone writes a grant — which also means the
+`grant execute … to authenticated, service_role` lines all over
+`supabase/migrations/` read as restrictions and are **no-ops**.
+
+**THE TRAP: `ALTER DEFAULT PRIVILEGES … REVOKE` REPORTS SUCCESS AND DOES NOTHING.**
+
+`pg_default_acl` does not store the ACL a new object receives. It stores a
+**delta merged on top of the hard-wired `acldefault()`**, which for functions is
+always `{=X/owner, owner=X/owner}` — PUBLIC has EXECUTE. **A delta can only
+ADD.** There is no representation for "PUBLIC must not get EXECUTE", so:
+
+```sql
+alter default privileges in schema public revoke execute on functions from public;
+-- succeeds. pg_default_acl is BYTE-IDENTICAL afterwards.
+```
+
+And the `anon` half is **worse than useless**, because it half-works. Measured:
+
+```
+alter default privileges in schema public revoke execute on functions from anon;
+create function zz_probe_after() …
+  proacl  {=X/postgres,postgres=X,authenticated=X,service_role=X}   ← anon=X gone
+  has_function_privilege('anon', …)  =  TRUE                        ← still executes
+```
+
+The `anon=X` line disappears and `anon` still executes it, via the `=X` PUBLIC
+grant it inherits. **A sweep grepping `proacl` for `anon=` now reports that
+function clean.** Same family as `verify_jwt = true` — a statement that looks
+like an access control and is not — except this one also blinds the check that
+would have caught it. Do not ship it.
+
+**What works is an event trigger.** `rr_revoke_new_function_grants`
+(`ddl_command_end`, `tag = 'CREATE FUNCTION'`) revokes `public, anon` off every
+new function in `public`, skipping extension members. New functions land as
+`{postgres=X,authenticated=X,service_role=X}` — the same shape as the
+hand-revoked `quote_reply_match`.
+
+**Recovery, if it ever raises and blocks DDL** — a raising event trigger blocks
+every `CREATE FUNCTION` in the database, including the one that would fix it:
+
+```sql
+alter event trigger rr_revoke_new_function_grants disable;
+```
+
+Its per-function work is already wrapped in `exception when others → raise
+warning` for that reason. `postgres` owns the trigger, so the disable is always
+available.
+
+### The allowlist, and what happens when someone adds a fourth public RPC
+
+The tag for `CREATE OR REPLACE FUNCTION` is still `CREATE FUNCTION`, so the
+trigger fires on ordinary maintenance edits — and would strip `anon` from a
+function that legitimately needs it. So the trigger **re-grants** from an
+allowlist held as an array **inside the function body** (comments above a
+`CREATE` do not survive `recapture-db-functions`):
+
+```
+get_cma_snapshot        public/cma.html   /cma/<slug>
+get_fee_sheet_snapshot  public/fee.html   /fee/<slug>
+video_get_public        watch.html        /watch?v=<slug>
+```
+
+Those three are the entire direct-anon `.rpc()` surface in the tree. Every other
+anonymous surface — lender portal, borrower portal, tours, e-sign, newsletter —
+goes through an edge function on the service role, where function grants do not
+apply. Both directions are proven, on the real functions:
+`get_cma_snapshot` survives a replace, `hoi_quote_meta` does not.
+
+**A fourth public RPC that is not added to the list is not broken at the point of
+change.** A migration that creates it and grants `anon` afterwards works — the
+trigger fires at `ddl_command_end` of the `CREATE`, and the explicit `GRANT` runs
+after it. What the list buys is survival of the **next `CREATE OR REPLACE`**,
+months later, in an unrelated change.
+
+**And that failure is close to silent.** How each page reports a `42501`:
+
+| page | console | what the borrower sees |
+|---|---|---|
+| `public/cma.html` | `console.**warn**` | "This report is temporarily unavailable." |
+| `public/fee.html` | `console.**warn**` | "This estimate is temporarily unavailable." |
+| `watch.html` | `console.error` | "Could not load the video." |
+
+**Two of the three are `console.warn`, which render-check does not fail on**, and
+all three word a permanent permission failure as a transient one. What actually
+catches it is the `anonymous: true` specs — `/cma/<slug>` ×2 and `/fee/<slug>` ×2
+run signed-out and unstubbed against production and assert on the RPC's real
+return, so a stripped grant fails them. **`video_get_public` has no spec at all**
+and is the one that would go unnoticed. Add a spec with the RPC.
+
+### This is the inflow fix only. It closes NONE of the backlog.
+
+Default privileges and event triggers both apply at **CREATE time**. Measured
+straight after the trigger landed: **319 application functions are still
+anon-executable**, exactly as before. The trigger stops number 320.
+
+Because it changes nothing about the running system, **"the site still works" is
+not evidence it landed.** The only proof is to create a function and read its
+ACL — which is what the migration's own `DO` block does, and why it stays there.
+
+Scope, corrected — earlier counts were inflated by pgvector: **506** functions in
+`public`, **118** of them `vector` extension members (owned by `supabase_admin`,
+whose `pg_default_acl` row we cannot reach — `postgres` is not a member of it),
+leaving **388** application functions, **319** anon-executable, **251** of those
+`SECURITY DEFINER`.
+
 ## A guard on a function with a browser caller is FRONTEND-FIRST. Always.
 
 **Adding, tightening, or changing authentication on an edge function that any
