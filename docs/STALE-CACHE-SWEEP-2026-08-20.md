@@ -44,10 +44,10 @@ hand-deactivated its duplicate rows. The view corrected itself. `loan_scenarios`
 kept the doubled figure and has held it since June — roughly 2×, the same shape
 and the same direction as Garcia's.
 
-**Not corrected.** It is a different borrower's record and was outside the
-authorisation given. The fix is the same one applied to Garcia: recompute
-`total_monthly_income`, `front_end_dti` and `back_end_dti` from the live active
-income and the stored PITIA/debt.
+**CORRECTED later the same day — see the section at the foot of this file.** When
+first written this was left alone as another borrower's record, outside the
+authorisation then given; it was authorised and fixed afterwards. The corrected
+back-end DTI is **62.21%**, which clears no programme.
 
 ### Everything else in `loan_scenarios`
 
@@ -89,3 +89,51 @@ stored number that *can* disagree; they just make it disagree less often.
 **Until one is done, the rule is: any change to `loan_income` rows requires an
 explicit `loan_scenarios` update.** Deactivating three rows corrected the view and
 left the cache wrong, and that is how Santana has been wrong since June.
+
+---
+
+# CORRECTED — Santana, 2026-08-20
+
+Authorised and applied. Scenario `d307458a`, application
+`78f2e8b4-…` (`EMC26050739-SantanaNAVARROROSALES`).
+
+| | before | after |
+|---|---|---|
+| `total_monthly_income` | **24,373.16** | **11,774.93** |
+| `front_end_dti` | 27.43% | **56.78%** |
+| `back_end_dti` | **30.05%** | **62.21%** |
+| PITIA / debt (unchanged) | 6,686.35 / 639 | 6,686.35 / 639 |
+| last updated | 2026-06-13 | 2026-08-20 |
+
+Recomputed the same way as Garcia's — from the live active income and the PITIA
+and debt already stored on the scenario. Guarded: the update aborted unless the
+live income equalled 11,774.93 and exactly one row changed.
+
+**Post-sweep: 0 STALE rows remain.** 8 in sync, 10 with no cached income, 22 with
+a typed income and no `loan_income` rows to compare against. (The last count reads
+higher than the earlier sweep only because that query inner-joined `contacts` and
+silently dropped scenarios whose contact row did not match; no data moved.)
+
+## This one needs a human decision, and quickly
+
+**A 62.21% back-end DTI exceeds every limit the panel itself checks** —
+Conventional ≤50%, FHA ≤57%, VA ≤55%. The stored 30.05% read as comfortably
+qualified under all three. This is the same error as Garcia's in direction and
+cause, but Garcia's corrected figure (45.31%) still clears Conventional, and this
+one does not clear anything.
+
+**I am not saying this borrower does not qualify.** The corrected ratio is only as
+good as its three inputs, and two of them are worth checking before anyone acts:
+
+- **Income may be understated.** 11,774.93 is the sum of *active* `loan_income`
+  rows. Two rows on this application were set `is_active = false` by hand at some
+  point; if either was deactivated in error rather than as a duplicate, real income
+  is missing. The deactivated rows are `Jose Navarro Base 2798` ×2 — both exact
+  duplicates of a surviving active row, so on the evidence they were correctly
+  retired. Worth confirming.
+- **PITIA is from 2026-06-13** and reflects whatever loan structure was on screen
+  then. If the scenario has since changed, 6,686.35 is stale in its own right —
+  the DTI is now internally consistent, but consistent with a June structure.
+
+What is not in doubt is that the *displayed* ratio was wrong by 32 points in the
+direction that flatters the file, and it had been since June.

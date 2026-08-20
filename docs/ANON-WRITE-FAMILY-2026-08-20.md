@@ -76,3 +76,30 @@ dropping the matcher breaks it. They retire as a pair, or not at all.
 WRITES — the write side is not closed", implying live exposure. That was reasoning
 from the grant, which is exactly the mistake the audit warns against. Probed, all
 three refuse. The grant is untidy; it is not a hole.
+
+---
+
+# CLOSED — 2026-08-20
+
+`voe_set_thread` and `voe_request_log`: anon + PUBLIC revoked as defence in depth.
+Both keep `authenticated`, asserted in the migration, because both have live
+browser callers on a session JWT (`admin/lead-detail.html:14836` and `:15623`).
+
+The proof that the revoke took is the **change in error class**:
+
+```
+before   voe_set_thread  ->  P0001  "staff only"                 (the in-function guard)
+after    voe_set_thread  ->  42501  "permission denied for function voe_set_thread"
+```
+
+`voe_log_inbound` was not revoked — it was **dropped**, together with
+`voe_match_reply`. See `docs/RETIRING-voe_match_reply-2026-08-20.md`.
+
+`crm_health` (view): anon revoked. It was never a disclosure — it returned a
+statement timeout — but an anonymous caller able to make the database run a query
+to exhaustion is a small denial-of-service surface, and nothing in the tree reads
+the view (`dashboard/admin.html` calls the *function* `crm_health_check_rpc()`).
+Now 42501.
+
+Public surface re-verified after all of it: `video_get_public`,
+`get_cma_snapshot`, `get_fee_sheet_snapshot` all HTTP 200.

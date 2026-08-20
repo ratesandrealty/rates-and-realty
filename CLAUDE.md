@@ -1023,6 +1023,78 @@ whose `pg_default_acl` row we cannot reach — `postgres` is not a member of it)
 leaving **388** application functions, **319** anon-executable, **251** of those
 `SECURITY DEFINER`.
 
+## A VIEW bypasses RLS — and that is how the whole contact book leaked
+
+**A view is not subject to the underlying table's RLS unless it is declared
+`security_invoker`.** It runs as its owner. So `anon` holding `SELECT` on a
+DEFINER view over a protected table reads straight past every control on that
+table.
+
+Found 2026-08-20. `contacts_live` returned **1,046 borrower records** — name,
+email, phone, address, date of birth, `ssn_last4` — to the anon key printed in
+every page. No input, no uuid, no secret. Measured contrast, same key, same
+request shape:
+
+```
+GET /rest/v1/loan_income     ->  []          RLS holds, the control works
+GET /rest/v1/contacts_live   ->  1046 rows   the view walked straight past it
+```
+
+`borrower_qualifying_snapshot` was the same, for income and affordability. Both
+revoked; both now 42501.
+
+**This is worse than every function oracle in this file.** Those needed an input
+to pivot on and returned one record at a time. A view returns the book.
+
+### The three conditions, and the check nobody had
+
+The dangerous combination is queryable, and all three parts must hold:
+
+1. the view is **not** `security_invoker`,
+2. it reads a table with **RLS enabled**, and
+3. **`anon` has SELECT** on it.
+
+Measured across all 13 views in `public`: 7 are DEFINER, 5 of those read an
+RLS-bearing table, and 3 of those are still anon-selectable — `contacts_secure`,
+`contacts_secure_live`, `mortgage_applications_secure`. **They return `[]` today
+only because their own predicates key on `auth.uid()`, which is null for anon.
+That is a WHERE clause, not a grant.** `contacts_live` differed from them only in
+not having one. One careless edit reproduces the incident.
+
+**Create new views over borrower data `WITH (security_invoker = on)`**, and grant
+`anon` SELECT only where a genuinely public page reads it. Today none does — the
+entire public surface is three slug-gated RPCs (`get_cma_snapshot`,
+`get_fee_sheet_snapshot`, `video_get_public`).
+
+### The repo captures 389 functions and ZERO views
+
+`tools/recapture-db-functions.mjs` reads `pg_proc`. Nothing reads `pg_class` for
+`relkind in ('v','m')`. **`contacts_live` has no `CREATE VIEW` statement anywhere
+in this repository** — eight committed db-functions read it, nothing creates it,
+and it is not in `supabase/migrations/`. So it cannot be dated from git and the
+exposure window cannot be bounded from the repo.
+
+That is the same shape as the edge-function drift this file already documents —
+*production holding source the repo has never seen* — which cost 85 days on
+`email-service`. The drift check exists because that mattered. **Views were never
+brought into it, and the object that leaked the contact book is exactly a view the
+repo has no record of.**
+
+### `pg_stat_statements` is the artifact when the logs are gone
+
+Edge/API log retention is 24 hours, which is useless for an exposure that may have
+run for months. `pg_stat_statements` survives — and it records the role a
+statement executed as, so a PostgREST anonymous read appears under
+`userid = anon`, with `stats_since` giving first-seen.
+
+Used here to establish that the only anonymous reads of either view in 3.5 months
+of history were **my own probes from that morning**, timestamped seconds apart.
+
+Its limits, which must be stated with any such claim: it **evicts** (4,881 of a
+5,000 cap here, so absence is not proof), its window starts at the last
+`stats_reset`, it counts statements rather than clients, and it carries no IP and
+no per-call timestamp.
+
 ## A guard on a function with a browser caller is FRONTEND-FIRST. Always.
 
 **Adding, tightening, or changing authentication on an edge function that any

@@ -108,3 +108,46 @@ anon-revoke backlog on its own merits, since an anon-executable write into
 anon-executable **writes**. They were on the original family list
 (`docs/ANON-EXECUTE-HOI-VOE-FAMILY-2026-08-19.md`) and remain open. The three
 read-side oracles are now closed; these are the write side.
+
+---
+
+# RETIRED — 2026-08-20, as a pair
+
+Done in the order the plan specified, caller before callee.
+
+| step | result |
+|---|---|
+| delete edge function `voe-inbound-poll` | `Deleted Edge Function.` — endpoint verified **HTTP 404** |
+| remove `supabase/functions/voe-inbound-poll/` | gone |
+| remove `[functions.voe-inbound-poll]` from `config.toml` | gone |
+| `drop function voe_log_inbound(…)` | dropped (caller first — it CALLS the matcher) |
+| `drop function voe_match_reply(…)` | dropped |
+| assertion in the migration | 0 of the two remain |
+
+Verified afterwards over HTTPS: both now return **PGRST202** — "could not find the
+function" — rather than 42501. The distinction matters: 42501 would mean it still
+exists and refused; PGRST202 means it is gone.
+
+`check-function-drift.mjs --all`: **126 functions, all in sync**, so the repo and
+production still agree after the deletion.
+
+Tombstones kept: `supabase/sql/db-functions/voe_match_reply.sql` and
+`voe_log_inbound.sql`, both `pg_get_functiondef` captures.
+
+**The timeline question was decided by retiring the pair**: no inbound
+`email_log` row is written for a VOE reply any more, and none has been since job
+37 was removed. If that record is later wanted, the honest place for it is
+`quote-reply-poll`, not a revived poller.
+
+### Also cleaned up on the way
+
+`[functions.zztest-mailbox-insert]` was still pinned in `config.toml` with the
+comment *"TEMPORARY, restored to trash the proof fixture. DELETE AFTER."* The
+function was already 404 with no directory in the repo — only the dead pin
+remained. Removed. `CLAUDE.md` requires temporary investigation functions to be
+deleted immediately and verified 404; the function half was done, the pin half was
+not.
+
+The `quote-reply-poll` comment that cited `voe-inbound-poll` as a live convention
+now says it was deleted and points here, so it does not read as a pointer to
+something that exists.
