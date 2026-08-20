@@ -623,6 +623,51 @@ Deno.serve(async (req: Request) => {
     const primary = borrowers[0];
     const primaryFullName = [primary.first_name, primary.last_name].filter(Boolean).join(' ');
     const results: any[] = [];
+    const incomeWarnings: string[] = [];
+
+    /* REPLACE, never append. loan_income used to be a plain .insert() per row with
+       no delete and no conflict target, so every re-import added a full set on top
+       of the last one. Measured on EMC26071266: two imports left SIX active rows
+       for three file items, the panel summed 29,023.61 against a true 14,798.67,
+       and the stored back-end DTI read 23.10% where the truth is 45.31%. Doubling
+       income HALVES DTI, so the error made the borrower look more qualified.
+
+       Scoped to source='mismo' AND this application AND this contact:
+         - source  — loan_income also holds hand-entered rows from the LOS editor
+                     and w2_ocr rows from ocr-apply-1003. A blanket delete would
+                     destroy income MISMO never carried.
+         - contact — co-borrower rows live on the co-borrower's own contact_id.
+         - application — the same person can hold income on another application.
+
+       Same shape as ocr-apply-1003:233, which already deletes by contact+source
+       before inserting. MISMO was the only writer into this table that did not.
+
+       A FAILED DELETE MUST NOT BE FOLLOWED BY AN INSERT. That is how the original
+       bug produced its damage — an error nobody read, and rows piling up behind
+       it. On a delete failure we skip the insert and surface a warning in the
+       response body rather than adding to a set we could not clear. */
+    async function replaceMismoIncome(appId: string, contactId: string, ownerName: string, rows: any[]) {
+      if (!rows || !rows.length) {
+        // Nothing to insert. Do NOT delete: a file that parsed no income is far
+        // more likely to be a parse failure than a borrower who genuinely earns
+        // nothing, and wiping the previous set would turn that into data loss.
+        incomeWarnings.push(`${ownerName}: no income items parsed — existing loan_income rows left untouched.`);
+        return;
+      }
+      const { error: delErr } = await sb.from('loan_income').delete()
+        .eq('application_id', appId).eq('contact_id', contactId).eq('source', 'mismo');
+      if (delErr) {
+        incomeWarnings.push(`${ownerName}: could not clear previous MISMO income (${delErr.message}) — NOT inserting, to avoid duplicating. Income for this borrower is unchanged.`);
+        return;
+      }
+      for (const row of rows) {
+        const { error: incErr } = await sb.from('loan_income').insert({
+          ...row, application_id: appId, contact_id: contactId,
+          income_owner: ownerName, created_at: new Date().toISOString(), updated_at: new Date().toISOString()
+        });
+        if (incErr) incomeWarnings.push(`${ownerName}: income row failed (${incErr.message}).`);
+      }
+    }
     // v42: collect each borrower's contact_id + display name by ordinal index so
     // liabilities can be attributed to the correct borrower via borrower_index.
     const borrowerContactIds: (string|null)[] = new Array(borrowers.length).fill(null);
@@ -654,13 +699,7 @@ Deno.serve(async (req: Request) => {
     const primaryAppId = await upsertPrimaryApp(primaryCId, primary, shared, xml, file_name||null);
 
     currentStep = 'insert_primary_income';
-    for (const row of (primary.incomeRows||[])) {
-      const { error: incErr } = await sb.from('loan_income').insert({
-        ...row, application_id:primaryAppId, contact_id:primaryCId,
-        income_owner:primaryFullName, created_at:new Date().toISOString(), updated_at:new Date().toISOString()
-      });
-      if (incErr) console.log('[mismo] primary income insert:', incErr.message);
-    }
+    await replaceMismoIncome(primaryAppId, primaryCId, primaryFullName, primary.incomeRows || []);
 
     currentStep = 'link_primary_borrower';
     const { error: lbPrimaryErr } = await sb.from('loan_borrowers').upsert({
@@ -702,13 +741,7 @@ Deno.serve(async (req: Request) => {
       await sb.from('contacts').update(cbcu).eq('id', cbCId);
 
       currentStep = `insert_coborrower_income_${i}`;
-      for (const row of (cb.incomeRows||[])) {
-        const { error: cbincErr } = await sb.from('loan_income').insert({
-          ...row, application_id:primaryAppId, contact_id:cbCId,
-          income_owner:cbFullName, created_at:new Date().toISOString(), updated_at:new Date().toISOString()
-        });
-        if (cbincErr) console.log(`[mismo] coborr ${i} income insert:`, cbincErr.message);
-      }
+      await replaceMismoIncome(primaryAppId, cbCId, cbFullName, cb.incomeRows || []);
 
       currentStep = `link_coborrower_${i}`;
       const { error: lbcbErr } = await sb.from('loan_borrowers').upsert({
@@ -796,6 +829,11 @@ Deno.serve(async (req: Request) => {
       const extraNames = borrowerNames.slice(2).filter(Boolean).join(', ');
       warnings.push(`File contains ${borrowers.length} borrowers; only borrower 1 and 2 were mapped to primary / co-borrower fields — borrower 3+${extraNames ? ' ('+extraNames+')' : ''} has a loan_borrowers row but NO co_borrower_* mirror. Capture the extra borrower(s) manually.`);
     }
+    /* Income problems ride in the RESPONSE, not only the console. The whole reason
+       the duplication ran for a month is that the old code's only failure signal
+       was console.log inside an edge function nobody reads. A caller that cannot
+       see the warning cannot act on it. */
+    warnings.push(...incomeWarnings);
 
     return ok({ success:true, borrower_count:borrowers.length, borrowers:results,
       primary_application_id:primaryAppId, primary_contact_id:primaryCId,
