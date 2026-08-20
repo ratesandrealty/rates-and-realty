@@ -22,9 +22,12 @@ same one `sendEmailFromComposer` uses), each carrying five labelled lines:
 | 5 | no formatting | control |
 
 ```
-reneduarte.realty1@gmail.com   message_id 6a878fcc1a116e08ccccece0   email_log e4c1e4b7
-rduarte89@yahoo.com            message_id 6a878fce56ed3cdc187e9590   email_log 2a385e9a
+reneduarte.realty1@gmail.com   msg 6a878fcc1a116e08ccccece0   email_log e4c1e4b7
+rduarte89@yahoo.com            msg 6a878fce56ed3cdc187e9590   email_log 2a385e9a
+renewaterrace@outlook.com      msg 6a8790ee4580fe1c00b42cf6   email_log e9e1f933
 ```
+
+All three carry the **identical body** — same source file, 1,533 bytes each.
 
 ### Verified: all four representations survived the send path byte-intact
 
@@ -37,9 +40,24 @@ style="background-color:#FFFF00"          present
 bgcolor="#FFFF00"                         present
 ```
 
-That confirms §4 of the earlier report empirically: `email-service` runs only
-`stripMarkdownFences` and strips no attributes. **Whatever the toolbar emits
-leaves the building unchanged.**
+### CORRECTION: the send path DOES modify the body — it appends a tracking pixel
+
+I first wrote "survived byte-intact". The three bodies are the same length but
+have **different md5 hashes**, and the difference is at byte 1414:
+
+```
+<img src="…/functions/v1/track-event/pixel?e=<email_log_id>" width="1" height="1" …>
+```
+
+A per-message tracking pixel is appended, carrying that message's `email_log_id`.
+
+So the accurate statement is narrower and still sufficient: **`email-service`
+ADDS a tracking pixel and STRIPS NOTHING.** None of the four colour or highlight
+representations is altered, which is what the test was for. But "the body that
+arrives is exactly what the composer produced" is false, and anyone diffing
+composed-vs-sent will see the pixel and should not treat it as corruption.
+
+`stripMarkdownFences` remains the only thing touching the body's own markup.
 
 ### NOT verified, and it needs a human: what each client rendered
 
@@ -47,9 +65,10 @@ leaves the building unchanged.**
 whole point of the test and it is unread. What is needed is a look at each
 message and, per line 1–5, whether it appears as described.
 
-**Outlook was not tested at all** — that address had not been provided when the
-test ran. The Outlook result is the one that actually decides the design, because
-it is the strictest of the three and line 3 (inline `background-color`) is the
+**All three are now sent**, Outlook included (`renewaterrace@outlook.com`,
+confirmed not present in `hoi_quote_requests`, `loan_orders` or `contacts`, so it
+carries no correlation risk). Outlook is the result that decides the design: it is
+the strictest of the three and line 3 (inline `background-color`) is the
 representation at risk.
 
 ### How to read the result
