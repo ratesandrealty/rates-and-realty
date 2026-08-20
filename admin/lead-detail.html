@@ -31950,15 +31950,65 @@ function showMismoMissingFieldsModal(messages, fieldTargets) {
   });
 }
 
+/* The loan amount lives in TWO places that disagree constantly — measured
+ * 2026-08-20, 11 of 19 comparable contacts, six of them live files, gaps from
+ * 21,000 to 184,799. generate-mismo-data used to silently prefer the scenario;
+ * it now returns 409 loan_amount_disagreement and refuses to choose.
+ *
+ * This is the picker. It is deliberately NOT a confirm(): "OK = scenario,
+ * Cancel = application" makes Cancel mean "proceed", which is how somebody
+ * exports the wrong number while trying to back out. Three explicit buttons,
+ * and closing the overlay exports nothing. Resolves to 'scenario' |
+ * 'application' | null. */
+function _mismoPickLoanAmount(info) {
+  return new Promise(function (resolve) {
+    var ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:100000;display:flex;align-items:center;justify-content:center;padding:20px';
+    var m = document.createElement('div');
+    m.style.cssText = 'background:#111;border:1px solid #C9A84C55;border-radius:12px;max-width:520px;width:100%;padding:22px;color:#ddd;font-size:13px;line-height:1.55';
+    var fmt = function (n) { return '$' + Number(n || 0).toLocaleString('en-US'); };
+    var esc = function (s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); };
+    m.innerHTML =
+      '<div style="color:#C9A84C;font-weight:700;text-transform:uppercase;letter-spacing:.08em;font-size:.72rem;margin-bottom:10px">Which loan amount should the export carry?</div>' +
+      '<p style="margin:0 0 14px">The saved scenario and the application disagree. This export will not choose for you — the file goes to a lender.</p>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">' +
+        '<div style="background:#0b0b0b;border:1px solid #2a2a2a;border-radius:8px;padding:10px"><div style="color:#666;font-size:10px;text-transform:uppercase;letter-spacing:.06em">Scenario</div><div style="font-size:1.15rem;font-weight:800;color:#eee">' + fmt(info.scenario_loan_amount) + '</div></div>' +
+        '<div style="background:#0b0b0b;border:1px solid #2a2a2a;border-radius:8px;padding:10px"><div style="color:#666;font-size:10px;text-transform:uppercase;letter-spacing:.06em">Application</div><div style="font-size:1.15rem;font-weight:800;color:#eee">' + fmt(info.application_loan_amount) + '</div></div>' +
+      '</div>' +
+      '<div style="color:#888;font-size:11px;margin-bottom:16px">Difference ' + fmt(Math.abs(info.difference || 0)) + '. Whichever you pick is recorded against this export.</div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">' +
+        '<button id="_mpCancel" style="padding:8px 14px;background:#1a1a1a;border:1px solid #333;border-radius:7px;color:#999;cursor:pointer;font:inherit">Cancel export</button>' +
+        '<button id="_mpApp" style="padding:8px 14px;background:#1a1a1a;border:1px solid #C9A84C55;border-radius:7px;color:#C9A84C;cursor:pointer;font:inherit">Use application</button>' +
+        '<button id="_mpScen" style="padding:8px 14px;background:#C9A84C;border:none;border-radius:7px;color:#111;font-weight:700;cursor:pointer;font:inherit">Use scenario</button>' +
+      '</div>';
+    ov.appendChild(m); document.body.appendChild(ov);
+    var done = function (v) { try { ov.remove(); } catch (_) {} resolve(v); };
+    m.querySelector('#_mpScen').onclick   = function () { done('scenario'); };
+    m.querySelector('#_mpApp').onclick    = function () { done('application'); };
+    m.querySelector('#_mpCancel').onclick = function () { done(null); };
+    ov.addEventListener('click', function (e) { if (e.target === ov) done(null); });
+  });
+}
+
 async function exportMISMO() {
   const contactId = getContactId();
   if (!contactId) return alert('No contact ID found.');
   try { await save1003(); } catch(_) {}
   try {
-    const res = await fnFetch('generate-mismo-data',
+    let res = await fnFetch('generate-mismo-data',
       { method:'POST', body:JSON.stringify({contact_id:contactId}) }
     );
-    const resp = await res.json();
+    let resp = await res.json();
+
+    // 409: the two sources disagree. Ask, then re-send with the caller's choice.
+    if (res.status === 409 && resp.error === 'loan_amount_disagreement') {
+      const choice = await _mismoPickLoanAmount(resp);
+      if (!choice) { (window.toast||window.showToast||function(){})('MISMO export cancelled — nothing was generated.'); return; }
+      res  = await fnFetch('generate-mismo-data',
+        { method:'POST', body:JSON.stringify({contact_id:contactId, loan_amount_source:choice}) });
+      resp = await res.json();
+    }
+
     if (!res.ok || resp.error) { (window.toast||window.showToast||alert)(resp.message || resp.error || 'MISMO export failed'); return; }
     const bin = atob(resp.xml);
     const arr = new Uint8Array(bin.length);

@@ -159,8 +159,84 @@ Deno.serve(async (req: Request) => {
     const { data: scens } = await sb.from('loan_scenarios').select('*').eq('contact_id', contact_id).order('is_primary', { ascending: false }).order('updated_at', { ascending: false }).limit(1);
     const scen: any = scens?.[0] || {};
     const sNum = (v: any) => { if (v == null || v === '') return null; const f = parseFloat(String(v)); return (isNaN(f) || f === 0) ? null : f; };
+
+    /* ── PROVENANCE, AND NO SILENT PREFERENCE ──────────────────────────────
+     *
+     * Every effective term below is `scenario ?? application`. That precedence
+     * was invisible, and the two sources disagree constantly: measured
+     * 2026-08-20, 11 of 19 comparable contacts had a loan_scenarios loan_amount
+     * different from their mortgage_application, SIX OF THEM LIVE FILES, with
+     * gaps from 21,000 to 184,799. Santana Navarro Rosales' scenario modelled an
+     * $807,500 loan against an application recording $660,000.
+     *
+     * A document that goes to a lender, assembled from a choice between two
+     * disagreeing numbers, with no record of which was chosen, is not auditable
+     * after the fact — and it was not knowable afterwards either, because the
+     * export persisted nothing at all until mismo_export_log.
+     *
+     * So: the source of every term is REPORTED, and a loan_amount disagreement
+     * REFUSES rather than guessing. The caller passes loan_amount_source to
+     * resolve it.
+     *
+     * NO TOLERANCE BAND. Any difference refuses. A percentage threshold only
+     * relocates the argument to where the threshold belongs, and the smallest
+     * real gap here (21,000) is not obviously ignorable on a $629,000 loan.
+     * Equal, or only one side present, proceeds without asking. */
+    const scenLoan = sNum(scen.loan_amount);
+    const appLoan  = sNum(app.loan_amount);
+    const pick     = body.loan_amount_source as ('scenario' | 'application' | undefined);
+
+    let loanAmountSource: string;
+    if (scenLoan != null && appLoan != null && scenLoan !== appLoan) {
+      if (pick !== 'scenario' && pick !== 'application') {
+        return new Response(JSON.stringify({
+          error: 'loan_amount_disagreement',
+          message: `The saved scenario and the application disagree on the loan amount, and this export will not choose for you. `
+                 + `Scenario: ${scenLoan.toLocaleString()}. Application: ${appLoan.toLocaleString()}. `
+                 + `Re-send with loan_amount_source set to "scenario" or "application".`,
+          scenario_loan_amount: scenLoan,
+          application_loan_amount: appLoan,
+          difference: scenLoan - appLoan,
+          resolve_with: ['scenario', 'application'],
+        }), { status: 409, headers: cors });
+      }
+      loanAmountSource = pick;
+    } else if (scenLoan != null && appLoan != null) {
+      loanAmountSource = 'agreed';
+    } else if (scenLoan != null) {
+      loanAmountSource = 'scenario_only';
+    } else if (appLoan != null) {
+      loanAmountSource = 'application_only';
+    } else {
+      loanAmountSource = 'neither';
+    }
+
+    const chosenLoanAmount =
+      loanAmountSource === 'application' || loanAmountSource === 'application_only' ? appLoan
+      : (scenLoan ?? appLoan);
+
+    /* The remaining terms keep scenario-first precedence — they are not the
+       figure a lender underwrites to and refusing on each would make the export
+       unusable — but their source is recorded so a reader of an old export can
+       see where each came from. */
+    const srcOf = (s: any, a: any) => (sNum(s) != null ? 'scenario' : (sNum(a) != null ? 'application' : 'neither'));
+    const provenance = {
+      loan_amount:    loanAmountSource,
+      appraised_value: srcOf(scen.appraised_value, app.estimated_value ?? app.property_value ?? app.purchase_price),
+      interest_rate:  srcOf(scen.interest_rate, app.current_interest_rate),
+      loan_term:      scen.loan_term_months ? 'scenario' : (app.loan_term_months ? 'application' : 'default_360'),
+      pi_payment:     srcOf(scen.pi_payment, app.pi_payment),
+      taxes:          srcOf(scen.property_taxes_monthly, app.taxes_monthly),
+      insurance:      srcOf(scen.insurance_monthly, app.insurance_monthly),
+      mi:             sNum(app.mi_monthly) != null ? 'application' : 'neither',
+    };
+    if (loanAmountSource === 'scenario' || loanAmountSource === 'application') {
+      warnings.push(`Loan amount taken from the ${loanAmountSource.toUpperCase()} because the two disagreed `
+        + `(scenario ${scenLoan!.toLocaleString()} vs application ${appLoan!.toLocaleString()}). Chosen by the caller, not by this function.`);
+    }
+
     const eff = {
-      loanAmount: sNum(scen.loan_amount) ?? sNum(app.loan_amount),
+      loanAmount: chosenLoanAmount,
       propVal: sNum(scen.appraised_value) ?? sNum(app.estimated_value) ?? sNum(app.property_value) ?? sNum(app.purchase_price),
       rate: sNum(scen.interest_rate) ?? sNum(app.current_interest_rate),
       term: scen.loan_term_months || app.loan_term_months || 360,
@@ -648,8 +724,37 @@ Deno.serve(async (req: Request) => {
       reo: reoAssets.length,
       income_source: incomeSourceSummary,           // 'structured' | 'flat_fallback' | 'mixed'
       hmda_status: hmdaStatus,
+      /* WHICH SOURCE EACH EFFECTIVE TERM CAME FROM. Always present, agreement or
+         not — a provenance field that only appears on conflict teaches people it
+         is an error message rather than a fact about the document. */
+      provenance,
+      loan_amount_used: eff.loanAmount,
       warnings,                                       // never silent — Group B gate reads these
     };
+
+    /* RECORD THAT THIS EXPORT HAPPENED. Best-effort and NEVER blocking: a failure
+       to write the logbook must not withhold a document somebody is waiting for.
+       But it is logged loudly, because a silently-empty log would recreate exactly
+       the "unknowable" this table exists to end. */
+    try {
+      const { error: logErr } = await sb.from('mismo_export_log').insert({
+        contact_id,
+        application_id: appId,
+        exported_by: _auth.userId ?? null,
+        file_name: fileName,
+        loan_amount_used: eff.loanAmount,
+        loan_amount_source: loanAmountSource,
+        scenario_loan_amount: scenLoan,
+        application_loan_amount: appLoan,
+        borrower_count: borrowers.length,
+        income_source: incomeSourceSummary,
+        warning_count: warnings.length,
+        provenance,
+      });
+      if (logErr) console.error('[generate-mismo-data] EXPORT LOG WRITE FAILED:', logErr.message);
+    } catch (logEx: any) {
+      console.error('[generate-mismo-data] EXPORT LOG WRITE THREW:', logEx?.message || logEx);
+    }
 
     if (debug) {
       return new Response(JSON.stringify({ ...meta, xml }), { headers: cors });
