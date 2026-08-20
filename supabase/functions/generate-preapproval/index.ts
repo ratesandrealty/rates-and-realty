@@ -85,6 +85,69 @@ Deno.serve(async (req: Request) => {
     const body = await req.json();
     const pdfBytes = await buildPDF(body);
 
+    /* RECORD THAT A LETTER WAS PRODUCED.
+     *
+     * Until 2026-08-20 this function persisted NOTHING — no uploaded_documents
+     * row, no storage object, no audit entry — and it reads nothing from the
+     * database, so it left no query behind for pg_stat_statements either. The
+     * question "was a letter generated while this borrower's income was doubled?"
+     * was unanswerable. It carries a licensed originator's NMLS.
+     *
+     * The DTI is the column that matters: the letter STATES a ratio, computed on
+     * the page from the live sum of active loan_income rows. Garcia's income was
+     * inflated 2026-08-19 -> 08-20 and Santana's 2026-05-21 -> 06-04; a letter in
+     * those windows would have said 23.10% (true 45.31%) and 42.17% (true 62.21%).
+     * Storing the emitted ratio WITH its inputs makes the next one diagnosable.
+     *
+     * ATTRIBUTION IS BEST-EFFORT, NOT A GUARD. The caller now sends a session
+     * token (lead-detail moved to fnFetch), so the uid is resolvable — but this
+     * does NOT refuse an unauthenticated caller. requireStaff is a separate,
+     * later step, deliberately not landed here:
+     * docs/GENERATE-PREAPPROVAL-2026-08-20.md
+     *
+     * Never blocks the PDF. A logbook failure must not withhold a document
+     * somebody is waiting for — but it is logged loudly, because a silently
+     * empty log recreates the exact "unknowable" this table exists to end. */
+    try {
+      const SB_URL = Deno.env.get('SUPABASE_URL')!;
+      const SB_SVC = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      let generatedBy: string | null = null;
+      try {
+        const tok = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+        if (tok) {
+          const ur = await fetch(`${SB_URL}/auth/v1/user`, {
+            headers: { apikey: SB_SVC, Authorization: `Bearer ${tok}` },
+          });
+          if (ur.ok) generatedBy = (await ur.json())?.id ?? null;
+        }
+      } catch (_e) { /* attribution is optional; the row is not */ }
+
+      const num = (v: any) => { if (v == null || v === '') return null; const f = parseFloat(String(v)); return isNaN(f) ? null : f; };
+      const lr = await fetch(`${SB_URL}/rest/v1/preapproval_letter_log`, {
+        method: 'POST',
+        headers: { apikey: SB_SVC, Authorization: `Bearer ${SB_SVC}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          contact_id: body.contact_id || body.borrower_id || null,
+          generated_by: generatedBy,
+          borrower_name: body.borrower_name ?? null,
+          loan_amount: num(body.loan_amount),
+          loan_type: body.loan_type ?? null,
+          loan_program: body.loan_program ?? null,
+          front_dti: num(body.front_dti),
+          back_dti: num(body.back_dti),
+          total_income: num(body.total_income ?? body.total_monthly_income),
+          total_debt: num(body.total_debt ?? body.total_monthly_debt),
+          total_pitia: num(body.total_pitia),
+          credit_score: num(body.credit_score),
+          property_address: body.property_address ?? null,
+          valid_days: num(body.valid_days),
+        }),
+      });
+      if (!lr.ok) console.error('[generate-preapproval] LETTER LOG WRITE FAILED:', lr.status, (await lr.text()).slice(0, 200));
+    } catch (logEx: any) {
+      console.error('[generate-preapproval] LETTER LOG WRITE THREW:', logEx?.message || logEx);
+    }
+
     // v48: fire Layer 2 ClickUp automation (fire-and-forget, never blocks PDF response)
     try {
       const contactId = body.contact_id || body.borrower_id || null;

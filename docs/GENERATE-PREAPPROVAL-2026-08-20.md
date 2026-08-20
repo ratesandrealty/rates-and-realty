@@ -156,3 +156,101 @@ database, so it leaves no query behind to count.
 
 Item 4 is the one that would have made section 5 a query rather than an
 inference.
+
+---
+
+# SHIPPED — 2026-08-20: frontend move + letter log. Guard still held.
+
+## Step 1 done
+
+`admin/lead-detail.html` no longer sends the anon key. The call is now
+`fnFetch('generate-preapproval', …)` — the same helper `exportMISMO` uses twenty
+lines away — which sends `apikey:<anon>` as the project identifier plus
+`Authorization: Bearer <session>`, and **throws `Not signed in`** when there is no
+session rather than falling back.
+
+**`verify_jwt` is still `false` and there is still no `requireStaff`.** The
+function accepts anyone exactly as before; what changed is that the legitimate
+caller now identifies itself, so the guard can land later without an outage.
+Confirm the button, then the guard.
+
+## `preapproval_letter_log` — the row that was missing
+
+One row per letter: who, when, which contact, and **the DTI the letter stated**
+with the inputs that produced it (`total_income`, `total_debt`, `total_pitia`), so
+a wrong ratio is diagnosable rather than inferred. RLS on, staff read,
+service_role insert, anon revoked and asserted.
+
+Attribution is **best-effort, not a guard**: the function resolves the bearer
+token to a uid via `/auth/v1/user` and records `null` if it cannot. It never
+refuses. The write never blocks the PDF but logs loudly on failure.
+
+Proven end to end against the **ZZ-TEST fixture** (not a real borrower — this path
+fires ClickUp and lead-score hooks):
+
+```
+success=true  pdf_bytes=242,864
+log row: ZZ-TEST Fixture Borrower · generated_by 7ac68068-… (real uid)
+         loan 500,000 · front_dti 28.5 · back_dti 36.25
+         income 10,000 · debt 775 · pitia 2,850 · Conventional · 740
+```
+
+---
+
+# Should the letter RECOMPUTE the DTI, or accept what the caller sends?
+
+Asked rather than assumed. **Neither, wholly — the split is the answer.**
+
+## Why "accept what the caller sends" is wrong
+
+Today every figure comes from the request body, so the PDF states whatever the
+page was holding, including a ratio computed from **inflated income** (Garcia,
+Santana), a ratio from a **scenario disagreeing with the application** by up to
+184,799 on six live files, and — with no guard — **any ratio a caller types**, on
+letterhead carrying NMLS 1795044.
+
+A pre-approval letter asserts a fact about a borrower. Sourcing that from an
+unverified request body is the wrong shape regardless of who is calling.
+
+## Why "recompute everything" is also wrong
+
+Loan amount, rate, term, taxes, insurance and HOA are **the offer being quoted**,
+and quoting a structure that differs from the saved application is legitimate and
+routine. Forcing re-derivation would either freeze the letter to the stored
+scenario or reintroduce the scenario-vs-application choice the MISMO export just
+had to be taught to refuse — and would make a function that currently reads
+nothing from the database read five tables.
+
+## The split: the OFFER is the caller's, the BORROWER is the server's
+
+| supplied by the caller | derived server-side |
+|---|---|
+| loan amount, rate, term | `total_income` — sum of **active** `loan_income` |
+| taxes, insurance, HOA, MI | `total_debt` — non-payoff `loan_liabilities` |
+| loan type / programme | **`front_dti`, `back_dti`** from that PITIA and that income/debt |
+| property, occupancy, purpose | borrower name, credit score from the record |
+
+PITIA stays a function of the caller's structure — that is the quote. **The ratio
+stops being a claim the page makes and becomes one the system stands behind.**
+
+Two consequences to accept deliberately:
+
+1. **The letter's DTI may differ from the panel's.** That is the point: the panel
+   is a scratchpad, the letter is a document. The letter should win, and say so.
+2. **A borrower with no structured income cannot get a letter with a ratio.**
+   Omitting the DTI block beats stating a fabricated one.
+
+## Order
+
+Server-side derivation must know **which** contact the caller may act on, and
+`contact_id` is currently trusted from the body for the ClickUp and lead-score side
+effects too. So:
+
+1. ~~frontend move~~ *(done)*
+2. confirm the button
+3. `requireStaff(req)` before `req.json()`, and `verify_jwt = true`
+4. resolve `contact_id` against the authenticated user
+5. **then** move income, debt and the ratio server-side
+
+Steps 3–5 are one coherent change. The log added today is what will show whether
+step 5 alters any ratio in practice.

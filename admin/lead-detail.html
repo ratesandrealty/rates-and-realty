@@ -30461,9 +30461,27 @@ async function lsGeneratePreApproval() {
       company_name:'Rates & Realty', company_nmls:'1416824', valid_days:90
     };
     payload.action = 'preapproval';
-    var res = await fetch(base+'/functions/v1/generate-preapproval', {
-      method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+anon,'apikey':anon},
-      body: JSON.stringify(payload)
+    payload.contact_id = payload.contact_id || cid;
+    /* SESSION, not the anon key. This call used to send
+     *     Authorization: 'Bearer '+anon,  apikey: anon
+     * which identifies nobody — and generate-preapproval has no guard of its own,
+     * so the letter it emits (Rene's name, NMLS 1795044, company NMLS 1416824)
+     * was reachable by anyone holding the key printed in every page.
+     *
+     * fnFetch is the same helper exportMISMO uses twenty lines away: it sends
+     * apikey:<anon> as the project identifier the gateway routes on, plus
+     * Authorization: Bearer <session>, and THROWS 'Not signed in' when there is
+     * no session rather than falling back. Fail closed on a document that
+     * carries a licence number.
+     *
+     * FRONTEND-FIRST: this is step 1. The in-function requireStaff guard is
+     * deliberately NOT landed in the same pass — see
+     * docs/GENERATE-PREAPPROVAL-2026-08-20.md for the order and why. Until it
+     * lands the function still accepts anyone; what changes here is that the
+     * legitimate caller now identifies itself, so the guard can be added without
+     * an outage and the log below can say who generated the letter. */
+    var res = await fnFetch('generate-preapproval', {
+      method:'POST', body: JSON.stringify(payload)
     });
 
     var result = await res.json();
