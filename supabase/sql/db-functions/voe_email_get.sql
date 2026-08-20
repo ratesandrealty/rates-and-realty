@@ -1,6 +1,6 @@
 -- voe_email_get(p_email_log_id uuid)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-18. This layer had NO git history:
+-- Captured from production 2026-08-20. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -47,6 +47,12 @@ begin
     'status', e.status,
     'at', e.created_at,
     -- attachments: [] rather than null, so the caller has one shape to render.
-    'attachments', coalesce(e.attachments, '[]'::jsonb)
+    'attachments', coalesce(e.attachments, '[]'::jsonb),
+    -- Identifiers for inline-image resolution. NULL on legacy rows that predate
+    -- Gmail threading; the caller simply skips the lookup, which is the same
+    -- behaviour it had before this existed.
+    'gmail_message_id', e.gmail_message_id,
+    'gmail_thread_id', e.gmail_thread_id,
+    'mailbox', e.mailbox
   );
 end; $function$;

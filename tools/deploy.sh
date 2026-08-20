@@ -125,3 +125,14 @@ node tools/verify-deploy.mjs "$HOST"
 # fail a deploy that worked. It is also why this is durable — it rides on real
 # activity rather than a scheduler that dies with a session.
 node tools/observe-db-functions.mjs 2>/dev/null | grep -E '^\[observe\]' || true
+
+# ── deploy heartbeat, not a gate ─────────────────────────────
+# Stamps system_state:deploy:last_success so deploy_watch_run() can alert on the
+# AGE of the last verified deploy. This exists because stamp-assets --check
+# refused correctly for five days while 52 commits sat undeployed and nothing
+# said so: a gate that refuses is only as loud as whoever runs it.
+#
+# LAST and NON-BLOCKING, same as the observer above: it runs only after
+# verify-deploy has passed, and `|| true` means it can never fail a deploy that
+# actually worked. A missing heartbeat makes the watcher noisier, never a break.
+node tools/record-deploy.mjs "$HOST" 2>&1 | grep -E '^\[deploy-heartbeat\]' || true

@@ -118,3 +118,107 @@ check is *failing* when no one is deploying:
 Both are the same shape as `monitor_runs` in `CLAUDE.md`: the gate's own history is
 worth recording, because a gate that quietly refuses looks exactly like a gate that
 was never reached.
+
+---
+
+# The deploy watcher — options, and what was built
+
+## The three options, and which one catches the case that happened
+
+### Option 1 — `stamp-assets --check` on a schedule
+
+**Does NOT catch it.** Two reasons, and the second is fatal:
+
+1. It needs the **repo working tree** to hash the assets. The other monitors run
+   as pg_cron + edge functions with no checkout, so this could only run on a
+   developer machine — a watcher that dies with a laptop.
+2. Even if it ran, it detects **stale pins**, not **undeployed work**. If the pins
+   had been clean and nobody deployed for a fortnight, it would have said nothing.
+   Stale pins were the *cause* here; they are not the *condition*.
+
+There is a cloud-runnable cousin — compare live HTML pins against live asset bytes,
+which is what `verify-deploy` does — and it is worth knowing that **it would also
+have stayed green**. The live site was internally consistent throughout; it was
+just five days old.
+
+### Option 2 — alert on the age of the last successful deploy ✅
+
+**This is the one.** It fires on the *condition* — nothing has shipped — whatever
+the cause: stale pins, a failing build, a broken credential, or simply nobody
+running a deploy. That last case is the one that happened, and it is the only
+option that catches it.
+
+It also needs nothing the database does not already have.
+
+### Option 3 — both
+
+Worth having eventually, but option 1 adds detection only for a cause that option 2
+already catches by its effect, at the price of a watcher that needs a checkout.
+**Build 2 first; it is the whole of the failure that occurred.**
+
+---
+
+## What was built
+
+### `tools/record-deploy.mjs` — the heartbeat
+
+Stamps `system_state:deploy:last_success` with the commit, branch, subject, host
+and whether the tree was dirty. Wired into `deploy.sh` **last and non-blocking**,
+after `verify-deploy` has already passed — the same discipline as
+`observe-db-functions` above it. A failure here can never fail a deploy that
+worked.
+
+It only knows about deploys through `deploy.sh`. A bare `wrangler deploy` leaves
+the marker stale and the watcher eventually says so — which is the right
+direction, because a bare deploy is already what `CLAUDE.md` tells you not to do.
+**The false alarm is the nudge.**
+
+### `deploy_watch_run(p_notify boolean)` — the watcher
+
+**Pure SQL on pg_cron, not an edge function.** Everything it needs is already in
+the database — `system_state` for the heartbeat, `app_notify_system` for the bell.
+No HTTP, no secrets, no CORS, nothing to deploy. That last point is the argument:
+**a watcher whose job is to notice the deploy path is broken should not depend on
+the deploy path.**
+
+It reaches the **notification bell**, via the same `app_notify_system` helper the
+other system notifications use — `actor_display: 'Deploy watcher'`, roles
+`['admin']` — not a log nobody reads.
+
+**Three outcomes, not two**, per `CLAUDE.md`:
+
+| state | when | notifies |
+|---|---|---|
+| `fresh` | age ≤ threshold | no |
+| `stale` | age > threshold | yes |
+| **`unknown`** | **no heartbeat at all** | **yes** |
+
+`unknown` is the important one. A missing heartbeat is what a broken
+`record-deploy.mjs` looks like, and it must not read as healthy — *never add a
+check that can pass when it could not run*.
+
+Thresholds live in `app_config` (`deploy_watch_threshold_hours`, default **48**;
+`deploy_watch_quiet_hours`, default **24**) so they can move without a migration.
+`p_notify => false` evaluates without sending or consuming the quiet period — the
+same idea as `gdrive-health-monitor`'s `no_alert`.
+
+pg_cron job **52 `deploy-watch`**, `17 */6 * * *`.
+
+### Broken before trusted
+
+All three states forced, and both alert directions:
+
+```
+1. no heartbeat            -> unknown   "NO DEPLOY HEARTBEAT RECORDED … not healthy, unverified"
+2. deployed 1h ago         -> fresh     no body
+3. deployed 5d ago         -> stale     "nothing has deployed for 120.0 hours (5.0 days)"
+
+4. first stale run  notify=true  -> notified=true,  1 row in app_notifications
+5. immediate repeat notify=true  -> notified=false, still 1 row   (quiet period held)
+```
+
+The bell row reads *"Deploy watcher: nothing has deployed for 120.0 hours (5.0
+days). Last verified deploy 2026-08-15 13:10 PT (abc1234)…"* — the exact shape of
+the incident it exists for. Test notification and fabricated heartbeat both
+deleted afterwards; the first real heartbeat is `4354d9f`, and the watcher now
+reads `fresh`, age 0.
