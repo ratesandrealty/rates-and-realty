@@ -29992,10 +29992,28 @@ function lsRecalc() {
   document.getElementById('lsBadgeFrontDTI').textContent = 'Front: ' + frontDTI.toFixed(1) + '%';
   document.getElementById('lsBadgeBackDTI').textContent = 'Back: ' + backDTI.toFixed(1) + '%';
   document.getElementById('lsBadgeCTC').textContent = 'CTC: ' + _lsFmt(ctc);
-  // Auto-save (debounced)
+  /* Auto-save (debounced) — INPUTS ONLY.
+   *
+   * total_housing_payment, front_end_dti, back_end_dti, ltv and cash_to_close are
+   * NO LONGER PERSISTED, and the columns were dropped. They were write-only: this
+   * was the sole writer, and nothing anywhere read them back — not this page
+   * (the scenario load at ~:30576 overlays inputs and lsRecalc recomputes every
+   * ratio from them), not generate-mismo-data (it takes loan terms only), and not
+   * one database function or view. 40 rows carried a stored back_end_dti that
+   * nothing had ever consumed.
+   *
+   * They were also wrong. A stored ratio goes stale the moment loan_income
+   * changes and nothing recomputes it: Garcia read 23.10% against a true 45.31%,
+   * and Santana 30.05% against at least 62.21%, unnoticed since June. A value
+   * with no reader cannot be worth the staleness it accumulates.
+   *
+   * Everything needed to reconstruct them is still stored — pi_payment,
+   * mi_monthly, property_taxes_monthly, insurance_monthly, hoa_monthly and the
+   * income/debt figures — so nothing is lost except the ability to be out of date.
+   * Full reasoning: docs/LOAN-SCENARIOS-DECISION-2026-08-20.md */
   _lsAutoSave({ loan_amount:loanAmt, appraised_value:apprV, interest_rate:rate, loan_term_months:term, purchase_price:price, down_payment:down,
-    pi_payment:pi, mi_monthly:mi, property_taxes_monthly:taxes, insurance_monthly:ins, hoa_monthly:hoa, total_housing_payment:pitia,
-    total_monthly_income:(income||null), total_monthly_debt:(debt||null), front_end_dti:frontDTI, back_end_dti:backDTI, ltv:ltv, cash_to_close:ctc,
+    pi_payment:pi, mi_monthly:mi, property_taxes_monthly:taxes, insurance_monthly:ins, hoa_monthly:hoa,
+    total_monthly_income:(income||null), total_monthly_debt:(debt||null),
     credit_score:(_lsNum('ls_credit_score')||null), loan_program:((document.getElementById('ls_loan_program')||{}).value||null), loan_type:(_lsLoanType||null) });
 }
 

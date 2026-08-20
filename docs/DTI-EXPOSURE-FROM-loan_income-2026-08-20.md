@@ -213,3 +213,66 @@ Those match the corrected figures predicted before any change was made.
 back-end capacity" that is right; read as "PITI you can still afford" it is ~283
 optimistic. The view is now internally consistent either way; whether it should
 subtract known debt is a separate question from this fix.
+
+---
+
+# CORRECTION, 2026-08-20 — a pre-approval letter DOES carry a DTI
+
+Earlier in this file I reported that no pre-approval artifact exists for the
+affected contacts, on the basis that `uploaded_documents` has no matching rows.
+**That reasoning was incomplete.** I checked for a stored artifact and never
+checked whether the pre-approval *generator* carries a DTI at all. It does.
+
+`admin/lead-detail.html` (~:30388), the Generate Pre-Approval Letter path:
+
+```js
+var totalIncome = _lsNum('ls_total_monthly_income');
+var totalDebt   = _lsNum('ls_total_monthly_debt');
+var frontDTI = totalIncome ? (pitia/totalIncome*100) : 0;
+var backDTI  = totalIncome ? ((pitia+totalDebt)/totalIncome*100) : 0;
+…
+front_dti:frontDTI, back_dti:backDTI, total_income:totalIncome, total_debt:totalDebt,
+```
+
+`ls_total_monthly_income` is the on-screen figure that
+`renderBorrowerIncomeDebtCards` fills from the **live `loan_income` sum**. So a
+letter generated while a borrower's income was doubled carried a DTI roughly half
+the true value, on Rates & Realty letterhead, over an NMLS number.
+
+**Whether one was generated is unknowable.** `generate-preapproval` builds the PDF
+and returns it; it writes no `uploaded_documents` row and no storage object, the
+same gap as the MISMO export
+(`docs/MISMO-EXPORT-PROVENANCE-2026-08-20.md`). The window in which Garcia's
+income was doubled ran 2026-07-15 → 2026-08-20 and Santana's 2026-05-21 →
+2026-08-20.
+
+**So the corrected finding is:** the fee sheets that provably reached borrowers are
+clean, but the pre-approval letter is a second document that carries this number,
+and there is no record of whether one was produced for either borrower. My earlier
+"no evidence of, not proof against" applies here too — and it now covers a wider
+surface than I stated.
+
+## A separate finding on that path, not fixed
+
+`generate-preapproval` has **no authentication of any kind**:
+
+```ts
+Deno.serve(async (req) => { … const body = await req.json(); const pdfBytes = await buildPDF(body); … })
+```
+
+No `requireStaff`, no `getUser`, `verify_jwt = false`, and the page calls it with
+`Authorization: Bearer <anon key>`. It reads **nothing** from the database — every
+figure comes from the request body.
+
+That makes it a **document-generation surface, not a data-disclosure one**: it
+leaks none of our data, but anyone holding the public anon key can produce a
+Rates & Realty pre-approval letter for any borrower name, property and amount,
+carrying Rene's name and NMLS 1795044.
+
+It also fires `clickup-auto-create` and a lead-score event using a
+**caller-supplied `contact_id`**, so the same anonymous caller can create ClickUp
+tasks and move the lead score on a real contact.
+
+**Not fixed here.** Guarding it is frontend-first — the page sends the anon key,
+so a guard would break the button until that call site moves to `fnFetch`. Logged
+for its own pass; it is a larger question than the DTI it happens to carry.
