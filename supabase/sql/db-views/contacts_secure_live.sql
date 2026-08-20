@@ -6,10 +6,7 @@
 --   tables' RLS. Anything granted SELECT here reads past that protection.
 -- base_tables_with_rls: contacts
 -- base_tables_without_rls: (none)
--- select_granted_to: anon, authenticated, service_role
---
--- !! DEFINER + reads an RLS table + anon can SELECT. This is the
--- !! contacts_live configuration. See tools/check-view-exposure.mjs.
+-- select_granted_to: authenticated, service_role
 --
 
 create or replace view public.contacts_secure_live as
