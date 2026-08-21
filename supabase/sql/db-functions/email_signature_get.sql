@@ -1,6 +1,6 @@
 -- email_signature_get(p_mailbox text)
 -- language: plpgsql   SECURITY DEFINER
--- Captured from production 2026-08-11. This layer had NO git history:
+-- Captured from production 2026-08-21. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -21,9 +21,16 @@ begin
   select signature_html into v_html from email_signatures where mailbox = p_mailbox;
   if v_html is null then return ''; end if;
 
+  -- 1. the signed-in user
   select btrim(coalesce(r.display_name,'')) into v_name
-  from auth_user_roles r join auth.users u on u.id = r.user_id
-  where lower(u.email) = lower(p_mailbox);
+  from auth_user_roles r where r.user_id = auth.uid();
+
+  -- 2. fall back to whoever owns the mailbox
+  if coalesce(v_name,'') = '' then
+    select btrim(coalesce(r.display_name,'')) into v_name
+    from auth_user_roles r join auth.users u on u.id = r.user_id
+    where lower(u.email) = lower(p_mailbox);
+  end if;
 
   if coalesce(v_name,'') = '' then
     -- No name: drop the name block entirely, company block stands alone.
@@ -37,4 +44,5 @@ begin
   end if;
 
   return v_html;
-end; $function$;
+end;
+$function$;
