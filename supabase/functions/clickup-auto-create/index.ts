@@ -91,7 +91,34 @@ Deno.serve(async (req) => {
       const { data: existing } = await sb.from("clickup_automation_log")
         .select("id, clickup_task_id").eq("event_signature", signature).eq("status", "created").maybeSingle();
       if (existing) {
-        results.push({ rule_id: config.id, status: 'skipped_duplicate', signature, clickup_task_id: existing.clickup_task_id, log_id: existing.id });
+        /* A SUPPRESSION IS A WRITE, NOT A RETURN VALUE.
+         * This branch used to push a result and `continue` without recording
+         * anything, so a successful dedup left no evidence anywhere. The cost of
+         * that showed up on 2026-08-21: asked how often the dedup had fired, the
+         * only available answer was "the log holds no skipped_duplicate rows",
+         * which measures nothing — the code never wrote one. 'skipped_duplicate'
+         * has been in the table's CHECK constraint the whole time; the schema
+         * anticipated this row and the writer forgot it.
+         *
+         * The lookup above filters status='created', so these rows can never
+         * become dedup targets themselves and cannot chain.
+         *
+         * Recorded, never fatal: a failure to log a skip must not turn a correct
+         * suppression into an error response. */
+        let skipLogId: string | null = null;
+        try {
+          const { data: skipLog, error: skipErr } = await sb.from("clickup_automation_log").insert({
+            trigger_type, contact_id, source_id, event_signature: signature,
+            status: 'skipped_duplicate',
+            clickup_task_id: existing.clickup_task_id,   // the task this event WOULD have duplicated
+            metadata: { context, suppressed_by_log_id: existing.id, rule_id: config.id },
+          }).select("id").single();
+          if (skipErr) console.error('[clickup-auto-create] could not log the skip:', skipErr.message);
+          skipLogId = skipLog?.id ?? null;
+        } catch (e) {
+          console.error('[clickup-auto-create] could not log the skip:', (e as Error)?.message);
+        }
+        results.push({ rule_id: config.id, status: 'skipped_duplicate', signature, clickup_task_id: existing.clickup_task_id, log_id: existing.id, skip_log_id: skipLogId });
         continue;
       }
 

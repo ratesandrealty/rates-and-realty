@@ -3754,6 +3754,62 @@ const SPECS = [
      dashboard is verified by reading and by the single-consumer check, NOT by
      this harness. Recorded so nobody assumes it is covered. */
   {
+    /* OPTION C — the application row is authoritative for the subject property.
+       The Subject Property popup used to write `contacts` always and
+       `mortgage_applications` only on a Google Places pick, so a typed address
+       never reached what the Loan Snapshot, generate-1003-pdf and the MISMO
+       export all read. Daniel Garcia's record is the worked example: contacts
+       said Norwalk 90650, the application row said TBD / 92704 / Orange.
+
+       Asserted at the PATCH, not at the network: the eval replaces the page's
+       authed client with a recorder, runs the real commit, and reads back what
+       the popup decided to send. That is the decision under test — a live write
+       would need a session and would touch a borrower row. */
+    name: 'subject property popup writes the application row, not just contacts',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      ['typeof lpSnapEdit', 'function'],
+      /* A FREE-TYPED address must still reach mortgage_applications, and must
+         CLEAR the structured columns — the old street/city/ZIP describe a
+         different property and the snapshot prefers them over the combined line,
+         which is exactly how a stale split shadowed a corrected address. */
+      [`(async () => {
+          var sent = [];
+          var realClient = window._authClient;
+          window._authClient = function () {
+            return { from: function (t) { return {
+              update: function (patch) { sent.push({ table: t, patch: patch }); return {
+                eq: function () { return {
+                  select: function () { return Promise.resolve({ data: [{ id: 'x' }], error: null }); } }; } }; },
+            }; } };
+          };
+          try {
+            lpSnapEdit('subject_property', { stopPropagation: function(){}, preventDefault: function(){} });
+            await new Promise(r => setTimeout(r, 120));
+            var box = document.getElementById('lpSpAddr');
+            if (!box) return 'popup never opened';
+            box.value = '15535 Crossdale Ave, Norwalk, CA 90650';
+            var save = document.getElementById('lpSnapSave');   // the popup's own Save, not the page's
+            if (!save) return 'no Save control';
+            save.click();
+            await new Promise(r => setTimeout(r, 200));
+          } finally { window._authClient = realClient; }
+          var app = sent.filter(function (s) { return s.table === 'mortgage_applications'; })[0];
+          if (!app) return 'mortgage_applications was NOT written';
+          var cleared = ['property_address_street','property_address_city','property_address_state',
+                         'property_address_zip','property_address_county','property_address_unit']
+                        .every(function (k) { return app.patch[k] === null; });
+          return [
+            app.patch.property_address === '15535 Crossdale Ave, Norwalk, CA 90650' ? 'combined written' : 'combined wrong',
+            cleared ? 'structured cleared' : 'structured NOT cleared',
+            sent.some(function (s) { return s.table === 'contacts'; }) ? 'contacts also written' : 'contacts skipped'
+          ].join(', ');
+        })()`,
+       'combined written, structured cleared, contacts also written'],
+    ],
+  },
+  {
     /* THE UUID-IN-AN-ADDRESS-FIELD GUARD in save1003.
        Twice, save1003 wrote the contact's own id into property_address_unit and
        property_address_city, and both times it reached the borrower's generated

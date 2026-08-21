@@ -161,6 +161,26 @@ verify_jwt = false
 # send-scheduled-sms, send-scheduled-emails and sms-service.
 verify_jwt = false
 
+[functions.clickup-auto-create]
+# MUST be false, for the same reason as clickup-bridge above, and it was NOT
+# PINNED AT ALL until 2026-08-21. Measured live before writing this line:
+# ACTIVE, verify_jwt = false, version 55.
+#
+# Its only caller is fire_clickup_automation(), a Postgres function that reaches
+# it through net.http_post with headers '{"Content-Type": "application/json"}' —
+# NO Authorization header, by design. Every automation in the CRM flows through
+# it: new_lead, cold_lead_3d, task_stale, app_submitted, closed_won and eight
+# more, 756 events to date.
+#
+# So the CLI default of true would 401 every one of them at the gateway, and
+# fire_clickup_automation swallows failures in `exception when others -> raise
+# notice`, so nothing would surface. That is the send-scheduled-sms /
+# send-scheduled-emails / sms-service / clickup-bridge failure exactly, and this
+# function was one unpinned deploy away from being the fifth.
+#
+# Pinned at its CURRENT value, not a changed one — see CLAUDE.md.
+verify_jwt = false
+
 [functions.lead-scorer]
 # Pinned at its CURRENT value, which is already false. Not a change — cron jobs 12
 # and 18 send a service-role bearer, so it works either way today. Pinned because

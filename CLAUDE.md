@@ -59,7 +59,7 @@ and errors in the harness itself. Exit 1 = a page failed; exit 2 = refused to ru
 ### The green bar is TWO runs, and `--token` is not the better one
 
 ```
-node tools/render-check.mjs                              ->  80/80   the stub specs
+node tools/render-check.mjs                              ->  81/81   the stub specs
 node tools/render-check.mjs --token tok.txt --token-only ->  8/8     the ones that need a session
 
 BOTH NUMBERS MOVE. The second moves whenever a tokenOnly spec is added — it was
@@ -183,6 +183,71 @@ writes — **nine of them, not the eight the message counts** — and it is veri
 to FAIL against `9f87ca6^` through `tools/serve-prefix.mjs`, which is the half
 the original claim never had. Full record:
 `docs/FALSE-PROOF-CLAIM-9f87ca6-2026-08-15.md`.
+
+## The subject property lives on `mortgage_applications`, not `contacts`
+
+`mortgage_applications.property_address_*` is **authoritative**. The Subject
+Property popup writes it on every save; `contacts.property_address` is the
+lead-stage store for a contact with no application yet, and the display/merge
+source. Full reasoning in `docs/SUBJECT-PROPERTY-AND-CLICKUP-GATE-2026-08-21.md`.
+
+It has to be the application row because that is the only **structured** copy —
+the URLA 1003 renders street/unit/city/state/ZIP as separate cells, MISMO emits
+`<AddressLineText>/<CityName>/<PostalCode>`, and `property-lookup` / `pull-comps`
+rebuild a query from the parts. `contacts.property_address` is one text line.
+
+**`mortgage_applications_one_per_contact`** is a partial unique index on
+`contact_id WHERE contact_id IS NOT NULL`, so the mapping is 1:1.
+`save1003`'s comment that "a contact can legitimately have multiple applications"
+is **wrong** — the check-then-update it justifies is harmless, but do not build
+on the premise.
+
+Two rules in the popup, both load-bearing:
+
+- **It never CREATES the application row.** `clickup_app_submitted` is AFTER
+  INSERT and announces a submission to ClickUp. 12 of 25 property addresses are
+  on contacts with no application at all; those stay on `contacts`.
+- **A free-typed address CLEARS the structured columns.** They describe a
+  different property, and the snapshot prefers the structured split over the
+  combined line — so stale parts silently win. That is exactly how a corrected
+  Norwalk 90650 address kept rendering as `TBD … 92704`. A 1003 with a street and
+  no city is visibly incomplete and gets fixed; one with the wrong ZIP does not.
+
+**Never write an address to only one of the two stores.** The popup wrote
+`contacts` while the snapshot, `generate-1003-pdf` and the MISMO export all read
+`mortgage_applications` — so a typed address saved correctly and displayed
+nowhere, for eleven days, on a borrower under contract.
+
+### A row in `mortgage_applications` is NOT a submitted application
+
+`trg_clickup_app_submitted` fires AFTER INSERT and posts "Mortgage application
+submitted. Package documents, run AUS, send to underwriting" — high priority,
+assigned to Rene. **39 fired, 22 of them false**: the ZZ-TEST fixture, deleted
+contacts, same-day duplicates, entirely empty rows, contacts still at New Lead.
+
+**There is no positive `submitted` condition anywhere.** `status` is null on 30
+of 35 rows and `'draft'` on 5, written by `mismo-import` for LOS file imports;
+no row has ever held `'submitted'`. So the trigger is gated on a NEGATIVE built
+from conditions that already exist — not a draft, and carries an SSN, DOB or loan
+amount. **If a real submitted flag ever lands, REPLACE the gate rather than
+adding to it.**
+
+Proven both directions on the ZZ-TEST fixture inside a rolled-back transaction:
+pg_net queues into `net.http_request_queue` transactionally, so counting that
+queue observes the fire while the rollback discards the row AND the queued call.
+Use that pattern to test any trigger with an outbound side effect.
+
+### `event_signature` keys on the source row id — which INSERT makes unique
+
+So the dedup in `clickup-auto-create` can never match for `app_submitted`:
+`NEW.id` is a fresh uuid every time. Correct code, unreachable. It fits
+`cold_lead_3d`, which sends no `source_id` and degrades to `trigger:contact:date`.
+
+**"Zero `skipped_duplicate` rows" was never evidence the dedup had not fired** —
+the skip branch pushed a result and `continue`d without writing a row, so
+suppressions were unobservable. Fixed 2026-08-21; the value was already in the
+table's CHECK constraint, so the schema had anticipated the row the writer
+forgot. A check whose successes are invisible cannot be audited.
 
 ## There is ONE rich-text toolbar: `admin/js/rich-toolbar.js`
 

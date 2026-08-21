@@ -21649,8 +21649,21 @@ function lpSnapEdit(key, ev){
     var _spParsed=null;   // set on a Places selection → also syncs the structured 1003 columns
     setTimeout(async ()=>{
       const el=document.getElementById('lpSpAddr'); if(!el) return;
-      let combined = (c && c.property_address) ? String(c.property_address).trim() : '';
-      if(!combined){ try{ const a=(await _fetchAppRowForContact(cid))||{}; const seg1=(a.property_address_street||'')+(a.property_address_unit?', Unit '+a.property_address_unit:''); const sz=[a.property_address_state,a.property_address_zip].filter(Boolean).join(' '); combined = a.property_address_street ? [seg1,a.property_address_city,sz].filter(Boolean).join(', ') : (a.property_address||''); }catch(_){}}
+      /* APPLICATION ROW FIRST, contact second — the same precedence the snapshot
+         renders with, so the box opens showing the value the page displays.
+         It used to read contacts first and only fall back to the row, which meant
+         the editor could show one address while the snapshot, the 1003 PDF and
+         the MISMO export all showed another. */
+      let combined = '';
+      try {
+        const a = (await _fetchAppRowForContact(cid)) || {};
+        const seg1 = (a.property_address_street||'') + (a.property_address_unit ? ', Unit '+a.property_address_unit : '');
+        const sz = [a.property_address_state, a.property_address_zip].filter(Boolean).join(' ');
+        combined = a.property_address_street
+          ? [seg1, a.property_address_city, sz].filter(Boolean).join(', ')
+          : (a.property_address || '');
+      } catch(_) {}
+      if(!combined) combined = (c && c.property_address) ? String(c.property_address).trim() : '';
       el.value=combined;
       if(typeof window.attachPlacesAddress==='function') window.attachPlacesAddress(el, { onFill:function(p, ie){ _spParsed=p; ie.value=p.formatted || [p.street,p.city,[p.state,p.zip].filter(Boolean).join(' ')].filter(Boolean).join(', '); } });
       el.focus();
@@ -21691,14 +21704,74 @@ function lpSnapEdit(key, ev){
         const _lpAddr=document.getElementById('lp-prop-addr'); if(_lpAddr) _lpAddr.value=addr||'';
         const _fProp=document.getElementById('f-property');   if(_fProp)  _fProp.value=addr||'';
       }
-      // On a Places pick, keep the structured mortgage_applications columns (+ 1003 form inputs) in sync.
-      if(p){
-        {
-          const { error:_maErr } = await _authClient().from('mortgage_applications').update({ property_address_street:p.street||null, property_address_city:p.city||null, property_address_state:p.state||null, property_address_zip:p.zip||null, property_address_county:p.county||null, updated_at:new Date().toISOString() }).eq('contact_id',cid);
-          if(_maErr) throw new Error('1003 address columns: ' + (_maErr.message || 'update failed'));
+      /* ── THE APPLICATION ROW IS AUTHORITATIVE FOR THE SUBJECT PROPERTY ───────
+         This used to run ONLY on a Places pick (`if (p)`), so a typed address
+         reached `contacts` and never reached the 1003 columns. That is the split
+         Daniel Garcia's record exposed: contacts said "15535 Crossdale Ave,
+         Norwalk, CA 90650" while his application row still said street "TBD",
+         ZIP 92704 (Santa Ana) and county Orange — and the Loan Snapshot,
+         `generate-1003-pdf` and the MISMO export all read the application row.
+         The typed address had saved; it had simply saved somewhere nothing
+         displays.
+
+         Now every save reaches the application row. Two rules:
+
+         1. THE ROW IS NEVER CREATED HERE. `clickup_app_submitted` is AFTER
+            INSERT and announces "Mortgage application submitted. Package
+            documents, run AUS, send to underwriting" to ClickUp. Creating a row
+            because somebody typed an address would announce an application that
+            does not exist — 22 of the 39 historical announcements were already
+            false. A contact with no application keeps the address on `contacts`,
+            which is the correct lead-stage home for it. (There is also a partial
+            unique index, mortgage_applications_one_per_contact, so a contact has
+            at most one row — the `.eq('contact_id', cid)` below is exact.)
+
+         2. WITHOUT PARSED COMPONENTS, THE STRUCTURED COLUMNS ARE CLEARED.
+            A free-typed line updates `property_address`, but the old
+            street/unit/city/state/ZIP/county describe a DIFFERENT property, and
+            the snapshot prefers the structured split over the combined line — so
+            leaving them behind reproduces exactly the mismatch above, with the
+            stale parts silently winning. A 1003 with a street and no city is
+            visibly incomplete and gets fixed; a 1003 with the wrong ZIP is
+            invisible and does not. Clearing is the safer failure. */
+      {
+        const _maPatch = { property_address: addr || null, updated_at: new Date().toISOString() };
+        if (p) {
+          _maPatch.property_address_street = p.street || null;
+          _maPatch.property_address_city   = p.city   || null;
+          _maPatch.property_address_state  = p.state  || null;
+          _maPatch.property_address_zip    = p.zip    || null;
+          _maPatch.property_address_county = p.county || null;
+        } else {
+          _maPatch.property_address_street = null;
+          _maPatch.property_address_unit   = null;
+          _maPatch.property_address_city   = null;
+          _maPatch.property_address_state  = null;
+          _maPatch.property_address_zip    = null;
+          _maPatch.property_address_county = null;
         }
+        /* .select('id') so an empty result means "no application row", not
+           "the update failed". supabase-js resolves with { error } rather than
+           throwing, so the error is read and re-thrown — the Save button's
+           catch shows it. */
+        const { data:_maRows, error:_maErr } = await _authClient()
+          .from('mortgage_applications').update(_maPatch).eq('contact_id', cid).select('id');
+        if (_maErr) throw new Error('1003 address columns: ' + (_maErr.message || 'update failed'));
+        const _hitApp = Array.isArray(_maRows) && _maRows.length > 0;
+
+        // Keep the open 1003 form in step with whatever just landed in the row.
         const sync=(id,v)=>{ const e=document.getElementById(id); if(e){ e.value=(v==null?'':v); e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true})); } };
-        sync('f_prop_street',p.street); sync('f_prop_city',p.city); sync('f_prop_state',p.state); sync('f_prop_zip',p.zip); sync('f_prop_county',p.county);
+        if (_hitApp) {
+          sync('f_prop_street', p?p.street:''); sync('f_prop_city', p?p.city:'');
+          sync('f_prop_state',  p?p.state:'');  sync('f_prop_zip',  p?p.zip:'');
+          sync('f_prop_county', p?p.county:''); if(!p) sync('f_prop_unit','');
+        }
+        /* Say what happened. Silently clearing six 1003 fields is the kind of
+           thing that should never be a surprise on a borrower's file. */
+        if (_hitApp && !p && addr) {
+          const _t = window.showToast || window.toast || function(){};
+          _t('Saved. The 1003 street/city/state/ZIP were cleared because this address was typed, not picked — choose a Google suggestion to fill them in.');
+        }
       }
       lpRenderSnapshot(cid);
     };
