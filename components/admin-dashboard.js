@@ -1683,7 +1683,16 @@ async function loadReplyStatusBoard() {
       : 'border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,' + (dim ? ".015" : ".03") + ');'
         + (dim ? "opacity:.72;" : "");
 
-    return '<a href="/admin/lead-detail?contact_id=' + esc(r.contact_id) + '" style="text-decoration:none;color:inherit;">'
+    /* CLICK THROUGH TO THE ORDER, not just the lead. family + id names one card
+       (both are primary keys), msg names the reply inside it. lead-detail's
+       _lpOpenOrderFromUrl reads these, lands on Processing, rings the card and
+       opens the thread at that message -- and says so out loud if the order is
+       not there. */
+    var deep = '/admin/lead-detail?contact_id=' + encodeURIComponent(r.contact_id)
+      + '&order=' + encodeURIComponent(r.id) + '&family=' + encodeURIComponent(r.family)
+      + (r.last_reply_msg_id ? '&msg=' + encodeURIComponent(r.last_reply_msg_id) : '')
+      + '#processing';
+    return '<a href="' + esc(deep) + '" style="text-decoration:none;color:inherit;">'
       + '<div style="display:flex;align-items:flex-start;gap:10px;padding:' + (hot ? "10px 12px" : "8px 10px") + ';border-radius:8px;' + shell + '">'
       + '<div style="flex:0 0 88px;">' + badge[r.state] + '</div>'
       + '<div style="flex:1;min-width:0;">'

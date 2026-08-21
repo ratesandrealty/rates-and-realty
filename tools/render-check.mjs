@@ -3754,6 +3754,52 @@ const SPECS = [
      dashboard is verified by reading and by the single-consumer check, NOT by
      this harness. Recorded so nobody assumes it is covered. */
   {
+    /* THE DEEP LINK FROM THE REPLY-STATUS BOARD, and specifically its FAILURE.
+       ?order=<uuid>&family=hoi|voe names one card — both ids are primary keys —
+       and the handler polls for it because the order cards render asynchronously.
+
+       This asserts the TIMEOUT, not the happy path: a link that lands silently on
+       the Processing tab is indistinguishable from one that worked on a card that
+       was already open, which is the whole reason the timeout speaks. The happy
+       path needs a real HOI row on the fixture lead and the stub has none —
+       stated rather than faked.
+
+       The poll ceiling is 15s, so the spec drives the handler directly with a
+       nonexistent order rather than waiting for a page load to reach it. */
+    name: 'a deep link to a missing order says so instead of landing silently',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    allowConsole: [
+      // The handler's own report. It firing IS the pass condition.
+      '[deep-link] no card for',
+    ],
+    evals: [
+      ['typeof _lpOpenOrderFromUrl', 'function'],
+      [`(async () => {
+          var said = [];
+          var realToast = window.showToast;
+          window.showToast = function (m, bad) { said.push({ m: String(m), bad: !!bad }); };
+          // Point the handler at an order that is not on this lead.
+          history.replaceState(null, '', location.pathname + location.search
+            + '&order=00000000-0000-0000-0000-000000000000&family=hoi');
+          try {
+            _lpOpenOrderFromUrl();
+            // 60 tries x 250ms; wait past the ceiling.
+            await new Promise(r => setTimeout(r, 16500));
+          } finally { window.showToast = realToast; }
+          if (!said.length) return 'SILENT — nothing told the user the link missed';
+          var t = said[said.length - 1];
+          return [
+            t.bad ? 'flagged as a problem' : 'toasted as if fine',
+            /not on this lead/i.test(t.m) ? 'says it is not here' : 'wrong wording',
+            /archived or removed/i.test(t.m) ? 'says why' : 'no reason given',
+            /Processing tab/i.test(t.m) ? 'says where you landed' : 'no landing named'
+          ].join(', ');
+        })()`,
+       'flagged as a problem, says it is not here, says why, says where you landed'],
+    ],
+  },
+  {
     /* EXPAND KEEPS THE FOCUSED MESSAGE.
        Inline is still the default on the HOI/VOE cards — you read a reply
        against the quote it answers — and "⤢ Expand" is the opt-out. The modal

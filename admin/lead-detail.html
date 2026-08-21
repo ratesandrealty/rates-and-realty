@@ -5991,6 +5991,8 @@ async function loadData() {
       // NOTE: #processing (Third-Party Orders widget) needs nothing here —
       // _ldRestoreTabFromHash() already restores any known tab from the hash, and unlike an
       // explicit call it honors VA gating by skipping tabs whose button is hidden.
+      // Reply-status board deep link: ?order=<uuid>&family=hoi|voe[&msg=<gmail_message_id>]
+      _lpOpenOrderFromUrl();
     } catch(_){}
     // Copilot handoff: the CRM Copilot's e-sign / email cards navigate here with a
     // drafted doc. Consume it ONCE (only for THIS lead) and open the matching panel
@@ -14266,6 +14268,79 @@ document.addEventListener('keydown', function(e){
   if(row){ e.preventDefault(); _lpActivityOpen(row); }
 });
 
+/* ── DEEP LINK FROM THE REPLY-STATUS BOARD ────────────────────────────────────
+ *
+ *   /admin/lead-detail?contact_id=<uuid>&order=<uuid>&family=hoi|voe&msg=<gmail_message_id>
+ *
+ * NAMING THE ORDER IS UNAMBIGUOUS. Both hoi_quote_requests.id and loan_orders.id
+ * are primary keys, and both cards already key their thread host on that id
+ * (lpHoiThread-<id> / lpVoeThread-<id>). The unique index on loan_orders
+ * deliberately exempts 'voe', so a borrower with two employers has two orders --
+ * and keying on the order id is exactly what keeps those conversations apart.
+ * family + id therefore resolves to one card even when a contact has several.
+ *
+ * WHY A POLL RATHER THAN A TIMEOUT. The order cards render asynchronously after
+ * the tab mounts; the neighbouring ?act= handlers use a flat setTimeout(500),
+ * which is fine for opening a modal and wrong for "wait until the HOI list
+ * finished loading". This waits for the host element to exist, up to a ceiling.
+ *
+ * WHAT HAPPENS WHEN IT TIMES OUT, WHICH IS THE PART THAT MATTERS. Landing
+ * silently on the Processing tab is indistinguishable from a link that worked on
+ * a card that was already open -- so it SAYS SO. A named order that never
+ * appears means it was archived, deleted, or belongs to a different contact, and
+ * every one of those is worth knowing rather than guessing at. */
+function _lpOpenOrderFromUrl(){
+  var q, orderId, family, msgId;
+  try{
+    q = new URLSearchParams(location.search);
+    orderId = (q.get('order')||'').trim();
+    family  = (q.get('family')||'').trim().toLowerCase();
+    msgId   = (q.get('msg')||'').trim();
+  }catch(_){ return; }
+  if(!orderId || (family!=='hoi' && family!=='voe')) return;
+
+  // The cards live on the Processing tab; get there first so the wait has
+  // something to wait for.
+  try{ if(typeof switchTab==='function') switchTab('processing'); }catch(_){}
+
+  var hostId = (family==='hoi' ? 'lpHoiThread-' : 'lpVoeThread-') + orderId;
+  var tries = 0, MAX = 60;                        // 60 x 250ms = 15s ceiling
+  (function wait(){
+    var host = document.getElementById(hostId);
+    var btn  = document.getElementById(hostId + '-btn');
+    if(host && btn){
+      var card = host.closest ? host.closest('.lp-card') : null;
+      var target = card || host;
+      try{ target.scrollIntoView({ behavior:'smooth', block:'center' }); }catch(_){ try{ target.scrollIntoView(); }catch(__){} }
+      /* A brief ring on the CARD, so "which of these six orders did the link
+         mean" is answered before the thread finishes loading. Fades rather than
+         persists, like the per-message highlight it pairs with. */
+      try{
+        target.style.transition='box-shadow .9s ease';
+        target.style.boxShadow='0 0 0 2px rgba(201,168,76,.75)';
+        setTimeout(function(){ target.style.boxShadow=''; }, 2200);
+      }catch(_){}
+      // Expand, never toggle: arriving via a link means "show me this".
+      var tid = btn.getAttribute('onclick')||'';
+      var m = /_lpThreadToggle\('[^']*','([^']*)'/.exec(tid);
+      var threadId = m ? m[1] : '';
+      if(threadId && !_lpThreadOpen[hostId]) _lpThreadToggle(hostId, threadId, msgId||null);
+      else if(threadId && msgId) _lpThreadToggle(hostId, threadId, msgId);
+      return;
+    }
+    if(++tries >= MAX){
+      /* LOUD, because the alternative is a link that looks like it worked. */
+      var what = (family==='hoi' ? 'quote request' : 'VOE order');
+      if(typeof showToast==='function'){
+        showToast('That ' + what + ' is not on this lead — it may have been archived or removed. Showing the Processing tab instead.', true);
+      }
+      console.warn('[deep-link] no card for ' + hostId + ' after ' + (MAX*250) + 'ms — order=' + orderId + ' family=' + family);
+      return;
+    }
+    setTimeout(wait, 250);
+  })();
+}
+
 function _lpThreadToggle(hostId, threadId, focusMessageId){
   const host = document.getElementById(hostId);
   const btn  = document.getElementById(hostId + '-btn');
@@ -14460,12 +14535,31 @@ function _lpHoiActivityHtml(r){
              + ' data-actt="' + lpEsc(_tid) + '"'
              + ' data-actm="' + lpEsc(_mid) + '"')
           : '';
+        /* THE BOARD'S TREATMENT, PORTED -- deliberately duplicated rather than
+           shared. The board's row is one REQUEST across all leads; this row is
+           one MESSAGE inside one request, and its colour already carries
+           direction. Bending one renderer to emit both would mean passing it a
+           shape it does not model (subject, preview, match tier) and branching
+           inside on the caller. What IS shared is the clock: RRTime, Pacific,
+           labelled PT -- the same helper the board now uses. */
+        const _rel = (window.RRTime && q && q.at) ? window.RRTime.relative(q.at) : '';
+        const _abs = (window.RRTime && q && q.at) ? window.RRTime.dateTime(q.at) : (when || '');
         return '<div' + _openAttrs + ' style="font-size:10.5px;margin-bottom:5px;overflow-wrap:anywhere;'
-          + (_clickable ? 'cursor:pointer;border-radius:5px;padding:2px 4px;margin-left:-4px;margin-right:-4px;" class="lp-act-row"' : '"')
+          + (_clickable ? 'cursor:pointer;' : '')
+          + 'border-radius:5px;padding:3px 5px;margin-left:-5px;margin-right:-5px;'
+          + (out ? '' : 'border-left:3px solid #50c878;background:rgba(80,200,120,.08);padding-left:7px;')
+          + '"' + (_clickable ? ' class="lp-act-row"' : '')
           + '>'
-          + '<div style="color:' + (out ? '#C9A84C' : '#9fd0a8') + ';font-weight:600;">'
-            + (out ? 'Sent ' : 'Reply ') + lpEsc(who)
-            + (when ? ('<span style="color:#777;font-weight:400;"> · ' + lpEsc(when) + '</span>') : '')
+          + '<div style="display:flex;align-items:baseline;gap:8px;">'
+          + '<div style="flex:1;min-width:0;color:' + (out ? '#C9A84C' : '#9fd0a8') + ';font-weight:' + (out ? '600' : '800') + ';">'
+            + (out ? 'Sent ' : '&#9679; Reply ') + lpEsc(who)
+          + '</div>'
+          + (_rel
+              ? ('<div style="flex:0 0 auto;text-align:right;">'
+                 + '<div style="font-size:' + (out ? '10.5' : '12') + 'px;font-weight:' + (out ? '600' : '800') + ';color:' + (out ? '#8a8a8a' : '#50c878') + ';">' + lpEsc(_rel) + '</div>'
+                 + '<div style="font-size:9.5px;color:#8a8a8a;white-space:nowrap;">' + lpEsc(_abs) + '</div>'
+                 + '</div>')
+              : (when ? ('<div style="flex:0 0 auto;color:#777;">' + lpEsc(when) + '</div>') : ''))
           + '</div>'
           + ((q && q.subject) ? ('<div style="color:#ccc;margin-top:1px;">' + lpEsc(q.subject) + '</div>') : '')
           + ((q && q.preview) ? ('<div style="color:#999;margin-top:1px;">' + lpEsc(q.preview) + '</div>') : '')
@@ -15838,9 +15932,22 @@ function lpVoeRenderActivity(box, a, k){
          state anyone can be relied on to read, and it is the one row where
          being missed has already cost days. */
       const failNote=failed?('<div style="color:#FF8A8A;font-size:11.5px;font-weight:700;margin-top:3px;">This email was never delivered — resend it.</div>'):'';
-      return '<div class="lpVoeEvRow" data-email-id="'+lpEsc(String(e.id==null?'':e.id))+'" style="display:flex;gap:9px;align-items:flex-start;font-size:12.5px;line-height:1.45;padding:8px 10px;border-radius:7px;margin-bottom:5px;cursor:pointer;'+_lpActRowCss(key)+'">'
+      /* THE BOARD'S TREATMENT, PORTED -- and here it has to sit BESIDE the
+         existing state, not replace it. This row keys colour on delivery state
+         (_lpActState), and the comment above says why: it used to read direction
+         alone, which is how the 2026-08-06 undelivered-email failure sat
+         unnoticed. So the green inbound rail is applied ONLY when the row is not
+         failed; a failed row keeps its red, because "never delivered" outranks
+         "this came in". Clock is RRTime -- Pacific, labelled PT -- the same
+         helper the board uses. */
+      const _newIn = inbound && !failed;
+      const _rel = (window.RRTime && e.at) ? window.RRTime.relative(e.at) : '';
+      return '<div class="lpVoeEvRow" data-email-id="'+lpEsc(String(e.id==null?'':e.id))+'" style="display:flex;gap:9px;align-items:flex-start;font-size:12.5px;line-height:1.45;padding:8px 10px;border-radius:7px;margin-bottom:5px;cursor:pointer;'+_lpActRowCss(key)
+          +(_newIn?'border-left:3px solid #50c878;background:rgba(80,200,120,.08);':'')+'">'
         +_lpActChip(key)
-        +'<span style="flex:1;min-width:0;">'+'<span style="display:block;color:'+(failed?'#FFD9D9':'#e6e6e6')+';font-weight:'+(failed?'700':'600')+';">'+lpEsc(e.subject||(inbound?'Reply':'VOE request'))+'</span>'+'<span style="display:block;color:#8f8f8f;font-size:11px;margin-top:2px;">'+party+(when?(' · '+when):'')+'</span>'+previewHtml+failNote+'</span></div>';
+        +'<span style="flex:1;min-width:0;">'+'<span style="display:block;color:'+(failed?'#FFD9D9':'#e6e6e6')+';font-weight:'+(failed?'700':(_newIn?'800':'600'))+';">'+(_newIn?'&#9679; ':'')+lpEsc(e.subject||(inbound?'Reply':'VOE request'))+'</span>'+'<span style="display:block;color:#8f8f8f;font-size:11px;margin-top:2px;">'+party+(when?(' · '+when):'')+'</span>'+previewHtml+failNote+'</span>'
+        +(_rel?('<span style="flex:0 0 auto;text-align:right;"><span style="display:block;font-size:'+(_newIn?'12':'10.5')+'px;font-weight:'+(_newIn?'800':'600')+';color:'+(_newIn?'#50c878':'#8a8a8a')+';">'+lpEsc(_rel)+'</span><span style="display:block;font-size:9.5px;color:#8a8a8a;white-space:nowrap;">'+lpEsc(when)+'</span></span>'):'')
+        +'</div>';
     };
     // Group by thread_key (the HR email tying a send+reply trail). One distinct thread ⇒ render flat
     // (keep the common single-HR case clean); multiple threads ⇒ one labeled group each.
