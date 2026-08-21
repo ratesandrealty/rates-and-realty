@@ -871,21 +871,12 @@ Deno.serve(async (req) => {
        */
       if (to === 'dtmf-probe') {
         const probeRef = (params.get('Ref') || '').trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
-        /* &amp;, NOT &. A raw ampersand is invalid XML, so Twilio rejected the
-         * whole document and the gateway answered ConnectionError 31005 HANGUP
-         * — which reads like a network or credential fault, not a malformed
-         * response. The function had already logged "DTMF PROBE leg", so the
-         * branch was plainly running; only the TwiML was bad. */
-        const probeCb = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice?probe=dtmf&amp;ref=${encodeURIComponent(probeRef)}`;
+        const probeCb = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice?probe=dtmf&ref=${encodeURIComponent(probeRef)}`;
         console.log(`[twilio-voice] DTMF PROBE leg sid=${callSid} ref=${probeRef}`);
         return twimlRes(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <!-- finishOnKey="" so '#' is CAPTURED as a digit rather than swallowed as a
-       terminator; numDigits high and timeout short, so the Gather completes a
-       few seconds after the last key instead of needing an exact count the
-       function cannot know. -->
-  <Gather input="dtmf" numDigits="12" timeout="5" finishOnKey="" action="${probeCb}" method="POST">
-    <Pause length="30"/>
+  <Gather input="dtmf" numDigits="6" timeout="20" finishOnKey="" action="${probeCb}" method="POST">
+    <Pause length="20"/>
   </Gather>
   <Hangup/>
 </Response>`);
