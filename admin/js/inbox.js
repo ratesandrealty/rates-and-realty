@@ -418,17 +418,13 @@
       '.gm-subj{flex:1;min-width:0;background:transparent;border:none;outline:none;color:#fff;font-size:13px;font-weight:600;font-family:inherit;padding:5px 2px}',
       // ONE row, never wrapping: anything that doesn't fit lives in the "⋯" overflow
       // menu instead. flex-wrap:wrap is what put a lone ✕ on a second row.
-      '.gm-tools{display:flex;gap:1px;padding:5px 12px;border-bottom:1px solid var(--border,rgba(255,255,255,.06));flex-wrap:nowrap;align-items:center;flex-shrink:0}',
-      '.gm-tools button{min-width:30px;height:30px;border-radius:6px;border:1px solid transparent;background:transparent;color:#bbb;cursor:pointer;font-size:13px;font-family:inherit;display:inline-flex;align-items:center;justify-content:center;padding:0 6px}',
-      '.gm-tools button:hover{background:rgba(255,255,255,.08);color:#fff}',
-      '.gm-tools .sep{width:1px;height:18px;background:var(--border2,rgba(255,255,255,.14));margin:0 5px;flex-shrink:0}',
-      '.gm-tools button.wide{min-width:auto;padding:0 10px;font-size:11.5px;font-weight:700}',
+      /* Host only. The row inside is .rrt-tb (rich-toolbar.js) and carries its own
+         button, select and separator styling; a `.gm-tools button` rule here would
+         fight it at equal specificity and win or lose on stylesheet order. */
+      '.gm-tools{display:flex;border-bottom:1px solid var(--border,rgba(255,255,255,.06));flex-shrink:0}',
+      '.gm-tools>.rrt-tb{flex:1 1 auto;min-width:0}',
       // Attach adds a FILE to the message; its neighbours insert content into the body.
       // Different job, different look — it was unfindable as another grey glyph.
-      '.gm-tools button.accent{background:rgba(201,168,76,.13);border-color:rgba(201,168,76,.42);color:var(--g,#c9a84c);gap:4px}',
-      '.gm-tools button.accent:hover{background:rgba(201,168,76,.24);color:#fff}',
-      '.gm-tools select{height:30px;background:#0d0d0d;color:#ccc;border:1px solid var(--border2,rgba(255,255,255,.14));border-radius:6px;font-size:11.5px;font-family:inherit;padding:0 4px;max-width:104px;cursor:pointer}',
-      '.gm-tools select:hover{color:#fff}',
       '.gm-emoji{display:flex;flex-wrap:wrap;gap:2px;max-height:210px;overflow-y:auto}',
       '.gm-emoji button{width:34px;height:34px;border:none;background:transparent;border-radius:7px;font-size:19px;cursor:pointer;line-height:1;padding:0}',
       '.gm-emoji button:hover{background:rgba(201,168,76,.18)}',
@@ -660,12 +656,14 @@
       '  .gm-ed{padding:12px;min-height:150px;max-height:none}',
       '  .gm-sig,.gm-sig-l,.gm-qt{padding-left:12px;padding-right:12px}',
       '  .gm-note{margin-left:12px;margin-right:12px}',
-      '  .gm-tools{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:5px 8px}',
-      '  .gm-tools button{min-width:38px;height:38px;flex-shrink:0}',
-      '  .gm-tools button.wide{min-width:auto;padding:0 12px}',
-      '  .gm-tools select{height:38px;flex-shrink:0;max-width:92px}',
+      /* No horizontal scroller: the shared row WRAPS on a narrow screen. Scrolling
+         a toolbar sideways hides the same controls the "⋯" menu used to hide, and
+         surfacing those is the point of the extraction. */
+      '  .gm-tools>.rrt-tb{padding:5px 8px}',
+      '  .gm-tools .rrt-tb button{min-width:38px;height:38px}',
+      '  .gm-tools .rrt-tb button.wide{min-width:auto;padding:0 12px}',
+      '  .gm-tools .rrt-tb select{height:38px;max-width:92px}',
       '  .gm-emoji button{width:40px;height:40px}',
-      '  .gm-tools .sep{flex-shrink:0}',
       '  .gm-send{flex:1;min-height:46px;padding:12px 22px;order:-1}',   /* Send first in the bar on a phone */
       '  .gm-cmp-hint,.gm-why{order:3;flex-basis:100%;min-width:0}',
       /* The sticky bar is the one thing that must stay reachable on mobile; give it
@@ -1225,49 +1223,27 @@
     };
   }
 
-  // ── formatting toolbar (execCommand — the only contentEditable API with universal support) ──
-  /* One row only. Anything not here lives in the "⋯" overflow menu (TOOLS_MORE) so
-   * the toolbar can never wrap — a wrapped row was putting a lone ✕ (Clear
-   * formatting) on a second line and stealing height from the body. */
-  var TOOLS = [
-    { sel: 'font', t: 'Font' },
-    { sel: 'size', t: 'Size' },
-    { c: '_color', l: '<span style="border-bottom:3px solid currentColor">A</span>', t: 'Text colour' },
-    { sep: 1 },
-    { c: 'bold', l: '<b>B</b>', t: 'Bold (Ctrl+B)' },
-    { c: 'italic', l: '<i>I</i>', t: 'Italic (Ctrl+I)' },
-    { c: 'underline', l: '<u>U</u>', t: 'Underline (Ctrl+U)' },
-    { sep: 1 },
-    { c: 'insertUnorderedList', l: '&bull;&nbsp;', t: 'Bulleted list' },
-    { c: 'insertOrderedList', l: '1.', t: 'Numbered list' },
-    { sep: 1 },
-    { c: '_link', l: '&#128279;', t: 'Insert a hyperlink into the message (Ctrl+K)' },
-    { sep: 1 },
-    /* Attach is the odd one out and is styled that way: it adds a FILE to the
-     * message, while its neighbours insert content INTO the body. Rene could not
-     * find it among identical grey glyphs, so it gets a label and its own colour. */
-    { c: '_attach', l: '&#128206; Attach', t: 'Attach a file — sent with the message (20MB max)', wide: 1, accent: 1 },
-    { c: '_image', l: '&#128247;', t: 'Insert an image into the message body' },
-    { c: '_video', l: '&#127909;', t: 'Record a video message and insert it as a thumbnail' },
-    { c: '_emoji', l: '&#128512;', t: 'Insert an emoji' },
-    { sep: 1 },
-    { c: '_insert', l: 'Insert &#9662;', t: 'Insert a call-to-action button', wide: 1 },
-    { c: '_ai', l: '&#10024; AI &#9662;', t: 'AI assistant — draft, improve or summarize', wide: 1 },
-    { c: '_more', l: '&#8943;', t: 'More formatting — alignment, indent, quote, clear formatting' }
-  ];
-  /* Overflow menu contents. Plain execCommand items, dispatched through the very
-   * same data-c handler as the visible buttons — no second code path. */
-  var TOOLS_MORE = [
-    { c: 'justifyLeft', l: 'Align left' },
-    { c: 'justifyCenter', l: 'Align centre' },
-    { c: 'justifyRight', l: 'Align right' },
-    { c: 'outdent', l: 'Decrease indent' },
-    { c: 'indent', l: 'Increase indent' },
-    { c: 'formatBlock:blockquote', l: 'Quote' },
-    { c: 'removeFormat', l: 'Clear formatting' }
-  ];
-  var FONTS = ['Arial', 'Georgia', 'Times New Roman', 'Verdana', 'Tahoma', 'Courier New'];
-  var SIZES = [['2', 'Small'], ['3', 'Normal'], ['4', 'Large'], ['5', 'Huge']];
+  /* ── the formatting toolbar moved out ──────────────────────────────────────
+   * TOOLS, TOOLS_MORE, FONTS and SIZES used to live here. They are now
+   * /admin/js/rich-toolbar.js, shared with the lead-detail composer, the
+   * signature editor and the drip step editor — see
+   * docs/TOOLBAR-CONSOLIDATION-DIVERGENCE-2026-08-20.md for which side of each
+   * disagreement won.
+   *
+   * Two things changed for THIS file in the move, and both are deliberate:
+   *
+   *   The "⋯" overflow is gone. Alignment, indent/outdent, quote and clear
+   *   formatting sat behind it and were therefore unfindable. They are visible
+   *   controls now and the row WRAPS rather than hiding them — the single
+   *   non-wrapping row this file kept was bought at their expense.
+   *
+   *   SIZES lost its Large=4. The shared scale is Small 2 / Normal 3 / Large 5 /
+   *   Huge 6, matching Gmail; 4 and 5 are adjacent steps and "Large 4, Huge 5"
+   *   left no room between them.
+   *
+   * What stayed is the INSERT set — attach, image, video, emoji, CTA buttons, AI —
+   * because each needs mailbox, attachment or client state from mountComposer.
+   * They are passed to the component as `slots`, in wireEditor() below. */
   var EMOJI = ('😀 😁 😊 🙂 😉 👍 👏 🙏 💪 🎉 ✅ ❌ ⚠️ ⭐ 🔥 💡 📌 📎 📅 📞 ✉️ 📄 🏠 🔑 💰 📈 📉 🕐 ' +
     '🙌 👀 🤝 ✍️ 🎯 🚀 ❤️ 😅 😍 🤔 👋 💯').split(' ');
 
@@ -1913,126 +1889,30 @@
     // through the identical path as everything else.
     hooks.insertHTML = insertHTML;
 
-    // Shared by the visible buttons and the "⋯" overflow menu.
-    function runCmd(cmd) {
-      if (cmd.indexOf('formatBlock:') === 0) {
-        try { document.execCommand('formatBlock', false, cmd.split(':')[1]); } catch (_) {}
-        return;
-      }
-      try { document.execCommand(cmd, false, null); } catch (_) {}
+    if (!window.RichToolbar) {
+      tools.innerHTML = '<span style="font-size:12px;color:#e88">Formatting unavailable — ' +
+        '/admin/js/rich-toolbar.js did not load.</span>';
+      return;
     }
 
-    var fontSel = tools.querySelector('select[data-sel="font"]');
-    var sizeSel = tools.querySelector('select[data-sel="size"]');
+    /* ── the shared toolbar ────────────────────────────────────────────────────
+     * Formatting is no longer this file's. What stays here is the INSERT set —
+     * attach, image, video, emoji, CTA buttons, AI — because every one of them
+     * needs mailbox, attachment or client state that lives in mountComposer.
+     *
+     * The "⋯" overflow is GONE. Alignment, indent/outdent, quote and clear
+     * formatting were behind it and were therefore unfindable; they are visible
+     * controls in the component and the row wraps instead of hiding them. */
+    var slots = [
+      /* Attach is the odd one out and is styled that way: it adds a FILE to the
+       * message, while its neighbours insert content INTO the body. Rene could not
+       * find it among identical grey glyphs, so it gets a label and its own colour. */
+      { key: 'attach', label: '&#128206; Attach', wide: 1, accent: 1,
+        title: 'Attach a file — sent with the message (20MB max)',
+        onClick: function () { if (hooks.attach) hooks.attach(); } },
 
-    /* Reflect the caret's actual font/size in the dropdowns instead of snapping back
-     * to a placeholder. queryCommandValue('fontName') comes back quoted and sometimes
-     * as a full stack ("Arial", sans-serif), so match on the first family name. */
-    function syncFontSize() {
-      // selectionchange is a document-level listener but the editor is per-composer, so
-      // self-detach once this editor is gone — otherwise every reopen leaks another one.
-      if (!ed.isConnected) { document.removeEventListener('selectionchange', syncFontSize); return; }
-      if (!ed.contains(document.activeElement) && document.activeElement !== ed) return;
-      try {
-        if (fontSel) {
-          var fn = String(document.queryCommandValue('fontName') || '').replace(/['"]/g, '');
-          var first = fn.split(',')[0].trim().toLowerCase();
-          for (var i = 0; i < fontSel.options.length; i++) {
-            if (fontSel.options[i].value.toLowerCase() === first) { fontSel.selectedIndex = i; break; }
-          }
-        }
-        if (sizeSel) {
-          var fs = String(document.queryCommandValue('fontSize') || '');
-          for (var j = 0; j < sizeSel.options.length; j++) {
-            if (sizeSel.options[j].value === fs) { sizeSel.selectedIndex = j; break; }
-          }
-        }
-      } catch (_) {}
-    }
-    document.addEventListener('selectionchange', syncFontSize);
-    ed.addEventListener('keyup', syncFontSize);
-    ed.addEventListener('mouseup', syncFontSize);
-
-    Array.prototype.forEach.call(tools.querySelectorAll('select[data-sel]'), function (s) {
-      s.addEventListener('mousedown', function (e) { e.stopPropagation(); });
-      s.addEventListener('change', function () {
-        ed.focus();
-        try {
-          if (s.getAttribute('data-sel') === 'font') document.execCommand('fontName', false, s.value);
-          else document.execCommand('fontSize', false, s.value);
-        } catch (_) {}
-        // Selection keeps whatever was just applied — no reset to index 0.
-      });
-    });
-
-    Array.prototype.forEach.call(tools.querySelectorAll('button[data-c]'), function (b) {
-      // mousedown+preventDefault keeps the caret/selection inside the editor
-      b.addEventListener('mousedown', function (e) { e.preventDefault(); });
-      b.addEventListener('click', function () {
-        var cmd = b.getAttribute('data-c');
-        ed.focus();
-
-        // Overflow menu: the formatting commands that no longer fit on the single row.
-        if (cmd === '_more') {
-          var mm = document.createElement('div');
-          mm.className = 'gm-pop-menu';
-          mm.innerHTML = TOOLS_MORE.map(function (m) {
-            return '<div class="gm-pop-item" data-mc="' + esc(m.c) + '">' + m.l + '</div>';
-          }).join('');
-          var mpop = portalPopover(b, mm, { width: 200 });
-          Array.prototype.forEach.call(mm.querySelectorAll('[data-mc]'), function (it) {
-            it.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
-            it.addEventListener('click', function () {
-              ed.focus();
-              runCmd(it.getAttribute('data-mc'));
-              mpop.close();
-            });
-          });
-          return;
-        }
-
-        if (cmd === '_ai') { if (hooks.ai) hooks.ai(b); return; }
-        if (cmd === '_attach') { if (hooks.attach) hooks.attach(); return; }
-        if (cmd === '_video') { if (hooks.video) hooks.video(b); return; }
-
-        if (cmd === '_link') {
-          var url = window.prompt('Link URL:', 'https://');
-          if (!url) return;
-          url = url.trim();
-          if (!/^(https?:|mailto:|tel:)/i.test(url)) { alert('Only http, https, mailto and tel links are allowed.'); return; }
-          try { document.execCommand('createLink', false, url); } catch (_) {}
-          return;
-        }
-
-        if (cmd === '_color') {
-          var picker = document.createElement('input');
-          picker.type = 'color'; picker.value = '#1a6fb5';
-          picker.style.cssText = 'position:fixed;left:-9999px';
-          document.body.appendChild(picker);
-          picker.addEventListener('change', function () {
-            ed.focus();
-            try { document.execCommand('foreColor', false, picker.value); } catch (_) {}
-            picker.remove();
-          });
-          picker.click();
-          return;
-        }
-
-        if (cmd === '_emoji') {
-          var box = document.createElement('div');
-          box.className = 'gm-pop-menu gm-emoji';
-          box.innerHTML = EMOJI.map(function (e) {
-            return '<button type="button" data-e="' + e + '">' + e + '</button>';
-          }).join('');
-          var pop = portalPopover(b, box, { width: 292 });
-          Array.prototype.forEach.call(box.querySelectorAll('[data-e]'), function (x) {
-            x.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
-            x.addEventListener('click', function () { insertHTML(x.getAttribute('data-e')); pop.close(); });
-          });
-          return;
-        }
-
-        if (cmd === '_image') {
+      { key: 'image', label: '&#128247;', title: 'Insert an image into the message body',
+        onClick: function (b) {
           var menu = document.createElement('div');
           menu.className = 'gm-pop-menu';
           menu.innerHTML =
@@ -2083,10 +1963,27 @@
             });
             inp.click();
           });
-          return;
-        }
+        } },
 
-        if (cmd === '_insert') {
+      { key: 'video', label: '&#127909;', title: 'Record a video message and insert it as a thumbnail',
+        onClick: function (b) { if (hooks.video) hooks.video(b); } },
+
+      { key: 'emoji', label: '&#128512;', title: 'Insert an emoji',
+        onClick: function (b) {
+          var box = document.createElement('div');
+          box.className = 'gm-pop-menu gm-emoji';
+          box.innerHTML = EMOJI.map(function (e) {
+            return '<button type="button" data-e="' + e + '">' + e + '</button>';
+          }).join('');
+          var pop = portalPopover(b, box, { width: 292 });
+          Array.prototype.forEach.call(box.querySelectorAll('[data-e]'), function (x) {
+            x.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
+            x.addEventListener('click', function () { insertHTML(x.getAttribute('data-e')); pop.close(); });
+          });
+        } },
+
+      { key: 'insert', label: 'Insert &#9662;', wide: 1, title: 'Insert a call-to-action button',
+        onClick: function (b) {
           var im = document.createElement('div');
           im.className = 'gm-pop-menu';
           im.innerHTML = INSERT_BTNS.map(function (x) {
@@ -2101,11 +1998,15 @@
               if (def) insertHTML(btnHtml(def));
             });
           });
-          return;
-        }
+        } },
 
-        runCmd(cmd);
-      });
+      { key: 'ai', label: '&#10024; AI &#9662;', wide: 1, title: 'AI assistant — draft, improve or summarize',
+        onClick: function (b) { if (hooks.ai) hooks.ai(b); } }
+    ];
+
+    // .gm-tools is the host and keeps the border; the row inside supplies the rest.
+    hooks.toolbar = window.RichToolbar.mount({
+      target: ed, mount: tools, slots: slots, style: 'padding:5px 12px'
     });
   }
 
@@ -2172,24 +2073,10 @@
     h.push('<div class="gm-fld"><span class="gm-fld-l">Subject</span>' +
       '<input class="gm-subj" data-f="subject" type="text" autocomplete="off" value="' + esc(subject) + '"></div>');
 
-    h.push('<div class="gm-tools" data-gm="tools">' + TOOLS.map(function (t) {
-      if (t.sep) return '<span class="sep"></span>';
-      // No "Font"/"Size" placeholder option: the control shows what the caret is
-      // actually in, and syncFontSize() keeps it in step with the selection.
-      if (t.sel === 'font') {
-        return '<select data-sel="font" title="Font family for the selected text" aria-label="Font">' +
-          FONTS.map(function (f) { return '<option value="' + f + '">' + f + '</option>'; }).join('') + '</select>';
-      }
-      if (t.sel === 'size') {
-        return '<select data-sel="size" title="Text size for the selected text" aria-label="Size">' +
-          SIZES.map(function (s) {
-            return '<option value="' + s[0] + '"' + (s[0] === '3' ? ' selected' : '') + '>' + s[1] + '</option>';
-          }).join('') + '</select>';
-      }
-      var cls = [t.wide ? 'wide' : '', t.accent ? 'accent' : ''].filter(Boolean).join(' ');
-      return '<button type="button"' + (cls ? ' class="' + cls + '"' : '') +
-        ' data-c="' + t.c + '" title="' + esc(t.t) + '" aria-label="' + esc(t.t) + '">' + t.l + '</button>';
-    }).join('') + '</div>');
+    /* Empty host. wireEditor() mounts RichToolbar into it — the formatting core,
+       the font and size lists and the dispatcher are all shared now, and the
+       insert controls this composer owns are passed in as slots. */
+    h.push('<div class="gm-tools" data-gm="tools"></div>');
 
     /* ── ✨ AI. The four buttons used to occupy their own always-visible row; they
      * now live behind the "AI ▾" toolbar button, which reclaims that row for the body.
@@ -2984,7 +2871,7 @@
         aiBusy(true);
         [edEl, sigEl].forEach(function (n) { n.setAttribute('contenteditable', 'false'); });
         subjEl.disabled = true;
-        Array.prototype.forEach.call(mountEl.querySelectorAll('.gm-chips input,.gm-tools button'), function (n) { n.disabled = true; });
+        Array.prototype.forEach.call(mountEl.querySelectorAll('.gm-chips input,.gm-tools button,.gm-tools select'), function (n) { n.disabled = true; });
         var bar = mountEl.querySelector('.gm-cmp-bar');
         var done = document.createElement('button');
         done.className = 'gm-btn';

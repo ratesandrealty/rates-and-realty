@@ -6,6 +6,23 @@ choices rather than "whichever file I opened first".
 **Eight real disagreements.** Alignment was the one already known; these are the
 other seven.
 
+> **CORRECTION, 2026-08-21 — read this before §1. Drip's body is a `<textarea>`.**
+>
+> Every section below reads drip-builder as a rich-text surface with a weak
+> dispatcher. It is not a rich-text surface at all: `#emailBody_<i>` was a
+> `<textarea>`, so `fmtText`'s Bold, Italic and Link called
+> `document.execCommand` against a control `execCommand` cannot touch, and **had
+> never done anything, on any campaign, ever**.
+>
+> What each section says about drip's CODE is still accurate. What they get wrong
+> is the consequence: mounting the shared toolbar there was a conversion of the
+> editor and of the stored body, not a port of a dispatcher. Done — with why it
+> was safe to convert rather than hold the way HOI was held — in
+> `docs/TOOLBAR-EXTRACTION-2026-08-21.md` §2.
+>
+> **All eight winners shipped as recorded.** This corrects the survey, not a
+> decision.
+
 ---
 
 ## 1. Link URL validation — a correctness difference, not a preference

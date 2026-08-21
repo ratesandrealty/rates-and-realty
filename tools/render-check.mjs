@@ -424,6 +424,33 @@ function stubSource(role, email, stubRow, rpcMap, fetchMap, rpcFns, staleRole, i
   })();`;
 }
 
+/* ── the rich toolbar's formatting core ──────────────────────────────────────
+ * The exact set of controls /admin/js/rich-toolbar.js must render, on every
+ * surface it mounts on. Sorted and joined rather than checked one at a time: a
+ * per-control `has it?` list still passes when a control is added by accident or
+ * rendered twice, and this is the assertion that pins decision 7 — the union for
+ * formatting, nothing else. The four justify/indent/quote entries are the ones
+ * that used to be behind inbox.js's "⋯" menu.
+ *
+ * Slots are deliberately NOT in here. They are per-surface and each spec asserts
+ * its own; a shared list would make "a signature has no variable picker" fail. */
+const RRT_CORE = [
+  '_color', '_highlight',
+  'bold', 'italic', 'underline',
+  'insertUnorderedList', 'insertOrderedList',
+  'justifyLeft', 'justifyCenter', 'justifyRight',
+  'outdent', 'indent',
+  'formatBlock:blockquote', '_link', 'removeFormat',
+].sort().join(',');
+
+/* Reads the core out of a mounted toolbar, excluding host slots. Returns the
+ * same sorted string, so a spec compares one value against RRT_CORE. */
+const RRT_CORE_EVAL = (host) =>
+  '(function(){return Array.prototype.map.call('
+  + `document.querySelectorAll(${JSON.stringify(host)} + " .rrt-tb button[data-rrt-c]"),`
+  + 'function(b){return b.getAttribute("data-rrt-c");})'
+  + '.filter(function(c){return c.indexOf("__slot")!==0;}).sort().join(",");})()';
+
 // ── specs ───────────────────────────────────────────────────────────────────
 const SPECS = [
   {
@@ -3726,6 +3753,277 @@ const SPECS = [
      which is worse than an acknowledged gap — the hide-on-403 behaviour on that
      dashboard is verified by reading and by the single-consumer check, NOT by
      this harness. Recorded so nobody assumes it is covered. */
+  {
+    /* THE UUID-IN-AN-ADDRESS-FIELD GUARD in save1003.
+       Twice, save1003 wrote the contact's own id into property_address_unit and
+       property_address_city, and both times it reached the borrower's generated
+       URLA 1003. The mechanism that fills those inputs is still unknown, so the
+       guard refuses the write rather than pretending to fix a cause.
+
+       BOTH DIRECTIONS IN ONE SPEC, because a guard that refuses everything also
+       passes a refuses-the-bad-value check — and that failure mode is worse than
+       the bug, since it would block every 1003 save in the CRM.
+
+       Drives the REAL save1003 with a stubbed alert, so it asserts on what the
+       user is actually shown. A regex-only assertion would prove the regex. */
+    name: 'save1003 refuses a database id in an address field',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    allowConsole: [
+      // The guard's own report. It firing IS the pass condition below.
+      '[save1003] REFUSED',
+    ],
+    evals: [
+      ['typeof save1003', 'function'],
+      /* 1. A UUID in the Unit # box must stop the save and NAME the field. */
+      [`(async () => {
+          var alerts = [], realAlert = window.alert;
+          window.alert = function (m) { alerts.push(String(m)); };
+          document.getElementById('f_prop_unit').value = '599b4b4a-26ec-4376-a118-bff0397540a4';
+          document.getElementById('f_prop_city').value = 'Norwalk';
+          try { await save1003(); } catch (e) { /* refusal is a return, not a throw */ }
+          window.alert = realAlert;
+          document.getElementById('f_prop_unit').value = '';
+          var m = alerts.join(' | ');
+          if (!m) return 'no alert — the save was NOT refused';
+          return [
+            m.indexOf('was NOT saved') >= 0 ? 'refused' : 'wrong wording',
+            m.indexOf('property_address_unit') >= 0 ? 'named the field' : 'did not name the field',
+            m.indexOf('property_address_city') >= 0 ? 'also flagged city' : 'city clean'
+          ].join(', ');
+        })()`,
+       'refused, named the field, city clean'],
+      /* 2. A REAL unit and city must pass the guard untouched. This is the half
+            that keeps the guard from becoming an outage: "SPC 184" is a genuine
+            unit on one of the affected borrowers' own records. */
+      [`(function () {
+          var UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+          var ADDR = /(address|street|unit|city|state|zip|county)/i;
+          var real = { property_address_unit: 'SPC 184', property_address_city: 'Norwalk',
+                       property_address_street: '15535 Crossdale Ave', property_address_zip: '90650',
+                       property_address_county: 'Los Angeles', current_address_unit: 'Apt 2B' };
+          var flagged = Object.keys(real).filter(function (k) {
+            return ADDR.test(k) && typeof real[k] === 'string' && UUID.test(real[k]);
+          });
+          return flagged.length ? 'FALSE POSITIVE: ' + flagged.join(',') : 'no false positives';
+        })()`,
+       'no false positives'],
+    ],
+  },
+
+  /* ── THE ONE RICH-TEXT TOOLBAR ────────────────────────────────────────────
+     Four specs, one per mounted surface, all asserting the SAME contract out of
+     /admin/js/rich-toolbar.js plus that surface's own insert slots. A regression
+     in the shared file therefore fails four times rather than once, and a
+     regression in one host's slots fails exactly once.
+
+     RRT_CORE is the whole formatting core as a sorted, joined string rather than
+     a set of has-it checks. A per-control `!!querySelector` list passes when
+     controls are ADDED and passes when a control is silently duplicated; an exact
+     set does neither. It is also what pins the four controls this extraction
+     exists to surface — justify*, indent/outdent and blockquote were behind
+     inbox.js's "⋯" overflow and were therefore unfindable.
+
+     PRESENT AND ABSENT ARE PAIRED throughout, for the reason recorded in
+     CLAUDE.md: if the toolbar never mounted, an absent-only check on the OLD
+     markup would pass vacuously — the old buttons are gone either way. Every
+     spec below asserts the new row exists in the same breath. */
+  {
+    name: 'rich toolbar — signature editor mounts the formatting core',
+    url: '/admin/settings',
+    role: 'admin',
+    present: ['#sigTools .rrt-tb', '#sigEditor'],
+    /* The five hand-rolled buttons this replaced. data-c was their contract; the
+       component's is data-rrt-c, so a leftover data-c button means the old
+       implementation is still live beside the new one. */
+    absent: ['#sigTools button[data-c]'],
+    evals: [
+      [RRT_CORE_EVAL('#sigTools'), RRT_CORE],
+      /* fontName emits <font face="…">. A bare family name is resolved
+         inconsistently by mail clients, so every option must carry a stack. */
+      ['(function(){var o=document.querySelectorAll("#sigTools select[data-rrt-sel=\\"font\\"] option");'
+        + 'return o.length && Array.prototype.every.call(o,function(x){return x.value.indexOf(",")>0;});})()',
+       true],
+      /* The size scale, exactly. This is the one that fails if the main
+         composer's out-of-order point labels (4=14 above 3=12) ever come back:
+         named sizes on the legacy scale have no ordering to get wrong. */
+      ['Array.prototype.map.call(document.querySelectorAll("#sigTools select[data-rrt-sel=\\"size\\"] option"),'
+        + 'function(o){return o.value+":"+o.textContent;}).join("|")',
+       '2:Small|3:Normal|5:Large|6:Huge'],
+      /* A signature has no merge variables, no Canva design and no Loom
+         recording — so it must have NO slots. This is the half of decision 7 that
+         a union-everything toolbar would quietly get wrong. */
+      ['document.querySelectorAll("#sigTools [data-rrt-c^=\\"__slot\\"]").length', 0],
+
+      /* ── BEHAVIOUR, not presence ─────────────────────────────────────────
+         Everything above proves a row of buttons was rendered. The #shell
+         break-test in CLAUDE.md is the reason that is not enough: the element
+         existed there too, and was empty. These four drive the commands and read
+         the markup back. They live on this surface because it is the one with no
+         send path and no fixture — the assertions are about the component, and
+         the component is identical on all four. */
+
+      /* styleWithCSS is NOT global. Bold must still emit <b>, because <b> and <u>
+         are the better-supported forms in mail and every email this CRM sends
+         would change if the colour commands turned it on for everything. */
+      ['(function(){var e=document.getElementById("sigEditor");e.innerHTML="hello";'
+        + 'var r=document.createRange();r.selectNodeContents(e);'
+        + 'var s=getSelection();s.removeAllRanges();s.addRange(r);'
+        + 'window.RichToolbar.exec(e,"bold");'
+        + 'var h=e.innerHTML.toLowerCase();'
+        + 'return (h.indexOf("<b>")>=0||h.indexOf("<b ")>=0) && h.indexOf("font-weight")<0'
+        + ' ? "b tag" : "wrong markup: "+h;})()',
+       'b tag'],
+
+      /* Highlight has no <font> representation at all, so it must emit an inline
+         style — which is what the three-client test settled: Outlook rendered it,
+         so the <td bgcolor> fallback was not needed. */
+      ['(function(){var e=document.getElementById("sigEditor");e.innerHTML="hello";'
+        + 'var r=document.createRange();r.selectNodeContents(e);'
+        + 'var s=getSelection();s.removeAllRanges();s.addRange(r);'
+        + 'window.RichToolbar.exec(e,"hiliteColor","#ffe14d");'
+        + 'var h=e.innerHTML.toLowerCase();'
+        + 'return /background(-color)?\\s*:/.test(h) ? "inline style" : "no style: "+h;})()',
+       'inline style'],
+
+      /* Text colour ships as inline style too, so there is ONE representation
+         rather than a <font color> for one and a style for the other. */
+      ['(function(){var e=document.getElementById("sigEditor");e.innerHTML="hello";'
+        + 'var r=document.createRange();r.selectNodeContents(e);'
+        + 'var s=getSelection();s.removeAllRanges();s.addRange(r);'
+        + 'window.RichToolbar.exec(e,"foreColor","#1a6fb5");'
+        + 'var h=e.innerHTML.toLowerCase();'
+        + 'return (/(^|[^-])color\\s*:/.test(h) && h.indexOf("<font")<0) ? "inline style"'
+        + ' : "wrong markup: "+h;})()',
+       'inline style'],
+
+      /* THE LINK VALIDATION, driven through the real button. Two of the four
+         toolbars this replaced handed prompt() straight to createLink, so a
+         javascript: href went out on the wire — nothing renders it in the CRM,
+         but the send path sanitizes nothing. Asserting the regex would prove the
+         regex; this proves the BUTTON refuses, which is the thing that matters.
+         The accept case is asserted in the same eval: a validator that rejects
+         everything also passes a reject-only check. */
+      ['(function(){var e=document.getElementById("sigEditor");'
+        + 'var btn=document.querySelector("#sigTools [data-rrt-c=\\"_link\\"]");'
+        + 'var realPrompt=window.prompt, out=[];'
+        + 'function tryUrl(u){e.innerHTML="hello";'
+        + '  var r=document.createRange();r.selectNodeContents(e);'
+        + '  var s=getSelection();s.removeAllRanges();s.addRange(r);'
+        + '  window.prompt=function(){return u;};btn.click();'
+        + '  out.push(e.innerHTML.toLowerCase().indexOf("<a ")>=0?"linked":"refused");}'
+        + 'tryUrl("javascript:alert(1)");'
+        + 'tryUrl("https://ratesandrealty.com");'
+        + 'window.prompt=realPrompt;return out.join(",");})()',
+       'refused,linked'],
+    ],
+    minVisibleText: 200,
+  },
+  {
+    /* THE MAIN COMPOSER, opened the way the page opens it — one of eight entry
+       points into openEmailComposer. */
+    name: 'rich toolbar — lead-detail email composer mounts core plus its four slots',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      ['(async () => { await openEmailComposer({to:"zz-test.fixture@example.invalid",'
+        + 'subject:"ZZ-TEST toolbar",bodyHtml:"<p>x</p>",title:"Toolbar"});'
+        + 'await new Promise(r=>setTimeout(r,250));'
+        + 'return document.querySelector("#ecToolbar .rrt-tb") ? "mounted" : "no toolbar"; })()',
+       'mounted'],
+      [RRT_CORE_EVAL('#ecToolbar'), RRT_CORE],
+      /* Undo, Redo, Canva and AI Helper. They were toolbar buttons here and are
+         slots now — this composer's, not every composer's. Asserting the COUNT
+         as well as the labels catches a slot silently dropped in the port. */
+      ['document.querySelectorAll("#ecToolbar [data-rrt-c^=\\"__slot\\"]").length', 4],
+      ['Array.prototype.map.call(document.querySelectorAll("#ecToolbar [data-rrt-c^=\\"__slot\\"]"),'
+        + 'function(b){return b.getAttribute("aria-label");}).join("|")',
+       'Undo (Ctrl+Z)|Redo (Ctrl+Y)|Insert from Canva|AI writing assistant'],
+      /* The old toolbar's buttons carried inline onclick="tbCmd(...)". None may
+         remain — and #ecToolbar .rrt-tb above proves the new row is really there,
+         so this is not a vacuous absence. */
+      ['document.querySelectorAll("#ecToolbar [onclick]").length', 0],
+      /* tbCmd() survives as a shim over the component. A composer that reopens
+         must not stack toolbars: openEmailComposer destroys the previous one. */
+      ['(async () => { await openEmailComposer({to:"zz-test.fixture@example.invalid",'
+        + 'subject:"ZZ-TEST toolbar 2",bodyHtml:"<p>x</p>",title:"Toolbar"});'
+        + 'await new Promise(r=>setTimeout(r,250));'
+        + 'return String(document.querySelectorAll(".rrt-tb").length); })()',
+       '1'],
+    ],
+  },
+  {
+    /* THE INBOX COMPOSER. The "⋯" overflow menu is the thing being removed here:
+       alignment, indent/outdent, quote and clear formatting lived behind it, and
+       RRT_CORE asserts all seven are now buttons in the row. */
+    name: 'rich toolbar — inbox composer surfaces what the ⋯ menu used to hide',
+    url: '/admin/inbox',
+    role: 'admin',
+    steps: [{ click: '[data-gm="compose"]', waitMs: 1800 }],
+    present: ['.gm-tools .rrt-tb'],
+    /* The overflow button itself, and the old dispatcher's contract. */
+    absent: ['.gm-tools [data-c="_more"]', '.gm-tools button[data-c]'],
+    evals: [
+      [RRT_CORE_EVAL('.gm-tools'), RRT_CORE],
+      /* Attach, image, video, emoji, CTA insert, AI — every one needs mailbox,
+         attachment or client state from mountComposer, which is exactly why they
+         are slots and the formatting is not. */
+      ['document.querySelectorAll(".gm-tools [data-rrt-c^=\\"__slot\\"]").length', 6],
+      /* The row must be allowed to WRAP. inbox.js's single non-wrapping row is
+         what forced the overflow menu, and a nowrap that comes back would push
+         these controls off the edge instead of onto a second line — invisible
+         again, but with every present-check still passing. */
+      ['getComputedStyle(document.querySelector(".gm-tools .rrt-tb")).flexWrap', 'wrap'],
+    ],
+  },
+  {
+    /* THE DRIP STEP EDITOR, and the finding that came with it: its Bold, Italic
+       and Link buttons called document.execCommand against a <textarea>, so they
+       had never done anything. The body is a contenteditable now.
+
+       Driven through newCampaign()/addStep() rather than a fixture: the campaign
+       list is fetched with a raw fetch() to PostgREST, which the stub does not
+       intercept, so a data-driven spec here would assert against an empty page
+       and pass vacuously — the admin-api-v2 gap recorded in CLAUDE.md, in a
+       different file. */
+    name: 'rich toolbar — drip step editor is a contenteditable with a live toolbar',
+    url: '/admin/drip-builder',
+    role: 'admin',
+    /* The contacts fetch is a raw fetch() to PostgREST with the page's own auth
+       header, which the stub does not mint — so it 401s, and loadContacts() now
+       SAYS SO instead of throwing "not iterable" and dying halfway through. The
+       loud failure is the fix; excluding it here is excluding the stub's missing
+       session, not a page defect. Narrow on purpose: any other console error, on
+       this page or from this call, still fails the spec. */
+    allowConsole: ['[drip] could not load contacts: 401'],
+    evals: [
+      ['(function(){ newCampaign(); addStep("email"); return "built"; })()', 'built'],
+      /* contentEditable, not a textarea. THIS is the regression that matters: a
+         textarea would look identical and silently accept none of the commands. */
+      ['(function(){var e=document.getElementById("emailBody_0");'
+        + 'return e ? e.tagName+":"+String(e.isContentEditable) : "no body";})()',
+       'DIV:true'],
+      ['document.querySelector("#emailTools_0 .rrt-tb") ? "mounted" : "no toolbar"', 'mounted'],
+      [RRT_CORE_EVAL('#emailTools_0'), RRT_CORE],
+      /* The four merge-variable buttons — the one insert set no other surface has,
+         which is the whole argument for slots. */
+      ['Array.prototype.map.call(document.querySelectorAll("#emailTools_0 [data-rrt-c^=\\"__slot\\"]"),'
+        + 'function(b){return b.textContent.trim();}).join("|")',
+       '+ Name|+ Phone|+ Link|+ Signature'],
+      /* fmtText is gone, and nothing may still be calling it. */
+      ['typeof window.fmtText', 'undefined'],
+      /* A legacy plain-text body must survive the read: newlines become <br>
+         ONCE, and nothing that already looks like markup is escaped a second
+         time. Both directions, because a converter that escapes everything and a
+         converter that escapes nothing both pass a one-sided check. */
+      ['bodyToHtml("a\\nb")', 'a<br>b'],
+      ['bodyToHtml("<p>a</p>").indexOf("&lt;")', -1],
+      /* The count is of what the reader sees. Markup must not inflate it. */
+      ['(function(){var e=document.getElementById("emailBody_0");e.innerHTML="<b>abc</b>";'
+        + 'updateCharCount(0);return document.getElementById("charCount_0").textContent;})()',
+       '3 characters'],
+    ],
+  },
   {
     name: 'settings page renders',
     url: '/admin/settings',

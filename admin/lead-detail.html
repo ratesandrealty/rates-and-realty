@@ -1885,7 +1885,7 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
           integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
           crossorigin="anonymous" defer></script>
     <script src="/admin/js/attachment-viewer.js?v=e8f2b14c9f"></script>
-  <script src="/admin/js/inbox.js?v=0f31eca04e" defer></script>
+  <script src="/admin/js/inbox.js?v=10bf390490" defer></script>
   <!-- Places loads its own Maps bundle ON DEMAND, when a field is attached — not
        on every lead-detail open. This tag is only the ~4KB helper. -->
   <script src="/public/js/mi-factors.js"></script>
@@ -28792,6 +28792,48 @@ async function save1003() {
      'decl_bankruptcy','military_service','military_status'].forEach(function(k){ delete cleanData[k]; });
   }
 
+  /* ── REFUSE TO WRITE A UUID INTO AN ADDRESS FIELD ─────────────────────────
+     Twice — Daniel Garcia 2026-07-10, Marlon Vasquez Ramos 2026-08-14 — this
+     function wrote the contact's own id into property_address_unit AND
+     property_address_city in a single save. Both times it reached the borrower's
+     generated URLA 1003, which renders `unit: app.property_address_unit`, so a
+     borrower-facing document carried a database key as a unit number. Cleared
+     2026-08-21; snapshot in snapshots/mortgage-applications-uuid-address-20260821.json.
+
+     THE MECHANISM IS NOT KNOWN. Every static writer of #f_prop_unit and
+     #f_prop_city was traced and none of them can produce a contact id, so
+     reproducing it needs a live session watched through scan → apply → save.
+     This guard therefore does NOT try to fix a cause. It refuses the write, and
+     it names the field — so the next occurrence produces a report instead of a
+     silent corruption, which is the thing that was missing both times.
+
+     It refuses the WHOLE save rather than dropping the offending field: a
+     partial write would leave the row in a state nobody chose, and the point is
+     to be told. No real street, unit, city, county or ZIP contains a UUID, so
+     this cannot fire on legitimate input.
+
+     No /g on the regex — .test() is stateful with a global flag and would
+     alternate true/false across keys, which is exactly how a guard silently
+     passes every other field. */
+  {
+    var _UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+    var _ADDR_KEY_RE = /(address|street|unit|city|state|zip|county)/i;
+    var _uuidFields = Object.keys(cleanData).filter(function (k) {
+      return _ADDR_KEY_RE.test(k) && typeof cleanData[k] === 'string' && _UUID_RE.test(cleanData[k]);
+    });
+    if (_uuidFields.length) {
+      var _detail = _uuidFields.map(function (k) { return k + ' = ' + cleanData[k]; }).join('\n');
+      console.error('[save1003] REFUSED — a database id reached an address field:', _uuidFields, cleanData);
+      alert('This application was NOT saved.\n\n' +
+            'An internal id ended up in an address field, which would put it on the ' +
+            'borrower’s 1003:\n\n' + _detail +
+            '\n\nClear that field and save again. Please report this — the cause is ' +
+            'still unknown and this message is how it gets tracked down.');
+      if (typeof toast === 'function') toast('Not saved — ' + _uuidFields.join(', ') + ' held an internal id', true);
+      return;
+    }
+  }
+
   console.log('Saving 1003 with fields:', Object.keys(cleanData));
 
   try {
@@ -38982,14 +39024,20 @@ function _emailComposerCSS() {
   .ec-field-action:hover{color:#E2C47A}
 
   /* Toolbar */
-  .ec-toolbar{display:flex;align-items:center;gap:2px;height:40px;padding:0 12px;border-bottom:1px solid rgba(201,168,76,0.1);background:#0C0C0E;flex-shrink:0}
-  .ec-tb-select{height:26px;border-radius:5px;background:#131315;border:1px solid rgba(201,168,76,0.15);color:#888;font-size:11.5px;padding:0 6px;outline:none;cursor:pointer}
-  .ec-tb-btn{width:28px;height:28px;border-radius:6px;border:1px solid transparent;background:none;color:#666;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;font-family:Georgia,serif;padding:0}
-  .ec-tb-btn:hover{background:#1A1A1D;border-color:rgba(201,168,76,0.15);color:#C0BDB5}
-  .ec-tb-btn.active{color:#C9A84C;background:rgba(201,168,76,0.08);border-color:rgba(201,168,76,0.2)}
-  .ec-tb-sep{width:1px;height:18px;background:rgba(201,168,76,0.12);margin:0 4px}
-  .ec-tb-ai{height:28px;border-radius:6px;border:1px solid rgba(201,168,76,0.2);background:transparent;color:#8B6F2E;font-size:11.5px;padding:0 10px;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all .15s;font-weight:600;white-space:nowrap}
-  .ec-tb-ai:hover{background:rgba(201,168,76,0.08);color:#C9A84C}
+  /* min-height, not height: the shared toolbar wraps to a second row on a narrow
+     composer rather than hiding controls behind an overflow menu. A fixed 40px
+     would clip the wrapped line. Padding now comes from .rrt-tb. */
+  /* The --rrt-* overrides keep this composer's own chrome — dimmer glyphs on a
+     near-black bar — rather than adopting the shared component's brighter
+     inbox palette. Theming through variables is why one toolbar can live on four
+     surfaces without four stylesheets. */
+  .ec-toolbar{display:flex;align-items:center;min-height:40px;padding:0;border-bottom:1px solid rgba(201,168,76,0.1);background:#0C0C0E;flex-shrink:0}
+  .ec-toolbar>.rrt-tb{flex:1 1 auto;min-width:0;--rrt-fg:#7B7871;--rrt-fg-hi:#C0BDB5;
+    --rrt-hover:#1A1A1D;--rrt-bd:rgba(201,168,76,0.15);--rrt-input-bg:#131315}
+  /* .ec-tb-select / .ec-tb-btn / .ec-tb-sep / .ec-tb-ai are GONE with the markup
+     they styled. Leaving them would leave rules that look like they style this
+     toolbar and do not — the controls in .ec-toolbar are .rrt-tb's now, themed
+     through the --rrt-* variables in /admin/js/rich-toolbar.js. */
 
   /* Editor */
   .ec-editor-wrap{flex:1;overflow-y:auto;position:relative}
@@ -39128,27 +39176,12 @@ function _buildEmailComposerHTML(contact) {
             '</div>' +
             '<div id="templateDropdown" style="display:none;position:absolute;top:100%;right:0;width:320px;background:#131315;border:1px solid rgba(201,168,76,0.25);border-radius:10px;z-index:999;max-height:360px;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,0.6)"></div>' +
           '</div>' +
-          /* Toolbar */
-          '<div class="ec-toolbar">' +
-            '<select class="ec-tb-select" onchange="tbCmd(\'fontName\',this.value)"><option value="sans-serif">Sans Serif</option><option value="serif">Serif</option><option value="monospace">Monospace</option></select>' +
-            '<select class="ec-tb-select" style="width:52px" onchange="tbCmd(\'fontSize\',this.value)"><option value="4">14</option><option value="3">12</option><option value="5">16</option><option value="6">18</option></select>' +
-            '<div class="ec-tb-sep"></div>' +
-            '<button type="button" class="ec-tb-btn" title="Bold" onclick="tbCmd(\'bold\')"><b>B</b></button>' +
-            '<button type="button" class="ec-tb-btn" title="Italic" onclick="tbCmd(\'italic\')"><i>I</i></button>' +
-            '<button type="button" class="ec-tb-btn" title="Underline" onclick="tbCmd(\'underline\')"><u>U</u></button>' +
-            '<div class="ec-tb-sep"></div>' +
-            '<button type="button" class="ec-tb-btn" id="undoBtn" title="Undo (Ctrl+Z)" onclick="tbCmd(\'undo\')">&#8630;</button>' +
-            '<button type="button" class="ec-tb-btn" id="redoBtn" title="Redo (Ctrl+Y)" onclick="tbCmd(\'redo\')">&#8631;</button>' +
-            '<div class="ec-tb-sep"></div>' +
-            '<button type="button" class="ec-tb-btn" title="Bullet List" onclick="tbCmd(\'insertUnorderedList\')">&#8226;</button>' +
-            '<button type="button" class="ec-tb-btn" title="Numbered List" onclick="tbCmd(\'insertOrderedList\')">1.</button>' +
-            '<div class="ec-tb-sep"></div>' +
-            '<button type="button" class="ec-tb-btn" title="Link" onclick="insertLink()">&#128279;</button>' +
-            '<button type="button" class="ec-tb-btn" title="Clear Formatting" onclick="tbCmd(\'removeFormat\')">&#10005; fmt</button>' +
-            '<div style="flex:1"></div>' +
-            '<button type="button" class="ec-tb-ai" onclick="openCanvaPicker()" title="Insert from Canva" style="margin-right:6px;">&#10022; Canva</button>' +
-            '<button type="button" class="ec-tb-ai" onclick="toggleEmailAiHelper()">+ AI Helper</button>' +
-          '</div>' +
+          /* Toolbar - empty here, filled by RichToolbar.mount() in openEmailComposer.
+             The formatting controls, the font and size lists, the link validation
+             and the (cmd, value) dispatcher all live in /admin/js/rich-toolbar.js
+             now; Canva, AI Helper, Undo and Redo are passed to it as slots, because
+             they belong to this composer rather than to every composer. */
+          '<div class="ec-toolbar" id="ecToolbar"></div>' +
           /* AI Helper panel (hidden) */
           '<div id="aiHelperPanel" style="display:none;background:#0C0C0E;border-bottom:1px solid rgba(201,168,76,0.1);padding:12px 16px;">' +
             '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:10px;">' +
@@ -39256,6 +39289,33 @@ async function openEmailComposer(opts) {
 
   // Animate open
   requestAnimationFrame(function() { overlay.classList.add('open'); });
+
+  /* The one rich-text toolbar. Formatting is the component's; the four controls
+     below are this composer's and are passed in as slots — a signature has no
+     Canva design and a drip step has no AI helper, which is exactly why they are
+     not toolbar defaults. Undo/Redo stay because this composer has always had
+     them; Ctrl+Z/Ctrl+Y are bound separately further down. */
+  if (window.RichToolbar) {
+    if (window._ecToolbar) window._ecToolbar.destroy();
+    window._ecToolbar = window.RichToolbar.mount({
+      target: 'emailEditor',
+      mount: document.getElementById('ecToolbar'),
+      style: 'padding:0 12px',            // .ec-toolbar already sets the chrome
+      notify: function (m) { showToast(m, true); },
+      slots: [
+        { key: 'undo',  label: '&#8630;', title: 'Undo (Ctrl+Z)',
+          onClick: function (b, api) { api.exec('undo'); } },
+        { key: 'redo',  label: '&#8631;', title: 'Redo (Ctrl+Y)',
+          onClick: function (b, api) { api.exec('redo'); } },
+        { key: 'canva', label: '&#10022; Canva', title: 'Insert from Canva',
+          wide: 1, accent: 1, onClick: function () { openCanvaPicker(); } },
+        { key: 'ai',    label: '+ AI Helper', title: 'AI writing assistant',
+          wide: 1, accent: 1, onClick: function () { toggleEmailAiHelper(); } }
+      ]
+    });
+  } else {
+    console.error('[ec] /admin/js/rich-toolbar.js did not load — the composer has no formatting controls.');
+  }
 
   // Wire close
   document.getElementById('ecCloseBtn').addEventListener('click', closeEmailComposer);
@@ -39498,6 +39558,11 @@ function closeEmailComposer() {
   setTimeout(function() { overlay.remove(); }, 300);
   document.body.style.overflow = '';
   document.removeEventListener('click', _closeDropdowns);
+  /* The toolbar holds a document-level selectionchange listener. It self-detaches
+     once its editor leaves the DOM, but the composer is reopened from eight entry
+     points and the 300ms removal above means "leaves the DOM" is not yet true —
+     so drop it here rather than leaking one per open. */
+  if (window._ecToolbar) { window._ecToolbar.destroy(); window._ecToolbar = null; }
 }
 
 /* --- Chip handling --- */
@@ -39682,19 +39747,20 @@ function stripMarkdownFences(text) {
     .trim();
 }
 
+/* Thin shims over the shared component. The toolbar no longer calls either one —
+   its buttons are RichToolbar's — but both are globals in a 44k-line file, so they
+   forward rather than vanish. insertLink() routes through the toolbar's own button
+   so it gets the scheme validation; it used to hand `prompt()` straight to
+   createLink with no check at all. */
 function tbCmd(cmd, val) {
-  var editor = document.getElementById('emailEditor');
-  if (!editor) return;
-  editor.focus();
-  document.execCommand(cmd, false, val || null);
-  editor.focus();
+  if (!window.RichToolbar) return;
+  window.RichToolbar.exec('emailEditor', cmd, val);
 }
 
 function insertLink() {
-  var url = prompt('Enter URL:');
-  if (!url) return;
-  document.getElementById('emailEditor').focus();
-  document.execCommand('createLink', false, url);
+  var tb = window._ecToolbar;
+  var btn = tb && tb.el && tb.el.querySelector('[data-rrt-c="_link"]');
+  if (btn) btn.click();
 }
 
 function toggleVarPicker() {
@@ -44367,5 +44433,7 @@ async function recordNewVoicemail() {
 </script>
 
   <script src="/admin/js/loom-recorder.js?v=742fc14ace"></script>
+  <!-- The one rich-text toolbar. Mounted on #emailEditor by openEmailComposer. -->
+  <script src="/admin/js/rich-toolbar.js?v=d1dc90083c"></script>
 </body>
 </html>

@@ -9,6 +9,18 @@
 <!-- Auth layer: routes Supabase REST/Storage calls through the logged-in JWT (same as the dashboard) -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="/assets/js/sb-auth.js?v=b5f9eaf135"></script>
+<!-- The email step body became a contenteditable (see renderEmailBody). A textarea
+     was inert; an innerHTML sink is not, so the page now carries the same
+     sanitizer the composer and the signature editor use rather than a second
+     allowlist. inbox.js is loaded for its exported sanitize()/PURIFY_CFG only —
+     the IIFE just defines window.GmailInbox; styles and DOM arrive on mount(),
+     which this page never calls. -->
+<script src="/admin/js/vendor/purify.min.js?v=3.4.12"
+        integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
+        crossorigin="anonymous"></script>
+<script src="/admin/js/inbox.js?v=10bf390490"></script>
+<!-- The one rich-text toolbar. Mounted on each open email step by mountStepToolbars(). -->
+<script src="/admin/js/rich-toolbar.js?v=d1dc90083c"></script>
 <style>
   :root {
     --gold: #c9a84c; --gold2: rgba(201,168,76,0.15); --gold3: rgba(201,168,76,0.06);
@@ -148,7 +160,22 @@
   .field-select option { background: #1a1a1a; }
 
   /* Rich text toolbar */
-  .rte-toolbar { display: flex; gap: 4px; padding: 6px 8px; background: var(--s3); border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0; flex-wrap: wrap; }
+  /* Host only for the email step — the row inside is .rrt-tb and brings its own
+     padding, buttons and selects. The SMS step still fills this directly with
+     .rte-btn variable buttons, so both rule sets stay. */
+  .rte-toolbar { display: flex; gap: 4px; background: var(--s3); border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0; flex-wrap: wrap; }
+  .rte-toolbar { padding: 0; }
+  /* Keeps the builder's muted palette. One toolbar, four surfaces, four themes -
+     which is the whole reason the component reads its colours from variables. */
+  .rte-toolbar > .rrt-tb { flex: 1 1 auto; min-width: 0;
+    --rrt-fg: var(--muted); --rrt-fg-hi: #fff; --rrt-bd: var(--border);
+    --rrt-hover: rgba(255,255,255,0.08); --rrt-accent: #C9A84C; --rrt-input-bg: var(--s4, #0d0d0d); }
+  .rte-toolbar.plain { padding: 6px 8px; }   /* the SMS step, which fills it directly */
+  /* The email body is a contenteditable, not a textarea: `resize` and `min-height`
+     from .field-textarea still apply, but a div needs the scroll and the caret
+     colour spelled out. */
+  .rte-body { overflow-y: auto; max-height: 420px; cursor: text; }
+  .rte-body:empty::before { content: attr(data-ph); color: var(--muted2); }
   .rte-btn { padding: 4px 8px; background: transparent; border: none; border-radius: 5px; color: var(--muted); cursor: pointer; font-size: 12px; transition: all .12s; }
   .rte-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
   .rte-divider { width: 1px; height: 20px; background: var(--border); margin: 0 2px; align-self: center; }
@@ -521,6 +548,7 @@ function renderBuilder() {
   }
 
   document.getElementById('builderInner').innerHTML = html;
+  mountStepToolbars();   // innerHTML above destroyed the previous editors
 }
 
 function renderAddBetween(afterIdx) {
@@ -593,19 +621,15 @@ function renderEmailBody(step, idx) {
     </div>
     <div class="field">
       <div class="field-label">Email Body</div>
-      <div class="rte-toolbar">
-        <button class="rte-btn" title="Bold" onclick="fmtText('bold')"><b>B</b></button>
-        <button class="rte-btn" title="Italic" onclick="fmtText('italic')"><i>I</i></button>
-        <button class="rte-btn" title="Link" onclick="fmtText('link')">🔗</button>
-        <div class="rte-divider"></div>
-        <button class="rte-btn" onclick="insertVar(${idx},'{name}')">+ Name</button>
-        <button class="rte-btn" onclick="insertVar(${idx},'{phone}')">+ Phone</button>
-        <button class="rte-btn" onclick="insertVar(${idx},'https://ratesandrealty.com')">+ Link</button>
-        <div class="rte-divider"></div>
-        <button class="rte-btn" onclick="insertVar(${idx},'\\n\\n---\\nRene Duarte | NMLS #1795044 | 714-472-8508')">+ Signature</button>
-      </div>
-      <textarea class="field-textarea rte-area" id="emailBody_${idx}" placeholder="Hi {name},&#10;&#10;Write your email here…"
-        oninput="_active.steps[${idx}].body=this.value;updateCharCount(${idx})">${escHtml(step.body||'')}</textarea>
+      <!-- Empty host. mountStepToolbars() mounts the shared toolbar here once the
+           card is in the DOM; the variable buttons are passed to it as slots. -->
+      <div class="rte-toolbar" id="emailTools_${idx}"></div>
+      <!-- Was a <textarea>, which is why Bold, Italic and Link did nothing: they
+           called document.execCommand against a control execCommand cannot touch.
+           See the note above bodyToHtml() for what changed about the stored body. -->
+      <div class="field-textarea rte-area rte-body" id="emailBody_${idx}" contenteditable="true"
+        data-ph="Hi {name}, — write your email here…"
+        oninput="_active.steps[${idx}].body=this.innerHTML;updateCharCount(${idx})">${bodyToHtml(step.body)}</div>
       <div class="char-counter" id="charCount_${idx}">0 characters</div>
     </div>
     <div class="field">
@@ -657,7 +681,7 @@ function renderSMSBody(step, idx) {
   return `
     <div class="field">
       <div class="field-label">SMS Message <span style="color:var(--muted2);font-size:9px;">Use {name} for first name</span></div>
-      <div class="rte-toolbar" style="border-radius:8px 8px 0 0;">
+      <div class="rte-toolbar plain" style="border-radius:8px 8px 0 0;">
         <button class="rte-btn" onclick="insertSMSVar(${idx},'{name}')">+ Name</button>
         <button class="rte-btn" onclick="insertSMSVar(${idx},'https://homes.ratesandrealty.com/public/apply.html')">+ Apply Link</button>
         <button class="rte-btn" onclick="insertSMSVar(${idx},'https://ratesandrealty.com')">+ Website</button>
@@ -758,9 +782,11 @@ function switchMediaTab(idx, tab, btn) {
 
 // ── CHAR COUNTERS ─────────────────────────────────────────────
 function updateCharCount(idx) {
-  const ta = document.getElementById(`emailBody_${idx}`);
+  const ed = document.getElementById(`emailBody_${idx}`);
   const el = document.getElementById(`charCount_${idx}`);
-  if (ta && el) el.textContent = `${ta.value.length} characters`;
+  // textContent, not innerHTML: the count is of what the reader sees, and markup
+  // would make one bolded word cost twenty characters.
+  if (ed && el) el.textContent = `${(ed.textContent || '').length} characters`;
 }
 function updateSMSCount(idx) {
   const ta = document.getElementById(`smsBody_${idx}`);
@@ -773,14 +799,17 @@ function updateSMSCount(idx) {
 }
 
 // ── INSERT VARIABLES ──────────────────────────────────────────
-function insertVar(idx, text) {
-  const ta = document.getElementById(`emailBody_${idx}`);
-  if (!ta) return;
-  const s=ta.selectionStart, e=ta.selectionEnd;
-  ta.value = ta.value.substring(0,s)+text+ta.value.substring(e);
-  ta.selectionStart = ta.selectionEnd = s+text.length;
-  _active.steps[idx].body = ta.value;
-  ta.focus();
+/* Inserts at the caret in the contenteditable body. `html` is authored right here
+   in the slot definitions, never typed by anyone, so it goes in as markup — which
+   is how the signature keeps its line breaks now the body is not plain text. */
+function insertVar(idx, html) {
+  const ed = document.getElementById(`emailBody_${idx}`);
+  if (!ed) return;
+  ed.focus();
+  try { document.execCommand('insertHTML', false, html); }
+  catch (_) { ed.innerHTML += html; }
+  _active.steps[idx].body = ed.innerHTML;
+  updateCharCount(idx);
 }
 function insertSMSVar(idx, text) {
   const ta = document.getElementById(`smsBody_${idx}`);
@@ -882,7 +911,21 @@ async function _contactsAuthHeaders() {
 // ── CONTACTS ─────────────────────────────────────────────────
 async function loadContacts() {
   const r = await fetch(`${SB}/rest/v1/contacts_secure?select=id,first_name,last_name,email,phone,contact_type,source&not.email.is.null&order=created_at.desc&limit=200`, { headers: await _contactsAuthHeaders() });
-  _contacts = await r.json();
+  /* PostgREST answers a failure with an OBJECT ({code, message, …}), not an array.
+     `[...that]` threw "not iterable" and took the rest of this function with it, so
+     a 401 read as an uncaught TypeError and the list stayed empty with no
+     explanation. Found by the toolbar render-check spec, which builds a campaign on
+     a page with no session; it reproduces on production too. */
+  const rows = await r.json().catch(() => null);
+  if (!r.ok || !Array.isArray(rows)) {
+    console.error('[drip] could not load contacts:', r.status, rows);
+    _contacts = []; _filtered = [];
+    const info = document.getElementById('contactFilterInfo');
+    if (info) info.textContent = 'Contacts could not be loaded';
+    renderContactList();
+    return;
+  }
+  _contacts = rows;
   _filtered = [..._contacts];
   renderContactList();
 }
@@ -983,9 +1026,69 @@ function switchRightTab(tab, btn) {
 
 // ── UTILS ─────────────────────────────────────────────────────
 function escHtml(str) { return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function fmtText(cmd) {
-  if (cmd==='link') { const url=prompt('URL:','https://'); if(url) document.execCommand('createLink',false,url); }
-  else document.execCommand(cmd);
+/* fmtText() is gone. It called document.execCommand against a <textarea>, so its
+   three buttons had never done anything; the body is a contenteditable now and the
+   commands come from /admin/js/rich-toolbar.js. */
+
+/* The stored body used to be plain text and is HTML from here on. Campaigns saved
+   before the change carry no tags, so they are escaped and their newlines become
+   <br> on the way in — once. Anything that already looks like markup came out of
+   this editor, and it goes through the composer's allowlist rather than a second
+   one. previewStep() has always interpolated the body unescaped, so the preview
+   needs no change. */
+function bodyToHtml(body) {
+  const raw = String(body == null ? '' : body);
+  if (!raw) return '';
+  if (!/<[a-z][\s\S]*>/i.test(raw)) return escHtml(raw).replace(/\r?\n/g, '<br>');
+  const GI = window.GmailInbox;
+  if (!GI || typeof GI.sanitize !== 'function') {
+    // Never render unsanitized. An escaped body is legible and obviously wrong,
+    // which is the right failure for a sanitizer that did not load.
+    console.error('[drip] sanitizer unavailable - rendering the step body as text');
+    return escHtml(raw);
+  }
+  return GI.sanitize(raw);
+}
+
+/* Mounted after every renderBuilder(), because renderBuilder() replaces the whole
+   canvas with innerHTML and takes the previous editors with it. destroy() runs
+   first: the toolbar holds a document-level selectionchange listener, and a
+   builder that re-renders on nearly every keystroke in the settings row would
+   otherwise stack one per render. */
+let _stepToolbars = [];
+function mountStepToolbars() {
+  _stepToolbars.forEach(t => { try { t.destroy(); } catch (_) {} });
+  _stepToolbars = [];
+  if (!window.RichToolbar) {
+    console.error('[drip] /admin/js/rich-toolbar.js did not load - email steps have no formatting controls.');
+    return;
+  }
+  (_active?.steps || []).forEach((step, idx) => {
+    if (step.type !== 'email') return;
+    const host = document.getElementById(`emailTools_${idx}`);
+    const ed = document.getElementById(`emailBody_${idx}`);
+    if (!host || !ed) return;
+    /* A drip step has no Loom recording, no Canva picker and no AI helper — it
+       has merge variables, which no other surface has. That asymmetry is the
+       reason inserts are host-passed slots and formatting is not. */
+    _stepToolbars.push(window.RichToolbar.mount({
+      target: ed, mount: host, style: 'padding:6px 8px', notify: showToast,
+      slots: [
+        { key: 'name',  label: '+ Name',  wide: 1, title: 'Insert the {name} merge variable',
+          onClick: () => insertVar(idx, '{name}') },
+        { key: 'phone', label: '+ Phone', wide: 1, title: 'Insert the {phone} merge variable',
+          onClick: () => insertVar(idx, '{phone}') },
+        { key: 'site',  label: '+ Link',  wide: 1, title: 'Insert a link to ratesandrealty.com',
+          onClick: () => insertVar(idx,
+            '<a href="https://ratesandrealty.com">ratesandrealty.com</a>') },
+        { key: 'sig',   label: '+ Signature', wide: 1, title: 'Insert the sign-off block',
+          onClick: () => insertVar(idx,
+            '<br><br>---<br>Rene Duarte | NMLS #1795044 | 714-472-8508') }
+      ]
+    }));
+    // The card renders collapsed; the count is stale until it is opened.
+    updateCharCount(idx);
+  });
 }
 function showToast(msg) {
   const t=document.getElementById('toast');

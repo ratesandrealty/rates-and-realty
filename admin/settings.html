@@ -18,7 +18,9 @@
      with the ADD_URI_SAFE_ATTR fix that keeps table-based signatures intact. Loading
      it here is inert: the IIFE only defines window.GmailInbox; styles and DOM are
      injected on mount(), which this page never calls. -->
-<script src="/admin/js/inbox.js?v=0f31eca04e"></script>
+<script src="/admin/js/inbox.js?v=10bf390490"></script>
+<!-- The one rich-text toolbar. Mounted on #sigEditor by initSignature(). -->
+<script src="/admin/js/rich-toolbar.js?v=d1dc90083c"></script>
 <style>
 :root {
   --gold: #c9a84c; --gold2: #e4b84e; --bg: #0a0a0a; --surface: #111;
@@ -186,9 +188,10 @@ select.inp option{background:#1a1a1a;color:#fff}
 #toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid var(--border2);border-radius:10px;padding:9px 18px;font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9999}
 #toast.show{opacity:1}
 /* email signature editor */
-.sig-tools{display:flex;gap:2px;flex-wrap:wrap}
-.sig-tools button{min-width:32px;height:32px;border-radius:6px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:#ccc;cursor:pointer;font-size:13px;font-family:inherit}
-.sig-tools button:hover{background:rgba(255,255,255,.1);color:#fff}
+/* Container only. The buttons inside are RichToolbar's (.rrt-tb) and carry their
+   own styling - a `.sig-tools button` rule here would fight it at equal
+   specificity and win or lose on stylesheet order. */
+.sig-tools{display:flex;flex-wrap:wrap}
 .sig-ed{min-height:130px;background:#0a0a0a;border:1px solid var(--border2);border-radius:9px;padding:12px 14px;color:#fff;font-size:13.5px;line-height:1.6;outline:none;overflow-y:auto;max-height:320px;word-wrap:break-word}
 .sig-ed:focus{border-color:var(--gold)}
 .sig-ed:empty:before{content:attr(data-ph);color:#555}
@@ -212,7 +215,6 @@ select.inp option{background:#1a1a1a;color:#fff}
 .sig-diag code{background:rgba(0,0,0,.35);border-radius:4px;padding:1px 5px;word-break:break-all}
 @media (max-width:768px){
   .sig-tools{width:100%}
-  .sig-tools button{flex:1;min-height:40px}
   .sig-ed{min-height:150px}
   #sigMailbox{max-width:100%!important;width:100%}
   .sig-tabs button{flex:1;min-height:40px}
@@ -366,13 +368,11 @@ select.inp option{background:#1a1a1a;color:#fff}
             <option value="processing@ratesandrealty.com">processing@ratesandrealty.com</option>
           </select>
           <div style="flex:1"></div>
-          <div class="sig-tools" id="sigTools">
-            <button type="button" data-c="bold" title="Bold"><b>B</b></button>
-            <button type="button" data-c="italic" title="Italic"><i>I</i></button>
-            <button type="button" data-c="underline" title="Underline"><u>U</u></button>
-            <button type="button" data-c="_link" title="Insert link">🔗</button>
-            <button type="button" data-c="removeFormat" title="Clear formatting">✖</button>
-          </div>
+          <!-- Empty on purpose: RichToolbar.mount() fills this in initSignature().
+               flex-basis:100% gives the toolbar its own row - the full formatting
+               core is far wider than the five buttons that used to sit here beside
+               the mailbox select. -->
+          <div class="sig-tools" id="sigTools" style="flex:0 0 100%"></div>
         </div>
         <!-- Two ways in. Visual editing is the default; Import is for the one-time
              paste of the branded block out of Gmail. -->
@@ -1134,22 +1134,19 @@ function initSignature() {
     try { document.execCommand('insertHTML', false, out); } catch (_) {}
   });
 
-  Array.prototype.forEach.call(tools.querySelectorAll('button[data-c]'), function (b) {
-    b.addEventListener('mousedown', function (e) { e.preventDefault(); });
-    b.addEventListener('click', function () {
-      var cmd = b.getAttribute('data-c');
-      ed.focus();
-      if (cmd === '_link') {
-        var url = window.prompt('Link URL:', 'https://');
-        if (!url) return;
-        url = url.trim();
-        if (!/^(https?:|mailto:|tel:)/i.test(url)) { showToast('Only http, https, mailto and tel links are allowed.'); return; }
-        try { document.execCommand('createLink', false, url); } catch (_) {}
-        return;
-      }
-      try { document.execCommand(cmd, false, null); } catch (_) {}
-    });
-  });
+  /* The shared toolbar. A signature gets the formatting core and NO insert slots:
+     there are no variables to pick, no Canva design and no Loom recording in a
+     block that is appended to every message. */
+  if (!window.RichToolbar) {
+    throw new Error('Rich toolbar not available - /admin/js/rich-toolbar.js failed to load. ' +
+      'Reload the page; the signature cannot be formatted without it.');
+  }
+  window.RichToolbar.mount({
+    target: ed,
+    mount: tools,
+    style: 'padding:0',                 // .sig-tools already sits inside a padded card
+    notify: showToast                   // this page has a toast; alert() would be a
+  });                                   // modal in the middle of a settings form
 
   // Tabs: visual editor / raw-HTML import.
   Array.prototype.forEach.call(document.querySelectorAll('[data-sigtab]'), function (b) {

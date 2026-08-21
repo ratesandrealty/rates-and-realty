@@ -59,19 +59,21 @@ and errors in the harness itself. Exit 1 = a page failed; exit 2 = refused to ru
 ### The green bar is TWO runs, and `--token` is not the better one
 
 ```
-node tools/render-check.mjs                              ->  75/75   the stub specs
+node tools/render-check.mjs                              ->  79/79   the stub specs
 node tools/render-check.mjs --token tok.txt --token-only ->  8/8     the ones that need a session
 
-THE SECOND NUMBER MOVES whenever a tokenOnly spec is added — it was 7/7 on
-2026-08-19 and became 8/8 the same day. Read it off the run, never off this
-file; what is fixed is that there are TWO runs, not what either total is.
+BOTH NUMBERS MOVE. The second moves whenever a tokenOnly spec is added — it was
+7/7 on 2026-08-19 and became 8/8 the same day. The first was 75/75 until
+2026-08-21, when the four rich-toolbar specs landed. Read them off the run,
+never off this file; what is fixed is that there are TWO runs, not what either
+total is.
 ```
 
-**There is no invocation that returns 83/83, by construction.** Do not go looking
-for one, and do not read a partial number as breakage.
+**There is no invocation that returns the sum of the two, by construction.** Do
+not go looking for one, and do not read a partial number as breakage.
 
-Measured 2026-08-19: running the WHOLE suite with `--token` returns **62/83, 21
-failed** — and not one of those 21 is a defect. `--token` replaces the stub for
+Measured 2026-08-19, when the suite was 75 + 8: running the WHOLE thing with
+`--token` returned **62/83, 21 failed** — and not one of those 21 was a defect. `--token` replaces the stub for
 **every** spec, not only the ones that need a session, and 20 of the 75 stub
 specs assert things only the stub provides:
 
@@ -180,6 +182,65 @@ writes — **nine of them, not the eight the message counts** — and it is veri
 to FAIL against `9f87ca6^` through `tools/serve-prefix.mjs`, which is the half
 the original claim never had. Full record:
 `docs/FALSE-PROOF-CLAIM-9f87ca6-2026-08-15.md`.
+
+## There is ONE rich-text toolbar: `admin/js/rich-toolbar.js`
+
+Four surfaces mount it. **Do not write a fifth implementation** — mount it.
+
+```js
+window.RichToolbar.mount({ target: 'emailEditor', mount: hostEl, slots: [...] })
+```
+
+| surface | host | slots it passes |
+|---|---|---|
+| `#emailEditor` — lead-detail composer, 8 entry points | `#ecToolbar` | Undo, Redo, Canva, AI Helper |
+| the inbox composer (`mountComposer`) | `.gm-tools` | Attach, image, video, emoji, CTA insert, AI |
+| `#sigEditor` — settings | `#sigTools` | **none** |
+| the drip step editor | `#emailTools_<i>` | + Name, + Phone, + Link, + Signature |
+
+**FORMATTING IS THE UNION; INSERTS ARE NOT.** B/I/U, lists, link, clear, font,
+size, colour, highlight, alignment, indent/outdent and quote are component
+defaults. Canva, Loom, emoji, images and variable pickers are `slots` the host
+passes, because a signature has no variables and a drip step has no Loom. The
+eight divergence decisions are in
+`docs/TOOLBAR-CONSOLIDATION-DIVERGENCE-2026-08-20.md`; what shipped and what did
+not is in `docs/TOOLBAR-EXTRACTION-2026-08-21.md`.
+
+Three of those decisions are load-bearing rather than cosmetic, and each has a
+render-check assertion that fails if it is undone:
+
+- **`styleWithCSS` is enabled for the COLOUR COMMANDS ONLY**, then restored.
+  Globally it changes what bold and underline emit — `<span
+  style="font-weight:700">` instead of `<b>` — across every email this CRM
+  sends, and `<b>`/`<u>` are the better-supported forms in mail.
+- **Link URLs are validated** (`https?:`/`mailto:`/`tel:`). Two of the four
+  toolbars this replaced handed `prompt()` straight to `createLink`. Nothing in
+  the CRM renders a `javascript:` href — DOMPurify strips it — but **the send
+  path sanitizes nothing**, so it really did go out on the wire.
+- **The row WRAPS.** inbox.js kept one non-wrapping row and paid for it by
+  hiding alignment, indent/outdent, quote and clear formatting behind a `⋯`
+  menu, which is why nobody could find them. A `flex-wrap:nowrap` that comes
+  back pushes them off the edge instead — still invisible, with every
+  present-check passing.
+
+**The host styles it through `--rrt-*` variables**, never by writing
+`.<host> button` rules: those land at equal specificity with the component's own
+and win or lose on stylesheet order. `.sig-tools button`, `.gm-tools button` and
+`.ec-tb-*` were all deleted for this reason.
+
+Class prefix is `rrt-`. **Not `rte-`** — drip-builder.html already owns
+`.rte-toolbar`, `.rte-btn`, `.rte-divider` and `.rte-area`.
+
+### `#lpEmailBody` is still the fifth surface and still has no toolbar
+
+Five template emails are composed in it — including the HOI agent and realtor
+ones. It is a bare contenteditable. Now that the component exists this is a
+**mount call**, not a port.
+
+`lpHoiOpenComposer` is a different problem and is deliberately held: it is
+**plain text** (`p.textContent`, body assembled with `\n`). There is no toolbar
+to extend, and converting it is a rewrite of how that body and its signature are
+assembled.
 
 ## CORS: curl proves nothing about a browser
 
