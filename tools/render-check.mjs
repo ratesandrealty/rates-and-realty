@@ -3808,8 +3808,25 @@ const SPECS = [
           if (!modalHit) return 'modal rendered, but mB is not in it';
           var modalVisible = getComputedStyle(modalHit).display !== 'none';
           var newestOnly = ov.querySelector('[data-mid="mC"]');
-          var hasX = !!ov.querySelector('[data-gm-x]');
           var hasSize = !!ov.querySelector('[data-gm-size]');
+
+          /* NO OVERLAP. The first version positioned the toggle absolutely at
+             top-right — which is where .gm-pacts already puts the filed-to badge
+             and the close ×, so three controls stacked on top of each other.
+             Every control now lives INSIDE .gm-pacts, and this hit-tests each
+             one: a control covered by a sibling is not clickable, and that is
+             the failure a presence check would miss entirely. */
+          var acts = ov.querySelector('.gm-pacts');
+          var inActs = acts && acts.contains(hasSize ? ov.querySelector('[data-gm-size]') : null);
+          var ctrls = acts ? [...acts.children] : [];
+          var reachable = ctrls.length > 0 && ctrls.every(function (el) {
+            var r = el.getBoundingClientRect();
+            if (!(r.width > 0 && r.height > 0)) return false;
+            var top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return top === el || el.contains(top) || (top && top.contains(el));
+          });
+          var oneX = ov.querySelectorAll('.gm-modal-close').length;
+          var sizeLabel = (ov.querySelector('[data-gm-size]') || {}).textContent || '';
 
           // Leave the page as we found it.
           ov.remove(); slot.remove();
@@ -3818,10 +3835,13 @@ const SPECS = [
             inlineVisible ? 'inline focused' : 'inline NOT focused',
             modalVisible ? 'modal focused' : 'modal opened at the top',
             newestOnly ? 'thread intact' : 'thread missing messages',
-            hasX && hasSize ? 'X + size toggle' : 'chrome missing'
+            inActs ? 'toggle in the header' : 'toggle NOT in the header',
+            reachable ? 'nothing covered' : 'CONTROLS OVERLAP',
+            oneX === 1 ? 'one close x' : oneX + ' close buttons',
+            /^\\s*\\u2921 Collapse/.test(sizeLabel) ? 'says Collapse' : 'says ' + sizeLabel.trim()
           ].join(', ');
         })()`,
-       'inline focused, modal focused, thread intact, X + size toggle'],
+       'inline focused, modal focused, thread intact, toggle in the header, nothing covered, one close x, says Collapse'],
     ],
   },
   {

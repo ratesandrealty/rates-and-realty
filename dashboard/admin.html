@@ -1261,7 +1261,7 @@ function _rrD(v) { return (window.RRTime && window.RRTime.parse) ? window.RRTime
   <script src="/admin/js/vendor/purify.min.js?v=3.4.12"
           integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
           crossorigin="anonymous" defer></script>
-  <script src="/admin/js/inbox.js?v=7c099cab86" defer></script>
+  <script src="/admin/js/inbox.js?v=47cff2a831" defer></script>
   <!-- The one rich-text toolbar. inbox.js mounts it into every composer it opens. -->
   <script src="/admin/js/rich-toolbar.js?v=d1dc90083c"></script>
 </head>
@@ -3250,7 +3250,25 @@ function _rrD(v) { return (window.RRTime && window.RRTime.parse) ? window.RRTime
   // arrangement to gain nothing. applySectionOrder() already appends any section missing
   // from a saved order, so the new widgets appear at the end of an existing arrangement,
   // visible and draggable, with nothing lost. Bump only when EXISTING ids get reordered.
-  const DEFAULT_SECTION_ORDER = ['market-rates','command-center','pipeline-snapshot','showing-requests','stats','charts','activity','recent-notes','appointments','clickup-today','deals-referrals','inbox-mini','va-activity','stale-orders','unread-replies'];
+  const DEFAULT_SECTION_ORDER = ['market-rates','command-center','reply-status','pipeline-snapshot','showing-requests','stats','charts','activity','recent-notes','appointments','clickup-today','deals-referrals','inbox-mini','va-activity','stale-orders','unread-replies'];
+
+  /* Sections missing from a SAVED order are appended last (applySectionOrder,
+     below). That is right for a minor widget and wrong for this one: reply-status
+     shipped 2026-08-21 and landed underneath fifteen other sections on any
+     account with an existing layout, which is a card nobody can find. Splicing it
+     into position is the non-destructive alternative to bumping LAYOUT_VERSION,
+     which would discard every saved order AND hidden set across every device to
+     move one card.
+     Runs once — after the splice the id is in the saved order and the guard is
+     false forever after. It never reorders anything else, and it does not unhide:
+     hiding is a separate set, so a section deliberately hidden stays hidden. */
+  function ensureNewSections(order) {
+    if (!Array.isArray(order)) return order;
+    if (order.indexOf('reply-status') !== -1) return order;
+    const anchor = order.indexOf('command-center');
+    order.splice(anchor === -1 ? 0 : anchor + 1, 0, 'reply-status');
+    return order;
+  }
 
   // ══ SERVER-SIDE LAYOUT SYNC (per-user, cross-device) ═══════════════════════════
   // localStorage stays the fast local cache + offline fallback; the server (RLS'd to
@@ -3350,6 +3368,8 @@ function _rrD(v) { return (window.RRTime && window.RRTime.parse) ? window.RRTime
   }
 
   function applySectionOrder(order, parent, hidden) {
+    // Single choke point: every order reaches here, local cache or server sync.
+    order = ensureNewSections(order);
     const listed = new Set(order);
     const hide = new Set(hidden || []);
     order.forEach(id => { const el = parent.querySelector(`[data-section-id="${id}"]`); if (el) parent.appendChild(el); });
