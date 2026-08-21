@@ -1556,12 +1556,70 @@ async function loadReplyStatusBoard() {
   const esc = (t) => String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   const GREY = "#8a8475", AMBER = "#E0A852", GREEN = "#50c878";
 
+  /* WHEN a reply landed, in the reader's own timezone. "Replied" with no date
+     does not say whether the answer arrived an hour ago or in May, so it cannot
+     be acted on. Absolute date AND relative age: the date is the record, the
+     age is what makes it urgent or stale at a glance. */
+  const when = (iso) => {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (isNaN(d)) return null;
+    const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+    const rel = mins < 1 ? "just now"
+      : mins < 60 ? mins + "m ago"
+      : mins < 1440 ? Math.floor(mins / 60) + "h ago"
+      : Math.floor(mins / 1440) + "d ago";
+    // The year is part of the date, not a suffix after the time — appending it
+    // produced "May 4, 2:15 AM, 2025". Only shown when it is not this year.
+    const opts = { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
+    if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+    return { stamp: d.toLocaleString(undefined, opts), rel };
+  };
+
   if (summ) summ.textContent = (c.can_resolve || 0) + " of " + (c.total || 0) + " can resolve"
     + (c.archived_excluded ? "  ·  " + c.archived_excluded + " archived, not shown" : "");
 
+  /* ── THE REPLIED BANNER ───────────────────────────────────────────────────
+     A reply arriving is the only thing on this board that is GOOD NEWS and the
+     only thing with an action attached, and it was rendering as a 9.5px pill on
+     a row sorted to the bottom — unnoticeable, which is the complaint.
+     It is loud on purpose: full-width, saturated green, the counterparty named,
+     and the time it landed. Green, not red: red is for something wrong, and this
+     is the opposite. The grey headline below is unchanged — 15 unhearable
+     requests is still the finding, this just stops the answer being buried
+     under it. Nothing renders when nobody has replied. */
+  const repliedRows = rows.filter((r) => r.state === "replied");
+  if (head && repliedRows.length) {
+    const newest = repliedRows
+      .map((r) => r.last_reply_at).filter(Boolean)
+      .sort((a, b) => new Date(b) - new Date(a))[0];
+    const w = when(newest);
+    const names = repliedRows.slice(0, 3)
+      .map((r) => esc(r.borrower || r.counterparty || "a counterparty")).join(", ")
+      + (repliedRows.length > 3 ? " +" + (repliedRows.length - 3) + " more" : "");
+    head.innerHTML =
+      '<div style="background:linear-gradient(90deg,rgba(80,200,120,.22),rgba(80,200,120,.06));'
+      + 'border:1px solid rgba(80,200,120,.55);border-left:5px solid ' + GREEN + ';border-radius:10px;'
+      + 'padding:12px 14px;margin-bottom:10px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'
+      + '<div style="font-size:26px;line-height:1;">&#128233;</div>'
+      + '<div style="flex:1;min-width:180px;">'
+      +   '<div style="font-size:16px;font-weight:800;color:' + GREEN + ';letter-spacing:.2px;">'
+      +     repliedRows.length + (repliedRows.length === 1 ? " reply" : " replies") + ' in'
+      +   '</div>'
+      +   '<div style="font-size:12.5px;color:#dfe8e0;margin-top:2px;overflow-wrap:anywhere;">' + names + '</div>'
+      + '</div>'
+      + (w ? '<div style="text-align:right;flex:0 0 auto;">'
+             + '<div style="font-size:15px;font-weight:700;color:' + GREEN + ';">' + esc(w.rel) + '</div>'
+             + '<div style="font-size:11px;color:#9bb3a0;">' + esc(w.stamp) + '</div>'
+           + '</div>' : "")
+      + '</div>';
+  } else if (head) {
+    head.innerHTML = "";
+  }
+
   /* The headline states the grey number first and in words. A count alone reads
      as a category; the sentence is the finding. */
-  if (head) head.innerHTML =
+  if (head) head.innerHTML +=
     '<div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);border-left:3px solid ' + GREY + ';border-radius:8px;padding:10px 12px;">'
     + '<div style="font-size:13px;color:#ddd;font-weight:600;">' + (c.cannot_correlate || 0) + ' of ' + (c.total || 0)
     + ' requests went out through a path that cannot hear a reply.</div>'
@@ -1571,28 +1629,58 @@ async function loadReplyStatusBoard() {
     + '</div>';
 
   const pill = (bg, fg, txt) => '<span style="display:inline-block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:2px 7px;border-radius:10px;background:' + bg + ';color:' + fg + ';">' + txt + '</span>';
-  const badge = { replied: pill("rgba(80,200,120,.15)", GREEN, "replied"),
+  /* The replied badge is deliberately heavier than the other two — solid fill on
+     dark text rather than a tint, so it reads as a state that changed rather
+     than a category label. */
+  const badge = { replied: '<span style="display:inline-block;font-size:10px;font-weight:800;text-transform:uppercase;'
+                    + 'letter-spacing:.6px;padding:3px 9px;border-radius:10px;background:' + GREEN + ';color:#08210f;">&#9679; replied</span>',
                   awaiting: pill("rgba(224,168,82,.15)", AMBER, "awaiting"),
                   cannot_correlate: pill("rgba(255,255,255,.07)", GREY, "cannot hear a reply") };
 
   body.innerHTML = '<div style="display:flex;flex-direction:column;gap:5px;">' + rows.map((r) => {
     const dim = r.state === "cannot_correlate";
-    const age = (r.state === "awaiting" && r.days_since_send != null)
-      ? '<span style="color:' + AMBER + ';font-size:11px;">' + r.days_since_send + 'd</span>' : "";
-    const heard = (r.state !== "replied" && r.heard_from_them > 0)
+    const hot = r.state === "replied";
+
+    /* WHEN, on every row that has one. Two different facts, never conflated:
+         last_reply_at      a reply that IS correlated to this request
+         heard_from_them_at inbound from that address matching NOTHING —
+                            it says they wrote, never that they answered THIS.
+       The second is the distinction the board exists to preserve; showing its
+       date must not make it read like the first, so it stays amber and keeps
+       the "not linked" wording. */
+    const rw = when(r.last_reply_at);
+    const hw = when(r.heard_from_them_at);
+
+    const right = hot && rw
+      ? '<div style="text-align:right;"><div style="font-size:13px;font-weight:800;color:' + GREEN + ';">' + esc(rw.rel) + '</div>'
+        + '<div style="font-size:10.5px;color:#9bb3a0;white-space:nowrap;">' + esc(rw.stamp) + '</div></div>'
+      : (r.state === "awaiting" && r.days_since_send != null
+          ? '<span style="color:' + AMBER + ';font-size:11px;">' + r.days_since_send + 'd</span>' : "");
+
+    const heard = (!hot && r.heard_from_them > 0)
       ? '<div style="font-size:10.5px;color:' + AMBER + ';margin-top:2px;">&#9888; they have written to us ' + r.heard_from_them
-        + ' time' + (r.heard_from_them === 1 ? "" : "s") + ' — not linked to this request</div>' : "";
+        + ' time' + (r.heard_from_them === 1 ? "" : "s") + ' &mdash; not linked to this request'
+        + (hw ? ' <span style="color:#c9a24c;">&middot; last ' + esc(hw.stamp) + ' (' + esc(hw.rel) + ')</span>' : "")
+        + '</div>' : "";
+
+    /* A replied row is the one worth looking at, so it is the one that looks
+       different: green left rail, tinted background, brighter name. */
+    const shell = hot
+      ? 'border:1px solid rgba(80,200,120,.45);border-left:4px solid ' + GREEN + ';background:rgba(80,200,120,.09);'
+      : 'border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,' + (dim ? ".015" : ".03") + ');'
+        + (dim ? "opacity:.72;" : "");
+
     return '<a href="/admin/lead-detail?contact_id=' + esc(r.contact_id) + '" style="text-decoration:none;color:inherit;">'
-      + '<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border:1px solid rgba(255,255,255,.07);border-radius:8px;'
-      + 'background:rgba(255,255,255,' + (dim ? ".015" : ".03") + ');' + (dim ? "opacity:.72;" : "") + '">'
+      + '<div style="display:flex;align-items:flex-start;gap:10px;padding:' + (hot ? "10px 12px" : "8px 10px") + ';border-radius:8px;' + shell + '">'
       + '<div style="flex:0 0 88px;">' + badge[r.state] + '</div>'
       + '<div style="flex:1;min-width:0;">'
-      +   '<div style="font-size:12.5px;color:#ddd;font-weight:600;overflow-wrap:anywhere;">' + esc(r.borrower || "(no borrower name)")
+      +   '<div style="font-size:' + (hot ? "13.5" : "12.5") + 'px;color:' + (hot ? "#eafaef" : "#ddd") + ';font-weight:' + (hot ? "800" : "600") + ';overflow-wrap:anywhere;">'
+      +     esc(r.borrower || "(no borrower name)")
       +     ' <span style="color:#6f6a5e;font-weight:400;">· ' + esc(String(r.family).toUpperCase()) + '</span></div>'
-      +   '<div style="font-size:11px;color:#8a8475;overflow-wrap:anywhere;">' + esc(r.counterparty || "no counterparty address on file") + '</div>'
+      +   '<div style="font-size:11px;color:' + (hot ? "#9bb3a0" : GREY) + ';overflow-wrap:anywhere;">' + esc(r.counterparty || "no counterparty address on file") + '</div>'
       +   heard
       + '</div>'
-      + '<div style="flex:0 0 auto;">' + age + '</div>'
+      + '<div style="flex:0 0 auto;">' + right + '</div>'
       + '</div></a>';
   }).join("") + '</div>';
 }
