@@ -1,3 +1,13 @@
+-- The rows the function below resolves at render time. apply/reviews are
+-- deliberately EMPTY: no live URL has been supplied and both of the ones they
+-- replace are dead, so the button does not render at all until one exists.
+insert into public.app_config(key, value) values
+  ('cta_upload_url',   'https://documentguardian.com/filedrop/rduarte@emortgagecapital.com'),
+  ('cta_schedule_url', 'https://cal.com/rene-duarte-rates-realty/30min'),
+  ('cta_apply_url',    ''),
+  ('cta_reviews_url',  '')
+on conflict (key) do nothing;
+
 -- email_signature_get(p_mailbox text)
 -- language: plpgsql   SECURITY DEFINER
 -- Captured from production 2026-08-21. This layer had NO git history:

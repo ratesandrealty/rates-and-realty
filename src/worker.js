@@ -303,7 +303,10 @@ export default {
           // button. Only Document Upload is confirmed working today.
           let ctas = {};
           try {
-            const cr = await fetch(`${SB}/rest/v1/app_config?select=key,value&key=like.video_cta_*`, {
+            // *cta_* so BOTH the canonical cta_*_url rows and the legacy
+            // video_cta_*_url fallbacks arrive; the map below prefers the former.
+            // Fetching only video_cta_* is why the new keys were invisible here.
+            const cr = await fetch(`${SB}/rest/v1/app_config?select=key,value&key=like.*cta_*`, {
               headers: { apikey: env.SUPABASE_ANON_KEY, Authorization: `Bearer ${env.SUPABASE_ANON_KEY}` },
             });
             if (cr.ok) for (const row of await cr.json()) ctas[row.key] = row.value;
@@ -779,15 +782,24 @@ function videoPageHtml(slug, meta, ctas) {
   /* Optional CTAs: a key that is unset renders NO button. Only Document Upload is
    * confirmed working; Apply Now / Schedule / Reviews stay absent until their URLs
    * are verified, rather than shipping a button that silently goes nowhere. */
+  /* ONE SET OF KEYS FOR THE WHOLE COMPANY, not one per surface. These are the
+     same cta_*_url rows rene@'s email signature now resolves at render time —
+     renamed off the `video_` prefix because the links are the company's, not this
+     page's. Three of the four were dead in the signature for months precisely
+     because they were pasted there instead of configured; two surfaces reading
+     two copies would put that straight back.
+     video_cta_*_url is still read as a fallback so an unmigrated key keeps
+     working rather than silently dropping a button. */
   var optional = [
-    ['video_cta_schedule_url', '&#128197; Schedule a call'],
-    ['video_cta_apply_url', '&#128221; Apply now'],
-    ['video_cta_upload_url', '&#128196; Upload documents'],
-    ['video_cta_reviews_url', '&#11088; Reviews']
-  ].filter(function (p) { return ctas[p[0]] && /^https?:\/\//i.test(ctas[p[0]]); })
+    ['cta_schedule_url', 'video_cta_schedule_url', '&#128197; Schedule a call'],
+    ['cta_apply_url',    'video_cta_apply_url',    '&#128221; Apply now'],
+    ['cta_upload_url',   'video_cta_upload_url',   '&#128196; Upload documents'],
+    ['cta_reviews_url',  'video_cta_reviews_url',  '&#11088; Reviews']
+  ].map(function (p) { return [p[0], ctas[p[0]] || ctas[p[1]], p[2]]; })
+   .filter(function (p) { return p[1] && /^https?:\/\//i.test(p[1]); })
    .map(function (p) {
-     return '<a class="cta" data-cta="' + vEsc(p[0]) + '" href="' + vEsc(ctas[p[0]]) +
-            '" target="_blank" rel="noopener noreferrer">' + p[1] + '</a>';
+     return '<a class="cta" data-cta="' + vEsc(p[0]) + '" href="' + vEsc(p[1]) +
+            '" target="_blank" rel="noopener noreferrer">' + p[2] + '</a>';
    }).join('');
 
   // Always pinned: /poster serves a branded placeholder when none is stored, so
