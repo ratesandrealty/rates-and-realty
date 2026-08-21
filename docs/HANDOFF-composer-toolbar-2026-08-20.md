@@ -24,10 +24,39 @@ same one `sendEmailFromComposer` uses), each carrying five labelled lines:
 ```
 reneduarte.realty1@gmail.com   msg 6a878fcc1a116e08ccccece0   email_log e4c1e4b7
 rduarte89@yahoo.com            msg 6a878fce56ed3cdc187e9590   email_log 2a385e9a
+rduarte@emortgagecapital.com   msg 6a879cf4ef044f558d7f4881   email_log 4e24c4dc   <- the Outlook result
+
 renewaterrace@outlook.com      msg 6a8790ee4580fe1c00b42cf6   email_log e9e1f933
+   ^^ MISDIRECTED. NOT Rene's address. NOT a verified result — discard it.
 ```
 
-All three carry the **identical body** — same source file, 1,533 bytes each.
+All four carry the **identical body** — same source file.
+
+### ⚠ A test message was sent to a stranger. Do not treat it as a result.
+
+`renewaterrace@outlook.com` was given as Rene's Outlook address and is not his. One
+message reached it before the error was known. Recorded here so nobody later reads
+that row as the Outlook data point.
+
+**Scope, measured:** exactly **one** message has ever been sent to that address —
+`email_log` `e9e1f933`, 2026-08-20 23:42:37, from `rene@ratesandrealty.com`,
+subject *"RR toolbar rendering check…"*, 1,533 bytes. No other message, in any
+direction, exists for it.
+
+**What it disclosed:** no borrower data — no contact name, no loan, no figure
+(checked: no Garcia/Navarro/borrower reference). It did carry a footnote naming
+**`rduarte89@yahoo.com`** and stating that address is recorded as an agent address
+on an HOI quote request. So a stranger learned one personal email address of
+Rene's and that this business tracks HOI quote requests. Low severity, and real.
+
+**Opened:** `opened_at` is NULL, `open_count` 0, `click_count` 0 — the tracking
+pixel never fired. **That is weak evidence, not proof:** Outlook.com blocks remote
+images by default, so a read would very likely not register. Treat it as "no
+evidence it was read".
+
+**Nothing to retract** — the message contains no client data and no credential.
+The Yahoo address it names is Rene's own. No further action was taken and none is
+proposed beyond this record.
 
 ### Verified: all four representations survive the send path unaltered
 
