@@ -570,6 +570,23 @@ Deno.serve(async (req) => {
 
       console.log(`[twilio-voice] webhook To="${to}" From="${from}" CallSid="${callSid}" rec="${recordingStatus}"`);
 
+      /* The probe's <Gather> posts here with the digits Twilio HEARD. Recorded
+       * before anything else so a probe can never be mistaken for a call. */
+      if (reqUrl.searchParams.get('probe') === 'dtmf') {
+        const pRef = (reqUrl.searchParams.get('ref') || '').trim();
+        const pDigits = params.get('Digits') || '';
+        console.log(`[twilio-voice] DTMF PROBE heard "${pDigits}" ref=${pRef} sid=${callSid}`);
+        try {
+          await sb.from('dtmf_probe_log').insert({ ref: pRef, digits: pDigits, call_sid: callSid });
+          const { data: oldRows } = await sb.from('dtmf_probe_log')
+            .select('id').order('received_at', { ascending: false }).range(50, 999);
+          if (oldRows && oldRows.length) {
+            await sb.from('dtmf_probe_log').delete().in('id', oldRows.map((r: any) => r.id));
+          }
+        } catch (e) { console.error('[twilio-voice] probe write failed:', String(e)); }
+        return twimlRes(`<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>`);
+      }
+
       /* ── A CAPTURE THAT FAILED IS A WRITE, NOT AN ABSENCE ──────────────────
        *
        * Twilio posts RecordingStatus 'failed' or 'absent' with NO RecordingUrl.
@@ -835,6 +852,43 @@ Deno.serve(async (req) => {
         }
         const statusCb2 = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice`;
         return twimlRes(voicemailTwiml(statusCb2, await greetingConfig()));
+      }
+
+      /* ── DTMF PROBE ────────────────────────────────────────────────────────
+       * A sentinel destination answered with <Gather> instead of <Dial>. NO PSTN
+       * CALL IS PLACED: the browser leg talks to Twilio and nobody's phone rings,
+       * so the probe runs unattended and repeatedly.
+       *
+       * It exists because "the keypad renders" and "the tones transmit" look
+       * identical from the browser, and the second is the claim that matters.
+       * Twilio reports the digits it actually HEARD on the leg, which is a
+       * measurement no client-side assertion can fake.
+       *
+       * It cannot collide with a real call: 'dtmf-probe' is not a phone number
+       * and is compared before formatPhone() ever sees it. It returns before the
+       * calls_log insert below, so a probe writes no call row, no recording and
+       * no contact association.
+       */
+      if (to === 'dtmf-probe') {
+        const probeRef = (params.get('Ref') || '').trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+        /* &amp;, NOT &. A raw ampersand is invalid XML, so Twilio rejected the
+         * whole document and the gateway answered ConnectionError 31005 HANGUP
+         * — which reads like a network or credential fault, not a malformed
+         * response. The function had already logged "DTMF PROBE leg", so the
+         * branch was plainly running; only the TwiML was bad. */
+        const probeCb = `https://ljywhvbmsibwnssxpesh.supabase.co/functions/v1/twilio-voice?probe=dtmf&amp;ref=${encodeURIComponent(probeRef)}`;
+        console.log(`[twilio-voice] DTMF PROBE leg sid=${callSid} ref=${probeRef}`);
+        return twimlRes(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <!-- finishOnKey="" so '#' is CAPTURED as a digit rather than swallowed as a
+       terminator; numDigits high and timeout short, so the Gather completes a
+       few seconds after the last key instead of needing an exact count the
+       function cannot know. -->
+  <Gather input="dtmf" numDigits="12" timeout="5" finishOnKey="" action="${probeCb}" method="POST">
+    <Pause length="30"/>
+  </Gather>
+  <Hangup/>
+</Response>`);
       }
 
       // Outbound call from browser → return TwiML to dial the destination
