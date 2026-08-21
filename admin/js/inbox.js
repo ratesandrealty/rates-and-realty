@@ -600,7 +600,27 @@
       // .gm-inbox where it is normally defined. See the .gm-send note above — this
       // is the other half of the greyed-out-Send fix.
       '.gm-modal{--g:var(--gold,#c9a84c);position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9998;display:flex;align-items:center;justify-content:center;padding:20px}',
-      '.gm-modal .gm-modal-card{width:820px;max-width:96vw;height:86vh;background:var(--surface,#111);border:1px solid var(--border2,rgba(255,255,255,.14));border-radius:14px;display:flex;flex-direction:column;overflow:hidden}',
+      /* 820px was the narrow column in the thread reader and its reply composer.
+       * The composer has no width of its own — .gm-cmp is a plain flex column —
+       * so it is this card that sized it, not the host element and not the
+       * reader. (The HOI quote-request modal's 680px, widened separately, is a
+       * different overlay entirely and was never this one.)
+       *
+       * WHAT MOVES WITH IT — everything that opens WITHOUT a host, i.e. modal
+       * mode: the Email Threads reader (lead-detail :16388, :16503, :16641) and
+       * the standalone composer (:16792), since .gm-compose-card overrides only
+       * height and inherits this width.
+       *
+       * WHAT DOES NOT — openThread WITH a host renders inline and has never been
+       * constrained by this (lead-detail :14233, the order-card threads), and
+       * GmailInbox.mount() is the full three-column flex layout used by
+       * /admin/inbox, /admin/va-inbox and the in-page panels, which does not use
+       * .gm-modal at all.
+       *
+       * max-width:96vw is kept, so on a laptop the card still fills the viewport
+       * less the overlay's 20px padding; the cap only decides how much of a wide
+       * screen it may use. */
+      '.gm-modal .gm-modal-card{width:1180px;max-width:96vw;height:86vh;background:var(--surface,#111);border:1px solid var(--border2,rgba(255,255,255,.14));border-radius:14px;display:flex;flex-direction:column;overflow:hidden}',
       '.gm-modal-close{background:none;border:none;color:#999;font-size:22px;cursor:pointer;line-height:1}',
       '@media (min-width:769px) and (max-width:1199px){',
       '  .gm-rail{width:172px}',
