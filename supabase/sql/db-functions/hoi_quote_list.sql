@@ -1,6 +1,6 @@
 -- hoi_quote_list(p_contact_id uuid, p_include_archived boolean)
 -- language: sql   SECURITY DEFINER
--- Captured from production 2026-08-19. This layer had NO git history:
+-- Captured from production 2026-08-21. This layer had NO git history:
 -- check-function-drift.mjs compares deployed EDGE functions and never
 -- opens the database, so 5 of 307 were recorded and the rest existed only
 -- in production. Re-capture after any change.
@@ -13,33 +13,9 @@ CREATE OR REPLACE FUNCTION public.hoi_quote_list(p_contact_id uuid, p_include_ar
 AS $function$
   /* Each quote request with its ACTIVITY: the send, anything Gmail grouped into
      that thread, and the replies quote-reply-poll correlated to this request.
-
-     The outbound was always recorded — gmail-inbox's send writes email_log the
-     same way it does for VOE — but hoi_quote_list never read that table, so a
-     request that was sent and not yet answered looked identical to one where
-     nothing had happened. That is the worst of the three states to be unable to
-     tell apart, because it is the one that needs chasing.
-
-     SCOPED BY THREAD (el.gmail_thread_id = h.gmail_thread_id), so it consults no
-     attribution. That matters: on the first genuine external delivery
-     (rduarte89@yahoo.com, "Homeowners Insurance Quote Request - Daniel Garcia")
-     matchContact left contact_id NULL, and anything keyed on the contact would
-     have missed the send outright.
-
-     Legacy requests carry no thread id and match nothing here — correct, since
-     MailerSend returned no id and there is no honest way to tie them to a thread.
-
-     NOT TWICE: voe-inbound-poll already writes inbound replies into email_log, so
-     a message can genuinely be in both tables. The email_log side excludes any
-     row already carried as a reply for this request.
-
-     ARCHIVED ROWS ARE FILTERED HERE, AT DISPLAY, AND NOWHERE ELSE. archived_at
-     means "not pursuing" — a decision of ours, distinct from the agent having
-     declined, which is what status carries. The filter lives in this function
-     rather than in quote_reply_match on purpose: correlation must keep working on
-     an archived request, because a reply that arrives after you have given up is
-     precisely the one worth surfacing. Passing p_include_archived => true brings
-     them back so they can be un-archived. */
+     Scoped by thread (el.gmail_thread_id = h.gmail_thread_id) so it consults no
+     attribution. Archived rows are filtered HERE, at display, and nowhere else.
+     See the migration history for the full reasoning. */
   select coalesce(
     jsonb_agg(s.row_json order by s.sent_at desc nulls last, s.created_at desc),
     '[]'::jsonb)
@@ -61,6 +37,8 @@ AS $function$
                           'subject',    el.subject,
                           'at',         el.created_at,
                           'status',     el.status,
+                          -- the join key the reader needs to scroll to this message
+                          'gmail_message_id', el.gmail_message_id,
                           'preview',    nullif(trim(left(
                                           regexp_replace(
                                             regexp_replace(coalesce(el.body_text, el.body_html, ''),
@@ -87,6 +65,7 @@ AS $function$
                           'subject',    q.subject,
                           'at',         coalesce(q.received_at, q.created_at),
                           'status',     'received',
+                          'gmail_message_id', q.gmail_message_id,
                           'preview',    nullif(trim(left(
                                           regexp_replace(coalesce(q.snippet, ''), '\s+', ' ', 'g'),
                                           160)), '')

@@ -279,7 +279,7 @@ function renderActiveTab() {
   // don't depend on dashboardData. Mount them here (independent of renderOverview) so
   // an unrelated failure earlier in renderOverview — or a null dashboardData — can't
   // leave their containers blank.
-  if (activeTab === "overview") { loadRecentNotes(); loadPipelineSnapshot(); }
+  if (activeTab === "overview") { loadRecentNotes(); loadPipelineSnapshot(); loadReplyStatusBoard(); }
   if (!dashboardData) return;
   switch (activeTab) {
     case "overview": renderOverview(); break;
@@ -1515,6 +1515,88 @@ function _snapCard(num, label, subline, list, rowFn, accent) {
       <div class="ps-list">${rows}</div>
     </div>`;
 }
+/* ── THIRD-PARTY REPLY STATUS ──────────────────────────────────────────────
+ *
+ * Cross-lead view of HOI and VOE requests. The per-lead panels already answer
+ * this for one file; nobody could see it across all of them.
+ *
+ * THE HEADLINE IS THE GREY COUNT. Measured 2026-08-21: 15 of 21 live requests
+ * have neither a gmail_thread_id nor an rfc_message_id, so quote_reply_match has
+ * nothing to key on and a reply CANNOT attach even if it arrives. Amber would
+ * have shown 20 rows as in flight when only 6 can ever resolve.
+ *
+ * GREY, NEVER RED, for that state — it is not the counterparty's failure, and red
+ * on the largest group teaches the eye to skip it.
+ *
+ * heard_from_them is the fifth signal and the reason this is not a CASE
+ * expression. 694 inbound messages matched nothing, and one HOI agent on THREE
+ * live requests has written back three times with mail that correlated to none of
+ * them. Without this marker the board would report silence for someone who
+ * replied, which is the one error that would make it worse than no board. It says
+ * "they have written to us and none of it attached here" — never that they
+ * answered THIS request, because nothing links it. */
+async function loadReplyStatusBoard() {
+  const body = document.getElementById("rsb-body");
+  if (!body) return;
+  const head = document.getElementById("rsb-headline");
+  const summ = document.getElementById("rsb-summary");
+  let d = null;
+  try {
+    const sb = await _fvAuthClient();          // session-aware client → RPC carries the admin JWT
+    const { data, error } = await sb.rpc("reply_status_board");
+    if (error) throw error;
+    d = data;
+  } catch (e) {
+    body.innerHTML = '<div style="font-size:12px;color:#E5484D;">Could not load reply status: ' + String(e && e.message || e) + '</div>';
+    return;
+  }
+  const c = (d && d.counts) || {}, rows = (d && d.rows) || [];
+  if (!rows.length) { body.innerHTML = '<div style="font-size:12px;color:#8a8475;">No third-party requests on file.</div>'; return; }
+
+  const esc = (t) => String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  const GREY = "#8a8475", AMBER = "#E0A852", GREEN = "#50c878";
+
+  if (summ) summ.textContent = (c.can_resolve || 0) + " of " + (c.total || 0) + " can resolve"
+    + (c.archived_excluded ? "  ·  " + c.archived_excluded + " archived, not shown" : "");
+
+  /* The headline states the grey number first and in words. A count alone reads
+     as a category; the sentence is the finding. */
+  if (head) head.innerHTML =
+    '<div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);border-left:3px solid ' + GREY + ';border-radius:8px;padding:10px 12px;">'
+    + '<div style="font-size:13px;color:#ddd;font-weight:600;">' + (c.cannot_correlate || 0) + ' of ' + (c.total || 0)
+    + ' requests went out through a path that cannot hear a reply.</div>'
+    + '<div style="font-size:11.5px;color:#8a8475;margin-top:3px;">No stored thread or message id, so an answer cannot attach to them even if it arrives. Re-sending through the Gmail path is what makes one trackable.</div>'
+    + (c.heard_but_unlinked ? '<div style="font-size:11.5px;color:' + AMBER + ';margin-top:5px;">&#9888; ' + c.heard_but_unlinked
+        + ' of these counterparties HAVE written to us — none of it linked to their request.</div>' : '')
+    + '</div>';
+
+  const pill = (bg, fg, txt) => '<span style="display:inline-block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:2px 7px;border-radius:10px;background:' + bg + ';color:' + fg + ';">' + txt + '</span>';
+  const badge = { replied: pill("rgba(80,200,120,.15)", GREEN, "replied"),
+                  awaiting: pill("rgba(224,168,82,.15)", AMBER, "awaiting"),
+                  cannot_correlate: pill("rgba(255,255,255,.07)", GREY, "cannot hear a reply") };
+
+  body.innerHTML = '<div style="display:flex;flex-direction:column;gap:5px;">' + rows.map((r) => {
+    const dim = r.state === "cannot_correlate";
+    const age = (r.state === "awaiting" && r.days_since_send != null)
+      ? '<span style="color:' + AMBER + ';font-size:11px;">' + r.days_since_send + 'd</span>' : "";
+    const heard = (r.state !== "replied" && r.heard_from_them > 0)
+      ? '<div style="font-size:10.5px;color:' + AMBER + ';margin-top:2px;">&#9888; they have written to us ' + r.heard_from_them
+        + ' time' + (r.heard_from_them === 1 ? "" : "s") + ' — not linked to this request</div>' : "";
+    return '<a href="/admin/lead-detail?contact_id=' + esc(r.contact_id) + '" style="text-decoration:none;color:inherit;">'
+      + '<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border:1px solid rgba(255,255,255,.07);border-radius:8px;'
+      + 'background:rgba(255,255,255,' + (dim ? ".015" : ".03") + ');' + (dim ? "opacity:.72;" : "") + '">'
+      + '<div style="flex:0 0 88px;">' + badge[r.state] + '</div>'
+      + '<div style="flex:1;min-width:0;">'
+      +   '<div style="font-size:12.5px;color:#ddd;font-weight:600;overflow-wrap:anywhere;">' + esc(r.borrower || "(no borrower name)")
+      +     ' <span style="color:#6f6a5e;font-weight:400;">· ' + esc(String(r.family).toUpperCase()) + '</span></div>'
+      +   '<div style="font-size:11px;color:#8a8475;overflow-wrap:anywhere;">' + esc(r.counterparty || "no counterparty address on file") + '</div>'
+      +   heard
+      + '</div>'
+      + '<div style="flex:0 0 auto;">' + age + '</div>'
+      + '</div></a>';
+  }).join("") + '</div>';
+}
+
 async function loadPipelineSnapshot() {
   const grid = document.getElementById("pipeline-snapshot-grid");
   if (!grid) return;
