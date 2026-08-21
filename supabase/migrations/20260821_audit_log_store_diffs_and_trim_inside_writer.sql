@@ -115,3 +115,15 @@ begin
   return case when tg_op = 'DELETE' then OLD else NEW end;
 end;
 $function$;
+
+
+-- Supports the retention trim above: leading table_name, then changed_at.
+create index if not exists audit_log_retention_idx
+  on public.audit_log (table_name, changed_at);
+
+-- INSERT was absent, which is why the 39 app_submitted events could not be
+-- replayed: creation is the event that fires ClickUp and it left no record.
+drop trigger if exists trg_audit_mortgage_applications on public.mortgage_applications;
+create trigger trg_audit_mortgage_applications
+  after insert or update or delete on public.mortgage_applications
+  for each row execute function public.fn_audit_row();

@@ -184,6 +184,40 @@ to FAIL against `9f87ca6^` through `tools/serve-prefix.mjs`, which is the half
 the original claim never had. Full record:
 `docs/FALSE-PROOF-CLAIM-9f87ca6-2026-08-15.md`.
 
+## `audit_log` stores DIFFS on update, and trims itself
+
+`fn_audit_row` used to store `to_jsonb(OLD)` and `to_jsonb(NEW)` in full on every
+update. Measured 2026-08-21: **2.2 keys change on average**, at ~7.9 KB a row —
+the same history as diffs is **11.3%** of the size, and 14 rows recorded an
+update where nothing changed at all.
+
+- **UPDATE stores only the differing keys** (old_data holds the prior value of
+  exactly those keys). One-field change: **7,900 → 66 bytes.**
+- **A no-op UPDATE writes nothing.**
+- **INSERT and DELETE keep the FULL row** — an insert has no prior state to diff,
+  and a deleted row's contents are the point of auditing the delete.
+- Rows written before the change keep the old full-snapshot shape and were
+  **deliberately not rewritten**. Anything reading `audit_log` must handle both.
+  A diff row does not carry unchanged columns; `row_id` identifies the row.
+
+**Retention is INSIDE the writer**, not a cron job — the `monitor_runs` argument:
+a separate job can be disabled or fail silently, and the cleanup must not outlive
+the thing that maintains it. `mortgage_applications` **7 years** (borrower
+record), everything else **90 days**. Bounded to 500 rows per write.
+
+**`fn_audit_row` MUST NEVER THROW, and neither half may.** It is an AFTER trigger
+inside the caller's transaction, so an exception aborts the write it was
+auditing — the audit becomes the outage. Both the insert and the trim have their
+own exception block downgrading to `RAISE WARNING`. Proven by breaking each on
+purpose (a `CHECK(false) NOT VALID` on `audit_log`, and a `BEFORE DELETE` trigger
+that raises): the business write survived both, recording nothing.
+
+**Test a trigger with an outbound side effect inside a transaction that rolls
+back.** `net.http_post` queues into `net.http_request_queue` transactionally, so
+counting that queue observes the fire while the rollback discards the row AND the
+queued call — no ClickUp task, no borrower row touched. That is how the
+`app_submitted` gate below was proven in both directions.
+
 ## The subject property lives on `mortgage_applications`, not `contacts`
 
 `mortgage_applications.property_address_*` is **authoritative**. The Subject

@@ -244,7 +244,71 @@ One row unfilled beats an invented street.
 
 ## 8. Still open
 
-### Retention on `audit_log` — decide before adding INSERT
+### RESOLVED — `audit_log` shape, retention, and the INSERT capture
+
+Shipped the same day. The framing "13 MB with no trim job" was **wrong**: it was
+never primarily a retention problem.
+
+| | |
+|---|---|
+| `mortgage_applications` share | 1,300 of 1,872 rows · **9,987 kB of 10.7 MB — 93%** |
+| Average keys changed per UPDATE | **2.2**, at ~7.9 KB stored |
+| Same history, changed keys only | **1,129 kB — 11.3%** |
+| Updates where nothing changed at all | 14 |
+
+A 2-field edit cost 7.9 KB because `to_jsonb(OLD)` and `to_jsonb(NEW)` were both
+stored whole. So:
+
+- **UPDATE stores only the differing keys**, with `old_data` holding the prior
+  value of exactly those keys. Measured on a one-field change: **7,900 bytes →
+  66 bytes.**
+- **A no-op UPDATE writes no row.**
+- **INSERT and DELETE still store the full row** — there is no prior state to
+  diff an insert against, and a deleted row's contents are the point of auditing
+  the delete.
+- The union of both key sets is diffed, not just `NEW`'s, so a column added or
+  dropped cannot vanish from the diff; compared with `->` not `->>`, so JSON null
+  and the string `"null"` stay distinct.
+
+**The 1,300 existing rows were deliberately NOT rewritten.** A mixed-shape log is
+honest; rewriting one destroys the original capture to save 9 MB. Anything
+reading it must handle both shapes.
+
+**Trade-off, stated because it is real:** a diff row no longer carries the rest of
+the record. `row_id` still identifies it, but an unchanged column must be read
+from the table itself — or from the INSERT/DELETE capture.
+
+**Retention lives inside the writer**, per the `monitor_runs` argument: a cron job
+can be disabled, paused or fail silently, and the cleanup must not outlive the
+thing that maintains it.
+
+```
+mortgage_applications   7 years    the borrower record; over-keeping beats a gap in an audit
+everything else        90 days     operational noise
+```
+
+Bounded to 500 rows per write so a backlog cannot stall the write that triggered
+it. Proven in a rolled-back transaction, all four cases: `tasks` @91d trimmed,
+@89d kept, `mortgage_applications` @91d **kept** (7-year horizon), @8y trimmed.
+
+**Neither half can throw**, which is the condition that matters — this is an
+AFTER trigger inside the caller's transaction, so an exception aborts the write it
+was auditing and the audit becomes the outage. Proven by breaking both on
+purpose:
+
+```
+audit insert broken (CHECK(false) NOT VALID)  -> business write survived, 0 audit rows
+retention trim broken (BEFORE DELETE raises)  -> business write survived
+```
+
+The cost is that a failure to audit is quiet — a `RAISE WARNING`, nothing more.
+The alternative is a failure to audit that also loses the borrower's data.
+
+**INSERT is now captured** on `mortgage_applications` (~23 per 90 days). That is
+what makes the next 39 replayable. It could not help with these 39: the rows
+predate it.
+
+### The original framing, kept for the record
 
 `trg_audit_mortgage_applications` is **AFTER DELETE OR UPDATE only**, so the one
 event that fires ClickUp has no provenance record. That is why the 39 could not
