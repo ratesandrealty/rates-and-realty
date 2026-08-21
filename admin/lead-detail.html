@@ -1885,7 +1885,7 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
           integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu"
           crossorigin="anonymous" defer></script>
     <script src="/admin/js/attachment-viewer.js?v=e8f2b14c9f"></script>
-  <script src="/admin/js/inbox.js?v=74ac6d7a21" defer></script>
+  <script src="/admin/js/inbox.js?v=0f31eca04e" defer></script>
   <!-- Places loads its own Maps bundle ON DEMAND, when a field is attached — not
        on every lead-detail open. This tag is only the ~4KB helper. -->
   <script src="/public/js/mi-factors.js"></script>
@@ -2780,6 +2780,11 @@ if(localStorage.getItem('rr-theme')==='light')document.documentElement.classList
     <!-- ═══ TAB: LOAN PROCESSING (command center) — Phase 1 ═══ -->
     <div class="ld-tab-panel" id="tab-processing">
       <style>
+        /* Clickable Email-activity rows. Hover is a class, not inline
+           handlers: the inline form needs escaped quotes inside a JS string
+           and that is what broke this twice while writing it. */
+        #tab-processing .lp-act-row:hover { background:rgba(201,168,76,.09); }
+        #tab-processing .lp-act-row:focus-visible { outline:1px solid rgba(201,168,76,.55); outline-offset:1px; }
         #tab-processing .lp-card { background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:16px 18px; margin-bottom:16px; }
         #tab-processing .lp-h { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.7px; color:#C9A84C; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; }
         #tab-processing .lp-h a { font-size:11px; color:rgba(201,168,76,0.8); cursor:pointer; text-decoration:none; }
@@ -14212,11 +14217,35 @@ function _lpThreadBlockHtml(hostId, threadId, label){
     + '</div>';
 }
 
-function _lpThreadToggle(hostId, threadId){
+/* Click (or Enter/Space) on an "Email activity" row -> open that request's
+   conversation AT that message. Delegated from the document so rows re-rendered
+   by lpHoiRenderList stay live without rebinding. */
+function _lpActivityOpen(el){
+  if(!el) return;
+  const h = el.getAttribute('data-acth'), t = el.getAttribute('data-actt'), m = el.getAttribute('data-actm');
+  if(!h || !t) return;
+  _lpThreadToggle(h, t, m || null);
+}
+document.addEventListener('click', function(e){
+  const row = e.target && e.target.closest ? e.target.closest('[data-actopen="1"]') : null;
+  if(row) _lpActivityOpen(row);
+});
+document.addEventListener('keydown', function(e){
+  if(e.key !== 'Enter' && e.key !== ' ') return;
+  const row = e.target && e.target.closest ? e.target.closest('[data-actopen="1"]') : null;
+  if(row){ e.preventDefault(); _lpActivityOpen(row); }
+});
+
+function _lpThreadToggle(hostId, threadId, focusMessageId){
   const host = document.getElementById(hostId);
   const btn  = document.getElementById(hostId + '-btn');
   if(!host) return;
-  if(_lpThreadOpen[hostId]){
+  /* Already open. A bare click on the toggle CLOSES it, as before. But a click
+     that NAMES a message is a request to go THERE — closing the thread the user
+     is trying to navigate within would be the opposite of what was asked, so it
+     re-renders focused instead. This is why an activity-row click and a
+     toggle-button click cannot share the no-argument path. */
+  if(_lpThreadOpen[hostId] && !focusMessageId){
     _lpThreadOpen[hostId] = false;
     host.innerHTML = '';
     if(btn) btn.innerHTML = '&#9662; Show conversation';
@@ -14234,7 +14263,13 @@ function _lpThreadToggle(hostId, threadId){
     client: _authClient(),
     mailbox: 'processing@ratesandrealty.com',
     threadId: threadId,
-    host: host
+    host: host,
+    /* Clicking an Email activity row opens the thread AT that message. Passed
+       through to renderThread, which expands it (a collapsed message is
+       display:none, and scrollIntoView on a hidden element silently does
+       nothing) and then scrolls. Unrecognised or absent -> opens at the top,
+       which is the behaviour this had before. */
+    focusMessageId: focusMessageId || null
   });
 }
 
@@ -14374,7 +14409,30 @@ function _lpHoiActivityHtml(r){
            Direction is shown as a word, not only a colour — the two states are
            the whole point of the section. */
         const who = out ? ('to ' + ((q && q.to) || '—')) : ('from ' + ((q && q.from) || 'unknown sender'));
-        return '<div style="font-size:10.5px;margin-bottom:5px;overflow-wrap:anywhere;">'
+        /* CLICKABLE. Each request card already carries its own thread host
+           ('lpHoiThread-'+r.id, rendered by _lpThreadBlockHtml below), so the row
+           opens THAT thread at THIS message via the gmail_message_id the activity
+           payload now carries (added to hoi_quote_list 2026-08-20).
+
+           Only rows that actually have one become interactive: a legacy event
+           with no gmail_message_id, or a request with no thread, renders exactly
+           as before rather than as a button that does nothing when pressed. */
+        const _mid = (q && q.gmail_message_id) || '';
+        const _tid = (r && r.gmail_thread_id) || '';
+        const _clickable = !!(_mid && _tid);
+        /* Data attributes, not an inline call with nested quotes — the handler
+           reads them off the element. Keeps this string free of escaped quotes,
+           which is what broke the first attempt at it. */
+        const _openAttrs = _clickable
+          ? (' role="button" tabindex="0" title="Open the conversation at this message"'
+             + ' data-actopen="1"'
+             + ' data-acth="lpHoiThread-' + lpEsc(String(r.id||'')) + '"'
+             + ' data-actt="' + lpEsc(_tid) + '"'
+             + ' data-actm="' + lpEsc(_mid) + '"')
+          : '';
+        return '<div' + _openAttrs + ' style="font-size:10.5px;margin-bottom:5px;overflow-wrap:anywhere;'
+          + (_clickable ? 'cursor:pointer;border-radius:5px;padding:2px 4px;margin-left:-4px;margin-right:-4px;" class="lp-act-row"' : '"')
+          + '>'
           + '<div style="color:' + (out ? '#C9A84C' : '#9fd0a8') + ';font-weight:600;">'
             + (out ? 'Sent ' : 'Reply ') + lpEsc(who)
             + (when ? ('<span style="color:#777;font-weight:400;"> · ' + lpEsc(when) + '</span>') : '')

@@ -3125,7 +3125,13 @@
       if (m.from && m.from.email) meta.push(esc(m.from.email));
       if (m.to && m.to.length) meta.push('to ' + esc(m.to.join(', ')));
       if (m.date) meta.push(fmtDate(m.date));
-      h.push('<div class="gm-msg" data-msg="' + i + '"' + (i !== newest ? ' style="display:none"' : '') + '>');
+      /* data-mid carries the GMAIL message id alongside the positional data-msg.
+       * The index is what the expand/collapse handlers already use; the gmail id
+       * is what an outside caller can actually name. The HOI "Email activity"
+       * rows know a gmail_message_id (added to hoi_quote_list 2026-08-20) and
+       * nothing else about this reader's internal ordering, so without this there
+       * is no join key and a click can only open the thread from the top. */
+      h.push('<div class="gm-msg" data-msg="' + i + '" data-mid="' + esc(m.gmail_message_id || m.id || '') + '"' + (i !== newest ? ' style="display:none"' : '') + '>');
       h.push('<div class="gm-mmeta">' + meta.join(' &nbsp;·&nbsp; ') + '</div>');
       h.push('<iframe class="gm-frame" data-fi="' + i + '" sandbox="allow-same-origin allow-popups"></iframe>');
       // The quoted trailer gets its own frame, rendered only when asked for. It has
@@ -3276,6 +3282,29 @@
     Array.prototype.forEach.call(host.querySelectorAll('[data-stub]'), function (st) {
       st.addEventListener('click', function () { expandMsg(st.getAttribute('data-stub')); });
     });
+
+    /* FOCUS A SPECIFIC MESSAGE. Called when the caller named one — the HOI
+     * "Email activity" rows pass the gmail_message_id they carry.
+     *
+     * Expand it first, then scroll: a collapsed message is display:none and
+     * scrollIntoView on a hidden element does nothing, which would look exactly
+     * like the click having been ignored. Highlight fades rather than persists —
+     * it answers "which one did I click" and then gets out of the way.
+     *
+     * A message id that is not in this thread simply does nothing, and the
+     * thread stays open at the top. That is the same result as before this
+     * existed, so a stale or legacy id degrades rather than breaking. */
+    if (ctx && ctx.focusMessageId) {
+      var target = host.querySelector('[data-mid="' + String(ctx.focusMessageId).replace(/"/g, '') + '"]');
+      if (target) {
+        var idx = target.getAttribute('data-msg');
+        if (idx != null) expandMsg(idx);
+        target.style.transition = 'background-color .9s ease';
+        target.style.backgroundColor = 'rgba(201,168,76,.16)';
+        setTimeout(function () { target.style.backgroundColor = ''; }, 1400);
+        try { target.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) { target.scrollIntoView(); }
+      }
+    }
     var expandAll = host.querySelector('[data-gm="expandall"]');
     if (expandAll) {
       expandAll.addEventListener('click', function () {
@@ -4085,6 +4114,10 @@
         client: cl, mailbox: opts.mailbox, threadId: opts.threadId, modal: false,
         allowTag: opts.allowTag === true,   // inline: opt IN, the card owns filing
         onClose: null,
+        /* Optional: open AT a message rather than at the top. The HOI activity
+           rows pass the gmail_message_id they carry; anything unrecognised is
+           ignored and the thread opens as it always did. */
+        focusMessageId: opts.focusMessageId || null,
         onChanged: opts.onChanged || null
       });
       return;
