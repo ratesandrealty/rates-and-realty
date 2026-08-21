@@ -59,12 +59,13 @@ and errors in the harness itself. Exit 1 = a page failed; exit 2 = refused to ru
 ### The green bar is TWO runs, and `--token` is not the better one
 
 ```
-node tools/render-check.mjs                              ->  79/79   the stub specs
+node tools/render-check.mjs                              ->  80/80   the stub specs
 node tools/render-check.mjs --token tok.txt --token-only ->  8/8     the ones that need a session
 
 BOTH NUMBERS MOVE. The second moves whenever a tokenOnly spec is added — it was
 7/7 on 2026-08-19 and became 8/8 the same day. The first was 75/75 until
-2026-08-21, when the four rich-toolbar specs landed. Read them off the run,
+2026-08-21, when the four rich-toolbar specs and the save1003 UUID guard
+landed. Read them off the run,
 never off this file; what is fixed is that there are TWO runs, not what either
 total is.
 ```
