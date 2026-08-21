@@ -486,6 +486,12 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       '<div class="cm-section-label" style="justify-content:center;"><span style="color:#888;">Calling via Twilio</span></div>';
   }
 
+  /* Nine dots — a keypad at 18px, without labels that would turn to mud. */
+  var keypadIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+    '<circle cx="6" cy="5" r="1.7"/><circle cx="12" cy="5" r="1.7"/><circle cx="18" cy="5" r="1.7"/>' +
+    '<circle cx="6" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18" cy="12" r="1.7"/>' +
+    '<circle cx="6" cy="19" r="1.7"/><circle cx="12" cy="19" r="1.7"/><circle cx="18" cy="19" r="1.7"/></svg>';
+
   function renderConnected() {
     status.className = 'cm-status connected';
     statusText.textContent = 'Connected';
@@ -503,10 +509,23 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
       '<div class="cm-action-group">' +
         '<button class="cm-btn secondary' + (speakerOn ? ' active' : '') + '" id="btnSpeaker" aria-label="Speaker">' + speakerIcon(speakerOn) + '</button>' +
         '<span class="cm-btn-label">Speaker</span>' +
+      '</div>' +
+      /* KEYPAD — tones into THEIR menu, not a pad of ours. Only on the connected
+         screen: there is nothing to send a tone down before that. Distinct from
+         .cm-pad above, which composes a number to dial and never touches a live
+         call. */
+      '<div class="cm-action-group">' +
+        '<button class="cm-btn secondary" id="btnKeypad" aria-label="Keypad — send tones">' + keypadIcon + '</button>' +
+        '<span class="cm-btn-label">Keypad</span>' +
       '</div>' + recBadgeHtml(true);
     document.getElementById('btnMute').addEventListener('click', toggleMute);
     document.getElementById('btnSpeaker').addEventListener('click', toggleSpeaker);
     document.getElementById('cmEndBtn').addEventListener('click', hangup);
+    /* The getter is read on EVERY press, never cached — a pad left open across a
+       hangup then finds activeCall null and says so rather than sending into a
+       dead call. */
+    if (window.DTMFPad) window.DTMFPad.attach(document.getElementById('btnKeypad'), function () { return activeCall; });
+    else console.warn('[dialer] /admin/js/dtmf-pad.js not loaded — no keypad during the call');
     footer.innerHTML =
       '<div class="cm-divider"></div>' +
       '<div class="cm-section-label">Live notes</div>' +
@@ -518,6 +537,9 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
   }
 
   function renderEnded() {
+    // Meaningless once the call is over, and leaving it open invites presses
+    // that go nowhere.
+    try { if (window.DTMFPad) window.DTMFPad.close(); } catch (_) {}
     status.className = 'cm-status ended';
     statusText.textContent = 'Call ended · ' + fmtTime(callDuration);
     pulse1.classList.remove('ringing'); pulse2.classList.remove('ringing');

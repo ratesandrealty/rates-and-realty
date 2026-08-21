@@ -9,8 +9,19 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="/admin/js/supabase-client.js?v=b8721bd6a2"></script>
-  <script src="/admin/js/auth-guard.js?v=88424f52ac"></script>
-  <script src="https://sdk.twilio.com/js/voice/releases/2.11.0/twilio.min.js"></script>
+  <script src="/admin/js/auth-guard.js?v=74809caab8"></script>
+  <!-- DTMF keypad for a connected call. Same component the dialer modal uses;
+       this page keeps its own Twilio.Device, so the pad is handed a getter. -->
+  <script src="/admin/js/dtmf-pad.js?v=afaf5918d9"></script>
+  <!-- sdk.twilio.com/js/voice/releases/ NOW RETURNS 403 AccessDenied FOR EVERY
+       VERSION — 2.10.0, 2.11.0, 2.11.3, 2.12.0 all checked 2026-08-21. Twilio
+       locked that path, so this SDK silently stopped loading: initVoice() sees
+       `typeof Twilio === 'undefined'`, sets _voiceReady = false, and every Call
+       button quietly becomes bridgeCall() instead of an in-browser call. Nothing
+       alerted; the page kept working through the server-side bridge.
+       jsdelivr is the same package and the same version the dialer modal and
+       lead-detail already load, and it answers 200. -->
+  <script src="https://cdn.jsdelivr.net/npm/@twilio/voice-sdk@2.11.3/dist/twilio.min.js"></script>
   <style>
     :root{
       --bg:#050505; --surface:rgba(13,13,13,0.98); --surface2:rgba(20,20,20,0.98);
@@ -1129,10 +1140,26 @@
         +'background:rgba(224,82,82,.14);border:1px solid rgba(224,82,82,.4);color:#F07878;">'
         +'<span style="width:6px;height:6px;border-radius:50%;background:#E5484D;display:inline-block;"></span> REC</span>'
       +'<button class="q-copy" onclick="toggleMute(this)">Mute</button>'
+      /* KEYPAD — tones into the far end's phone menu ("press 1 to connect"),
+         which this page had no way to answer. Same component the dialer modal
+         uses; this page keeps its own Twilio.Device and its own `_call`, so the
+         pad is handed a GETTER rather than the connection. */
+      /* Only on an in-browser call. A bridged call (bridgeCall) has no browser leg
+         to send a tone from — the far end is talking to Rene's handset, and the
+         keys to press are on that handset. Offering a dead button there would be
+         the exact failure this feature exists to remove. */
+      +(_voiceReady ? '<button class="q-copy" id="pdKeypadBtn" title="Keypad — send tones to the call">Keypad</button>' : '')
       +'<button onclick="hangUp()" style="background:var(--red);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;padding:7px 16px;font-family:inherit;">Hang Up</button>';
     bar.style.display='flex';
+    var _kp=document.getElementById('pdKeypadBtn');
+    if (_kp && window.DTMFPad) window.DTMFPad.attach(_kp, function(){ return _call; });
+    else if (_kp) console.warn('[power-dialer] /admin/js/dtmf-pad.js not loaded — no keypad during the call');
   }
-  function hideCallBar(){ var bar=document.getElementById('callBar'); if(bar){ bar.style.display='none'; bar.innerHTML=''; } }
+  function hideCallBar(){
+    // Close the pad with the bar: its button is inside the innerHTML being wiped.
+    try { if (window.DTMFPad) window.DTMFPad.close(); } catch(_){}
+    var bar=document.getElementById('callBar'); if(bar){ bar.style.display='none'; bar.innerHTML=''; }
+  }
   function endCall(){
     if(_callT){ clearInterval(_callT); _callT=null; }
     _pendingDur=_callSec; _callSec=0;

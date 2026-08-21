@@ -3754,6 +3754,77 @@ const SPECS = [
      dashboard is verified by reading and by the single-consumer check, NOT by
      this harness. Recorded so nobody assumes it is covered. */
   {
+    /* THE DTMF KEYPAD ACTUALLY SENDS.
+       "A keypad that renders and sends nothing looks identical to one that
+       works" — so presence is worthless here and this drives the real buttons
+       against a fake Call, asserting sendDigits was CALLED with the right digit.
+
+       It also asserts the two things that would make it worse than useless: that
+       pressing a key does not disconnect, and that a press with no live call is
+       reported rather than swallowed.
+
+       What it CANNOT prove is that a tone reaches a carrier — that needs a real
+       browser call with a microphone and a person on the far end. Stated here so
+       a green run is not mistaken for that. */
+    name: 'DTMF keypad sends digits and does not touch the call',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    evals: [
+      ['typeof (window.DTMFPad && window.DTMFPad.attach)', 'function'],
+      [`(async () => {
+          // A stand-in for the Twilio Call: records digits, and screams if the
+          // pad touches anything that would end or alter the call.
+          var digits = [], touched = [];
+          var fakeCall = {
+            sendDigits: function (d) { digits.push(d); },
+            disconnect: function () { touched.push('disconnect'); },
+            mute:       function () { touched.push('mute'); },
+            reject:     function () { touched.push('reject'); },
+          };
+          var live = fakeCall;
+
+          var btn = document.createElement('button');
+          btn.id = 'rcKeypadBtn';
+          document.body.appendChild(btn);
+          window.DTMFPad.attach(btn, function () { return live; });
+
+          btn.click();
+          await new Promise(r => setTimeout(r, 120));
+          var pop = document.querySelector('.rrdt-pop');
+          if (!pop) return 'the pad did not open';
+          var keyCount = pop.querySelectorAll('.rrdt-key').length;
+
+          // Press 1, then #, the way a vendor IVR asks for.
+          pop.querySelector('[data-d="1"]').click();
+          pop.querySelector('[data-d="#"]').click();
+          await new Promise(r => setTimeout(r, 60));
+          var echoed = (pop.querySelector('.rrdt-sent') || {}).textContent || '';
+
+          // Typing must work too.
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: '7', bubbles: true }));
+          await new Promise(r => setTimeout(r, 60));
+
+          // With no live call, a press must SAY so rather than silently do nothing.
+          live = null;
+          pop.querySelector('[data-d="9"]').click();
+          await new Promise(r => setTimeout(r, 60));
+          var warned = /No active call/i.test((pop.querySelector('.rrdt-sent') || {}).textContent || '');
+
+          window.DTMFPad.close();
+          btn.remove();
+
+          return [
+            keyCount === 12 ? '12 keys' : keyCount + ' keys',
+            digits.join('') === '17' ? 'sent 1,7 via click+type' : 'sent [' + digits.join(',') + ']',
+            /1/.test(echoed) && /#/.test(echoed) ? 'echoed on screen' : 'echo missing: ' + echoed,
+            touched.length === 0 ? 'call untouched' : 'CALL TOUCHED: ' + touched.join(','),
+            warned ? 'warns with no call' : 'silent with no call'
+          ].join(', ');
+        })()`,
+       '12 keys, sent [1,#,7], echoed on screen, call untouched, warns with no call'],
+    ],
+  },
+  {
     /* THE SIGNATURE REACHES THE WIRE, AND NAMES THE RIGHT PERSON.
        Two defects in one composer: #emailSigBlock is a SIBLING of #emailEditor
        and every send read the editor alone, so ~288 messages went out with no

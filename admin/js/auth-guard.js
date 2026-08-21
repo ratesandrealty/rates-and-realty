@@ -441,7 +441,7 @@
     function mountDialer() {
       if (window._rrDialerLoaded || document.querySelector('script[src*="/admin/js/dialer.js"]')) return;
       const dl = document.createElement('script');
-      dl.src = '/admin/js/dialer.js?v=cf4b1032f5';
+      dl.src = '/admin/js/dialer.js?v=e981353d98';
       document.head.appendChild(dl);
     }
     function mountActionFab() {
