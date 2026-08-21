@@ -618,6 +618,26 @@
        * screen it may use. */
       '.gm-modal .gm-modal-card{width:1180px;max-width:96vw;height:86vh;background:var(--surface,#111);border:1px solid var(--border2,rgba(255,255,255,.14));border-radius:14px;display:flex;flex-direction:column;overflow:hidden}',
       '.gm-modal-close{background:none;border:none;color:#999;font-size:22px;cursor:pointer;line-height:1}',
+      /* Expand: the opt-out from inline. Inline is still the default because the
+         comparison against the record is the point on those cards — this is the
+         escape hatch for a long thread, not a replacement. */
+      '.gm-inline-bar{display:flex;justify-content:flex-end;padding:0 0 5px}',
+      '.gm-expand-btn{background:rgba(201,168,76,.10);border:1px solid rgba(201,168,76,.35);',
+      '  color:var(--g,#c9a84c);border-radius:6px;font-size:11px;font-weight:600;padding:3px 10px;',
+      '  cursor:pointer;font-family:inherit;line-height:1.6}',
+      '.gm-expand-btn:hover{background:rgba(201,168,76,.2);color:#fff}',
+      /* Size toggle + X, floated over the card so renderThread's own header does
+         not have to know the overlay exists. */
+      '.gm-modal-ctrls{position:absolute;top:10px;right:12px;z-index:5;display:flex;align-items:center;gap:6px}',
+      '.gm-modal-size{background:rgba(255,255,255,.06);border:1px solid var(--border2,rgba(255,255,255,.16));',
+      '  color:#ccc;border-radius:6px;font-size:11px;font-weight:600;padding:3px 9px;cursor:pointer;font-family:inherit}',
+      '.gm-modal-size:hover{background:rgba(255,255,255,.14);color:#fff}',
+      '.gm-modal-x{background:rgba(255,255,255,.06);border:1px solid var(--border2,rgba(255,255,255,.16));',
+      '  color:#ccc;border-radius:6px;font-size:16px;line-height:1;width:26px;height:24px;cursor:pointer;font-family:inherit}',
+      '.gm-modal-x:hover{background:rgba(229,72,77,.22);border-color:rgba(229,72,77,.5);color:#fff}',
+      // position:relative so .gm-modal-ctrls anchors to the card, not the viewport.
+      '.gm-modal .gm-modal-card{position:relative}',
+      '.gm-modal .gm-modal-card.gm-max{width:98vw;max-width:98vw;height:96vh}',
       '@media (min-width:769px) and (max-width:1199px){',
       '  .gm-rail{width:172px}',
       '  .gm-list{width:290px}',
@@ -3997,7 +4017,30 @@
        thread has neither. */
     var host = opts.host || null;
     if (host) {
-      renderThread(host, {
+      /* Inline stays the DEFAULT: on the HOI/VOE cards you are reading the reply
+         against the quote it answers, and an overlay hides the quote. The Expand
+         control is the opt-out — same thread, same options, no host — so the
+         choice is the reader's per conversation rather than a mode someone has
+         to pick in advance. */
+      host.innerHTML = '';
+      var bar = document.createElement('div');
+      bar.className = 'gm-inline-bar';
+      bar.innerHTML = '<button type="button" class="gm-expand-btn" data-gm-expand="1" ' +
+        'title="Open this conversation in a large window">&#10530; Expand</button>';
+      var pane = document.createElement('div');
+      host.appendChild(bar);
+      host.appendChild(pane);
+      bar.querySelector('[data-gm-expand]').addEventListener('click', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        /* EVERY option carried across, focusMessageId included. The modal branch
+           used to drop it, so expanding from an activity row would silently open
+           at the top of the thread instead of at the message that was clicked —
+           no error, just the wrong message. */
+        var o = {}; for (var k in opts) if (Object.prototype.hasOwnProperty.call(opts, k)) o[k] = opts[k];
+        o.host = null;
+        openThread(o);
+      });
+      renderThread(pane, {
         client: cl, mailbox: opts.mailbox, threadId: opts.threadId, modal: false,
         allowTag: opts.allowTag === true,   // inline: opt IN, the card owns filing
         onClose: null,
@@ -4012,12 +4055,48 @@
 
     var ov = document.createElement('div'); ov.className = 'gm-modal';
     ov.innerHTML = '<div class="gm-modal-card"><div class="gm-pane" style="flex:1"></div></div>';
+    var card = ov.querySelector('.gm-modal-card');
+
+    /* Big or small, the reader's choice, remembered. localStorage rather than a
+       server round trip: it is a viewing preference, it is per device, and a
+       failure to read it must cost nothing — hence the try/catch and the
+       default-to-standard on anything unexpected. */
+    var SIZE_KEY = 'rr_gm_thread_size';
+    var big = false;
+    try { big = localStorage.getItem(SIZE_KEY) === 'max'; } catch (_) {}
+    function applySize() { card.classList.toggle('gm-max', big); }
+    applySize();
+
+    var ctrls = document.createElement('div');
+    ctrls.className = 'gm-modal-ctrls';
+    ctrls.innerHTML =
+      '<button type="button" class="gm-modal-size" data-gm-size="1"></button>' +
+      '<button type="button" class="gm-modal-x" data-gm-x="1" title="Close">&times;</button>';
+    card.appendChild(ctrls);
+    var sizeBtn = ctrls.querySelector('[data-gm-size]');
+    function labelSize() {
+      sizeBtn.innerHTML = big ? '&#10530; Shrink' : '&#10529; Expand';
+      sizeBtn.title = big ? 'Back to the standard window' : 'Fill the screen';
+    }
+    labelSize();
+    sizeBtn.addEventListener('click', function () {
+      big = !big; applySize(); labelSize();
+      try { localStorage.setItem(SIZE_KEY, big ? 'max' : 'std'); } catch (_) {}
+    });
+
     document.body.appendChild(ov);
     function close() { ov.remove(); }
+    ctrls.querySelector('[data-gm-x]').addEventListener('click', close);
     ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    // Escape closes, the way every other overlay on these pages does.
+    function onEsc(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc); } }
+    document.addEventListener('keydown', onEsc);
+
     renderThread(ov.querySelector('.gm-pane'), {
       client: cl, mailbox: opts.mailbox, threadId: opts.threadId, modal: true,
       allowTag: opts.allowTag !== false, onClose: close,
+      // Forwarded — see the note in the host branch above.
+      focusMessageId: opts.focusMessageId || null,
       onChanged: opts.onChanged || null
     });
   }

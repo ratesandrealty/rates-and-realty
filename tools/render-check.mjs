@@ -3754,6 +3754,77 @@ const SPECS = [
      dashboard is verified by reading and by the single-consumer check, NOT by
      this harness. Recorded so nobody assumes it is covered. */
   {
+    /* EXPAND KEEPS THE FOCUSED MESSAGE.
+       Inline is still the default on the HOI/VOE cards — you read a reply
+       against the quote it answers — and "⤢ Expand" is the opt-out. The modal
+       branch of openThread did NOT forward focusMessageId, so expanding from an
+       activity email row would have opened at the TOP of the thread instead of
+       at the message that was clicked. No error, no console output, just the
+       wrong message: the exact silent failure this asserts against.
+
+       Three messages, focus on the middle one — which renderThread renders
+       `display:none` unless it is the newest, so "did the focus survive" and
+       "is it actually visible" are two different questions and both are asked.
+       `gmail-inbox` is stubbed, so this exercises the option plumbing rather
+       than a real mailbox. */
+    name: 'expanding an inline thread keeps the focused message',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    invoke: {
+      'gmail-inbox': {
+        messages: [
+          { id: 'mA', gmail_message_id: 'mA', subject: 'HOI quote', from: 'agent@example.invalid',
+            date: '2026-08-01T10:00:00Z', body_html: '<p>first</p>' },
+          { id: 'mB', gmail_message_id: 'mB', subject: 'HOI quote', from: 'agent@example.invalid',
+            date: '2026-08-02T10:00:00Z', body_html: '<p>the one that was clicked</p>' },
+          { id: 'mC', gmail_message_id: 'mC', subject: 'HOI quote', from: 'agent@example.invalid',
+            date: '2026-08-03T10:00:00Z', body_html: '<p>newest</p>' },
+        ],
+      },
+    },
+    evals: [
+      [`(async () => {
+          var slot = document.createElement('div');
+          slot.id = 'rcThreadHost';
+          document.body.appendChild(slot);
+          window.GmailInbox.openThread({
+            client: _authClient(), mailbox: 'processing@ratesandrealty.com',
+            threadId: 'T1', host: slot, focusMessageId: 'mB'
+          });
+          await new Promise(r => setTimeout(r, 400));
+
+          var inlineHit = slot.querySelector('[data-mid="mB"]');
+          if (!inlineHit) return 'inline thread never rendered mB';
+          var inlineVisible = getComputedStyle(inlineHit).display !== 'none';
+
+          var btn = slot.querySelector('[data-gm-expand]');
+          if (!btn) return 'no Expand control on the inline thread';
+          btn.click();
+          await new Promise(r => setTimeout(r, 500));
+
+          var ov = document.querySelector('.gm-modal');
+          if (!ov) return 'Expand did not open a modal';
+          var modalHit = ov.querySelector('[data-mid="mB"]');
+          if (!modalHit) return 'modal rendered, but mB is not in it';
+          var modalVisible = getComputedStyle(modalHit).display !== 'none';
+          var newestOnly = ov.querySelector('[data-mid="mC"]');
+          var hasX = !!ov.querySelector('[data-gm-x]');
+          var hasSize = !!ov.querySelector('[data-gm-size]');
+
+          // Leave the page as we found it.
+          ov.remove(); slot.remove();
+
+          return [
+            inlineVisible ? 'inline focused' : 'inline NOT focused',
+            modalVisible ? 'modal focused' : 'modal opened at the top',
+            newestOnly ? 'thread intact' : 'thread missing messages',
+            hasX && hasSize ? 'X + size toggle' : 'chrome missing'
+          ].join(', ');
+        })()`,
+       'inline focused, modal focused, thread intact, X + size toggle'],
+    ],
+  },
+  {
     /* OPTION C — the application row is authoritative for the subject property.
        The Subject Property popup used to write `contacts` always and
        `mortgage_applications` only on a Google Places pick, so a typed address
