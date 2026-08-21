@@ -88,7 +88,26 @@ composed-vs-sent will see the pixel and should not treat it as corruption.
 
 `stripMarkdownFences` remains the only thing touching the body's own markup.
 
-### NOT verified, and it needs a human: what each client rendered
+### ✅ ANSWERED 2026-08-21 — all three clients rendered correctly
+
+Read in Gmail, Yahoo and Outlook (`rduarte@emortgagecapital.com`):
+
+| line | representation | result |
+|---|---|---|
+| 1 | `<font color>` | **red in all three** |
+| 2 | `<span style="color:">` | **red in all three** |
+| 3 | `<span style="background-color:">` | **yellow in all three, Outlook included** |
+| 4 | `<td bgcolor>` fallback | yellow — **not needed** |
+
+**Decision: highlight ships as an inline `style` on a span.** The table-cell
+fallback is not required, so `hiliteColor`/`backColor` via `execCommand` with
+`styleWithCSS` on for the colour commands is sufficient — no custom
+selection-wrapping command.
+
+Text colour is safe in either form; it ships as inline style too, for one
+representation rather than two.
+
+### (superseded) what each client rendered
 
 **I cannot see those inboxes.** The send side is proven; the render side is the
 whole point of the test and it is unread. What is needed is a look at each
