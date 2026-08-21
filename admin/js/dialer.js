@@ -693,7 +693,20 @@ var SUPABASE_BASE = 'https://ljywhvbmsibwnssxpesh.supabase.co';
          call through, which is exactly how a guard gets bypassed later. */
       /* No Record param. Every outbound call records; see the indicator note above
          and the header of supabase/functions/twilio-voice/index.ts. */
-      return dev.connect({ params: { To: chk.e164, Ref: currentCallRef } });
+      /* ContactId TRAVELS WITH THE DIAL. twilio-voice reads params.get('ContactId')
+         and PREFERS it over resolveContactByPhone(dialTo) — but the dialer never
+         sent it, so a call the page already knew the owner of was filed by
+         re-deriving the contact from the phone number instead. That lookup fails
+         for a number no contact holds and REFUSES an ambiguous one, which is why
+         calls to Rene's own cell (two contacts carry it) landed untagged.
+         Sending the id the modal was opened with removes the guesswork; the
+         phone lookup stays as the fallback for an ad-hoc pad call, which is what
+         it was written for. Omitted entirely when unknown — an empty string here
+         would be a value the server has to special-case. */
+      var _cid = window._callContactId || null;
+      var _params = { To: chk.e164, Ref: currentCallRef };
+      if (_cid) _params.ContactId = _cid;
+      return dev.connect({ params: _params });
     }).then(function(conn) {
       if (!conn) return;
       activeCall = conn;

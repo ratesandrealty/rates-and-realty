@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="/admin/js/supabase-client.js?v=b8721bd6a2"></script>
-  <script src="/admin/js/auth-guard.js?v=74809caab8"></script>
+  <script src="/admin/js/auth-guard.js?v=ddcae2d476"></script>
   <!-- DTMF keypad for a connected call. Same component the dialer modal uses;
        this page keeps its own Twilio.Device, so the pad is handed a getter. -->
   <script src="/admin/js/dtmf-pad.js?v=afaf5918d9"></script>
@@ -245,7 +245,6 @@
   var _vmTemplates=[], _vmLoaded=false, _vmRec=null, _vmChunks=[];
   var _twNumbers=[];
   var _autoDial=false, _autoSeconds=3, _autoTimer=null, _autoRemaining=0, _autoSkipped=0, _autoHelpShown=false, _autoHelpVisible=false;
-  var _bridgeSid=null, _bridgeName='', _bridgeStart=0, _bridgePhase='ringing', _bridgeTick=null, _bridgePoll=null;
   var DISPOS=['No answer','Left VM','Connected','Not interested','Wrong number'];
   var TABS=[['due','Due','due'],['new','New','new_leads'],['stale','Stale','stale'],['scheduled','Scheduled','scheduled'],['all','All','total_active']];
 
@@ -548,83 +547,23 @@
     setAgentPhone(d);
     return d;
   }
-  async function bridgeCall(){
-    var lead=_queue[_currentIdx]; if(!lead||!lead.phone){ showToast('No phone on file'); return; }
-    var agent=getAgentPhone();
-    if(!agent){ agent=promptAgentPhone(); if(!agent) return; }
-    if(!confirmHours(lead,'server_blocks')) return; // bridgeCall: twilio-voice refuses the lead leg outside hours
-    endBridgeBar(); // replace any prior bridge bar
-    try{
-      var r=await _authClient().functions.invoke('twilio-voice',{body:{action:'bridge_call', to:lead.phone, agent_phone:agent, contact_id:lead.contact_id}});
-      if(r&&r.error) throw new Error((r.error&&r.error.message)||'Could not start call');
-      showToast('📞 Ringing your phone — answer to connect to '+(lead.name||'this lead'));
-      var bn=document.getElementById('bridgeNote');
-      if(bn) bn.innerHTML='<div class="pd-bridge-note">Your phone is ringing. Pick up, then we’ll dial the lead. Tap a disposition below after the call.</div>';
-      var sid=(r&&r.data&&r.data.callSid)||null;
-      if(sid) startBridgeBar(lead, sid);
-    }catch(e){ showToast((e&&e.message)||'Could not start call'); }
-    // no auto-advance — the user taps a disposition (1–5) to log + advance, as today
-  }
+  /* bridgeCall() IS GONE. It invoked twilio-voice action 'bridge_call', which
+     THAT FUNCTION HAS NEVER IMPLEMENTED — git -S shows the action name appears
+     only in e4c0b52 (2026-06-19), which touched this file and no other, so the
+     caller shipped without a server side and every invocation returned
+     "Unknown action: bridge_call".
+     Combined with sdk.twilio.com 403ing the Voice SDK, that means the Call
+     button on this page has not worked in EITHER mode since 2026-06-19.
+     The SDK is repointed and the browser path works, so the fallback is removed
+     rather than written: a second bridge would duplicate click-to-call, which
+     already rings a cell, dials the lead and records. And a fallback that
+     silently does nothing is worse than none — see the refusal below. */
 
-  /* ── bridge-call "call in progress" bar ── */
-  function _bridgeElapsed(){ var s=Math.max(0,Math.floor((Date.now()-_bridgeStart)/1000)); var m=Math.floor(s/60); return m+':'+((s%60)<10?'0':'')+(s%60); }
-  function startBridgeBar(lead, sid){
-    if(_bridgeTick){ clearInterval(_bridgeTick); _bridgeTick=null; }
-    if(_bridgePoll){ clearInterval(_bridgePoll); _bridgePoll=null; }
-    _bridgeSid=sid; _bridgeName=(lead&&lead.name)||'this lead'; _bridgeStart=Date.now(); _bridgePhase='ringing';
-    renderBridgeBar();
-    _bridgeTick=setInterval(renderBridgeBar, 1000);
-    _bridgePoll=setInterval(pollBridge, 3500);
-    pollBridge();
-    // safety: never let the bar / timers run forever
-    setTimeout(function(){ if(_bridgeSid===sid) endBridgeBar(); }, 600000);
-  }
-  function stopBridgePolling(){ if(_bridgePoll){ clearInterval(_bridgePoll); _bridgePoll=null; } }
-  async function pollBridge(){
-    if(!_bridgeSid) return;
-    try{
-      var r=await _authClient().functions.invoke('twilio-voice',{body:{action:'call_status', twilio_call_sid:_bridgeSid}});
-      if(r&&r.error) return; // SID may not be registered yet — keep current phase, keep polling
-      var d=r&&r.data?r.data:{};
-      var st=String(d.status||'').toLowerCase();
-      if(st==='in-progress'){ _bridgePhase='live'; }
-      else if(st==='queued'||st==='initiated'||st==='ringing'){ _bridgePhase='ringing'; }
-      else if(st==='completed'||st==='busy'||st==='no-answer'||st==='canceled'||st==='failed'){
-        _bridgePhase='ended';
-        if(d.duration!=null && Number(d.duration)>0) _pendingDur=Number(d.duration); // next disposition logs real length
-        stopBridgePolling();
-      }
-      renderBridgeBar();
-    }catch(e){ /* transient — keep polling */ }
-  }
-  function renderBridgeBar(){
-    var bar=document.getElementById('bridgeBar'); if(!bar) return;
-    if(!_bridgeSid){ bar.style.display='none'; bar.innerHTML=''; return; }
-    var nm=esc(_bridgeName), t=_bridgeElapsed();
-    var left, hint='';
-    if(_bridgePhase==='live'){ left='🟢 On call · '+nm+' · '+t; hint='audio is on your phone'; }
-    else if(_bridgePhase==='ended'){ left='✓ Call ended · '+nm+' · '+t+' — log the outcome below'; }
-    else { left='📞 Ringing your phone — answer to connect to '+nm; }
-    var endNote=(_bridgePhase!=='ended')?'<span class="muted" style="font-size:11px;">(hang up on your phone to end)</span>':'';
-    bar.innerHTML='<span style="font-weight:700;">'+left+'</span>'
-      +(hint?'<span class="muted" style="font-size:11px;">'+esc(hint)+'</span>':'')
-      +endNote
-      +'<span style="display:flex;gap:8px;"><button class="bb-btn" onclick="bridgeLogOutcome()">Log outcome ↓</button>'
-      +'<button class="bb-btn" onclick="endBridgeBar()">Done ✕</button></span>';
-    bar.style.display='flex';
-  }
-  function bridgeLogOutcome(){
-    var row=document.getElementById('dispoRow'); if(!row) return;
-    row.scrollIntoView({behavior:'smooth', block:'center'});
-    row.classList.add('dispo-flash');
-    setTimeout(function(){ row.classList.remove('dispo-flash'); }, 1200);
-  }
-  function endBridgeBar(){
-    if(_bridgeTick){ clearInterval(_bridgeTick); _bridgeTick=null; }
-    if(_bridgePoll){ clearInterval(_bridgePoll); _bridgePoll=null; }
-    _bridgeSid=null;
-    var bar=document.getElementById('bridgeBar'); if(bar){ bar.style.display='none'; bar.innerHTML=''; }
-  }
+  /* The bridge-call progress bar is GONE with bridgeCall(). startBridgeBar()
+     had no caller left once the fallback was removed, and endBridgeBar() only
+     tore down a bar nothing could raise. Left in place it would read as live
+     bridge support on a page that has none — the shape this session keeps
+     paying for. _bridgeTick/_bridgePoll/_bridgeSid go with it. */
 
   async function markDNC(){
     var lead=_queue[_currentIdx]; if(!lead) return;
@@ -632,7 +571,6 @@
     try{
       var r=await _authClient().rpc('contact_set_dnc',{p_contact_id:lead.contact_id,p_value:true,p_reason:'manual'});
       if(r&&r.error) throw new Error(r.error.message);
-      endBridgeBar();
       showToast('Marked Do Not Call'); loadCounts(); advance(true);
     }catch(e){ showToast((e&&e.message)||'Could not set Do Not Call'); }
   }
@@ -722,11 +660,18 @@
       ? '<div class="muted" style="font-size:12px;margin-top:8px;">📅 Callback set for <strong style="color:var(--green);">'+esc(fmtDateTime(l.next_followup_at))+'</strong> <button class="q-copy" onclick="clearCallback()">Clear callback</button></div>'
       : '';
     var dispoBtns=DISPOS.map(function(d,i){ return '<button class="pd-dispo" onclick="dispo(\''+d+'\')"><b>'+(i+1)+'</b>'+esc(d)+'</button>'; }).join('');
-    var callBtn=l.phone?('<button class="btn-gold" onclick="'+(_voiceReady?'startCall()':'bridgeCall()')+'">📞 Call</button>'):'';
+    /* One path. When the Voice SDK is unavailable the button is DISABLED and
+       says so, rather than quietly routing to something that does nothing —
+       which is exactly how this page looked healthy while being unable to place
+       a call at all. */
+    var callBtn = l.phone
+      ? (_voiceReady
+          ? '<button class="btn-gold" onclick="startCall()">📞 Call</button>'
+          : '<button class="btn-gold" disabled title="The Twilio Voice SDK did not load, so this page cannot place a browser call. Reload; if it persists the SDK URL or the voice token is the problem." style="opacity:.5;cursor:not-allowed;">📞 Call unavailable</button>')
+      : '';
     var bridgeHint='';
     if(!_voiceReady && l.phone){
-      var _ap=getAgentPhone(), _l4=_ap?_ap.replace(/\D/g,'').slice(-4):'';
-      bridgeHint='<div class="muted" style="font-size:11px;margin-top:6px;">Calls ring your phone'+(_l4?(' (•••• '+_l4+')'):'')+', then connect the lead.</div>';
+      bridgeHint='<div style="font-size:11px;margin-top:6px;color:#F2A5A8;">Browser calling is unavailable — the Twilio Voice SDK did not load. Use the lead record’s Call button, which rings your phone instead.</div>';
     }
     var vmBtn=l.phone?'<button class="btn-ghost" onclick="dropVMClick()">📩 Drop VM</button>':'';
     var dncBtn='<button class="btn-ghost" onclick="markDNC()" style="border-color:rgba(229,72,77,.4);color:#F2A5A8;">🚫 Do Not Call</button>';
@@ -848,7 +793,7 @@
     // confirmHours() stays on the actions that initiate contact (startCall/bridgeCall/Drop VM/Send SMS).
     var dur=_pendingDur>0?_pendingDur:null; // real call length captured from a browser/bridge call
     var ok=await rpcLog(lead,'call','outbound',text,dur); if(!ok) return;
-    _pendingDur=0; endBridgeBar();
+    _pendingDur=0;
     if(/wrong number/i.test(text)){ // wrong numbers shouldn't be redialed
       /* THIS IS A COMPLIANCE WRITE, NOT A UI NICETY, so it may not fail quietly.
          It used to be `try{ … }catch(e){}` — and that catch could never fire:
