@@ -14442,7 +14442,10 @@ async function _lpHoiReplySend(r){
   const subject=(document.getElementById('subjectInput')?.value||'').trim();
   const editor=document.getElementById('emailEditor');
   const bodyHtml='<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">'
-    + stripMarkdownFences(editor?.innerHTML?.trim()||'') + '</div>';
+    + (typeof _ecWithSignature==='function'
+        ? _ecWithSignature(stripMarkdownFences(editor?.innerHTML?.trim()||''))
+        : stripMarkdownFences(editor?.innerHTML?.trim()||''))
+    + '</div>';
   const btn=document.getElementById('ecSendBtn');
   const restore=()=>{ if(btn){ btn.disabled=false; btn.innerHTML='Send reply &#10148;'; } };
   if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
@@ -39408,6 +39411,10 @@ function _buildEmailComposerHTML(contact) {
             '<div class="ec-footer-left">' +
               '<span>From: rene@ratesandrealty.com</span>' +
               '<span onclick="openSigEditor()" style="font-size:11px;color:#7A5820;cursor:pointer;margin-left:12px;" onmouseover="this.style.color=\'#C9A84C\'" onmouseout="this.style.color=\'#7A5820\'">Edit Signature</span>' +
+              /* The line that caught the Aubrey mis-signing. Same wording as the
+                 inbox composer's, from the same RPC, so both surfaces say who is
+                 signing in the same words. */
+              '<span id="ecSigWho" style="font-size:11px;color:#8a8475;margin-left:12px;"></span>' +
               '<span id="ecCharCount">0 chars</span>' +
               '<button type="button" class="ec-attach-btn" onclick="document.getElementById(\'emailFileInput\').click()">&#128206; Attach</button>' +
               /* Same shared recorder as the SMS composer and staff chat. Email
@@ -39695,31 +39702,54 @@ async function openEmailComposer(opts) {
   // Load history
   loadEmailHistory(_emailContact.id);
 
-  // Load signature from email_settings
+  /* ── ONE SIGNATURE MECHANISM ───────────────────────────────────────────────
+     This used to fetch email_settings?lo_id=eq.rene -- hardcoded, so it was
+     neither by mailbox nor by user: Aubrey composing here saw Rene's name,
+     title, phone and NMLS. It was also DISPLAY ONLY. #emailSigBlock is a
+     sibling of #emailEditor and every send reads the editor alone, so ~288
+     messages went out with no signature at all while one was on screen.
+
+     Now email_signature_get(mailbox) -- the same store, the same RPC and the
+     same "signed-in user, falling back to the mailbox owner" rule the inbox
+     composer uses. email_settings is no longer read by this page.
+
+     The block is EDITABLE for this one message (a per-send tweak is normal) and
+     that copy is what gets sent. It can never write back to email_signatures:
+     that table is only writable through email_signature_set, which is admin-only
+     and lives in Settings. */
   try {
-    var sigRes = await fetch(
-      (window.APP_CONFIG?.SUPABASE_URL || 'https://ljywhvbmsibwnssxpesh.supabase.co') + '/rest/v1/email_settings?lo_id=eq.rene&limit=1',
-      { headers: losHeaders() }
-    );
-    var sigRows = await sigRes.json();
-    var sig = Array.isArray(sigRows) && sigRows[0] ? sigRows[0] : null;
-    window._loadedSignature = sig || {};
-    if (sig) {
-      var sigBlock = document.getElementById('emailSigBlock');
-      if (sigBlock) {
-        sigBlock.innerHTML = sig.signature_custom_html || (
-          '<div style="color:#C9A84C;font-size:13px;font-weight:600;">' + (sig.signature_name || '') + '</div>' +
-          '<div style="color:#666;font-size:11.5px;">' + (sig.signature_title || '') + '</div>' +
-          '<div style="color:#555;font-size:11.5px;margin-top:2px;">' +
-            (sig.signature_phone ? '\uD83D\uDCDE ' + sig.signature_phone + '  \u00b7  ' : '') +
-            (sig.signature_email || '') +
-            (sig.signature_website ? '  \u00b7  ' + sig.signature_website : '') +
-          '</div>' +
-          (sig.signature_nmls || sig.signature_dre ? '<div style="color:#444;font-size:11px;margin-top:2px;">' + [sig.signature_nmls, sig.signature_dre].filter(Boolean).join(' | ') + '</div>' : '')
-        );
+    var _sigMailbox = document.getElementById('fromSelect')?.value || 'rene@ratesandrealty.com';
+    var _sigRpc = await _authClient().rpc('email_signature_get', { p_mailbox: _sigMailbox });
+    var _sigHtml = (!_sigRpc.error && _sigRpc.data) ? String(_sigRpc.data) : '';
+    var sigBlock = document.getElementById('emailSigBlock');
+    if (sigBlock) {
+      if (_sigHtml) {
+        /* Through the composer's own allowlist, like every other block of HTML
+           this page renders. It is our own signature, but it is still HTML being
+           spliced into a document that goes to a borrower. */
+        sigBlock.innerHTML = (window.GmailInbox && window.GmailInbox.sanitize)
+          ? window.GmailInbox.sanitize(_sigHtml) : _sigHtml;
+        sigBlock.setAttribute('contenteditable', 'true');
+        sigBlock.setAttribute('data-ec-sig', '1');
+      } else {
+        /* HONEST DEGRADATION: no stored signature means none is sent. Say so
+           rather than leaving the hardcoded placeholder that used to sit here
+           looking like a signature nobody configured. */
+        sigBlock.innerHTML = '<span style="color:#666;font-size:11px;">No signature saved for '
+          + lpEsc(_sigMailbox) + ' — Settings → Email Signatures.</span>';
+        sigBlock.removeAttribute('contenteditable');
+        sigBlock.removeAttribute('data-ec-sig');
       }
     }
-  } catch(sigErr) { console.log('Signature load error:', sigErr); }
+    var _sigWho = await _authClient().rpc('email_signature_identity', { p_mailbox: _sigMailbox });
+    var _who = document.getElementById('ecSigWho');
+    if (_who && !_sigWho.error && _sigWho.data) {
+      var _id = _sigWho.data;
+      _who.innerHTML = _id.display_name
+        ? ('Signing as <b style="color:#C9A84C;">' + lpEsc(_id.display_name) + '</b> · ' + lpEsc(_sigMailbox))
+        : ('Signing as ' + lpEsc(_sigMailbox) + ' — no display name set, company signature only');
+    }
+  } catch(sigErr) { console.warn('[composer] signature load failed:', sigErr && sigErr.message); }
 
   // Focus subject
   setTimeout(function() { document.getElementById('subjectInput')?.focus(); }, 200);
@@ -40585,13 +40615,30 @@ function forwardPreviewEmail() {
 }
 
 /* --- Send --- */
+
+/* ── THE SIGNATURE HAS TO REACH THE WIRE ──────────────────────────────────────
+ * #emailSigBlock is a SIBLING of #emailEditor, and every send path here reads
+ * the editor alone -- which is why ~288 messages went out unsigned while the
+ * composer displayed a signature. This is the one place that joins them, so a
+ * new send path gets it by calling one function rather than by remembering.
+ *
+ * Returns the body unchanged when there is nothing to append, so a mailbox with
+ * no stored signature sends exactly what it sent before. */
+function _ecWithSignature(bodyHtml){
+  var el = document.getElementById('emailSigBlock');
+  if(!el || !el.getAttribute('data-ec-sig')) return bodyHtml;
+  var sig = (el.innerHTML || '').trim();
+  if(!sig) return bodyHtml;
+  return String(bodyHtml || '') + '<br><br>' + sig;
+}
+
 async function sendEmailFromComposer() {
   var toEmails = getChipEmails('toChips');
   var ccEmails = getChipEmails('ccChips');
   var bccEmails = getChipEmails('bccChips');
   var subject = (document.getElementById('subjectInput')?.value || '').trim();
   var editor = document.getElementById('emailEditor');
-  var htmlBody = stripMarkdownFences(editor?.innerHTML?.trim() || '');
+  var htmlBody = _ecWithSignature(stripMarkdownFences(editor?.innerHTML?.trim() || ''));
   var textBody = stripMarkdownFences(editor?.innerText?.trim() || '');
   var from = document.getElementById('fromSelect')?.value || 'rene@ratesandrealty.com';
 

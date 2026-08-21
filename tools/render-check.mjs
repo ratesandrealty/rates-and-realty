@@ -3754,6 +3754,71 @@ const SPECS = [
      dashboard is verified by reading and by the single-consumer check, NOT by
      this harness. Recorded so nobody assumes it is covered. */
   {
+    /* THE SIGNATURE REACHES THE WIRE, AND NAMES THE RIGHT PERSON.
+       Two defects in one composer: #emailSigBlock is a SIBLING of #emailEditor
+       and every send read the editor alone, so ~288 messages went out with no
+       signature while one was displayed; and the block was loaded from
+       email_settings?lo_id=eq.rene — hardcoded, so Aubrey saw Rene's name,
+       title, phone and NMLS.
+
+       Asserted at the PATCH: the page's authed client is swapped for a recorder,
+       so this reads what the composer decided to send rather than sending it.
+       The RPC is stubbed with a recognisable block — the real one is fetched
+       per mailbox and the point here is the WIRING, not the content. */
+    name: 'composer sends the signature it displays',
+    url: `/admin/lead-detail?contact_id=${FIXTURE}`,
+    role: 'admin',
+    rpcFns: {
+      email_signature_get: "() => '<div id=\"zz-sig\">-- ZZ SIGNATURE BLOCK --</div>'",
+      email_signature_identity: "() => ({ display_name: 'Rene Duarte', name_source: 'user', stale: false })",
+    },
+    evals: [
+      ['typeof _ecWithSignature', 'function'],
+      [`(async () => {
+          await openEmailComposer({to:"zz-test.fixture@example.invalid",
+            subject:"ZZ-TEST sig", bodyHtml:"<p>the message</p>", title:"Sig"});
+          await new Promise(r => setTimeout(r, 500));
+
+          var block = document.getElementById('emailSigBlock');
+          if (!block) return 'no signature block';
+          var displayed = /ZZ SIGNATURE BLOCK/.test(block.innerHTML);
+          var editable  = block.getAttribute('contenteditable') === 'true';
+          var who = (document.getElementById('ecSigWho') || {}).textContent || '';
+
+          /* DRIVE THE REAL SEND. The first version of this called
+             _ecWithSignature() directly, which tests the helper and not the
+             wiring -- detaching it from sendEmailFromComposer left the spec
+             green. Now window.fetch is captured and the actual send runs, so
+             what is asserted is what would have gone on the wire. */
+          var sent = null, realFetch = window.fetch;
+          window.fetch = function (url, init) {
+            try { if (init && init.body) sent = JSON.parse(init.body); } catch (_) {}
+            return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }) });
+          };
+          try { await sendEmailFromComposer(); await new Promise(r => setTimeout(r, 300)); }
+          finally { window.fetch = realFetch; }
+          if (!sent) return 'the send never fired';
+          var onWire = /ZZ SIGNATURE BLOCK/.test(sent.body_html || '');
+          var keptBody = /the message/.test(sent.body_html || '');
+
+          // A mailbox with no stored signature must send the body UNCHANGED.
+          block.removeAttribute('data-ec-sig');
+          var untouched = _ecWithSignature('<p>only me</p>') === '<p>only me</p>';
+
+          document.getElementById('ecOverlay')?.remove();
+          return [
+            displayed ? 'displayed' : 'NOT displayed',
+            onWire ? 'on the wire' : 'NOT on the wire',
+            keptBody ? 'body intact' : 'body lost',
+            editable ? 'editable for this send' : 'not editable',
+            /Rene Duarte/.test(who) ? 'names the signer' : 'signer line empty: ' + who.slice(0,40),
+            untouched ? 'no-signature mailbox unchanged' : 'appended to a mailbox with none'
+          ].join(', ');
+        })()`,
+       'displayed, on the wire, body intact, editable for this send, names the signer, no-signature mailbox unchanged'],
+    ],
+  },
+  {
     /* THE DEEP LINK FROM THE REPLY-STATUS BOARD, and specifically its FAILURE.
        ?order=<uuid>&family=hoi|voe names one card — both ids are primary keys —
        and the handler polls for it because the order cards render asynchronously.

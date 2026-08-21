@@ -59,7 +59,7 @@ and errors in the harness itself. Exit 1 = a page failed; exit 2 = refused to ru
 ### The green bar is TWO runs, and `--token` is not the better one
 
 ```
-node tools/render-check.mjs                              ->  83/83   the stub specs
+node tools/render-check.mjs                              ->  84/84   the stub specs
 node tools/render-check.mjs --token tok.txt --token-only ->  8/8     the ones that need a session
 
 BOTH NUMBERS MOVE. The second moves whenever a tokenOnly spec is added — it was
