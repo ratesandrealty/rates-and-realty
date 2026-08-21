@@ -1556,24 +1556,37 @@ async function loadReplyStatusBoard() {
   const esc = (t) => String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   const GREY = "#8a8475", AMBER = "#E0A852", GREEN = "#50c878";
 
-  /* WHEN a reply landed, in the reader's own timezone. "Replied" with no date
-     does not say whether the answer arrived an hour ago or in May, so it cannot
-     be acted on. Absolute date AND relative age: the date is the record, the
-     age is what makes it urgent or stale at a glance. */
+  /* WHEN a reply landed. "Replied" with no date does not say whether the answer
+     arrived an hour ago or in May, so it cannot be acted on. Absolute stamp AND
+     relative age: the stamp is the record, the age is what makes it urgent.
+
+     PACIFIC, ALWAYS, VIA RRTime. The first version of this called
+     toLocaleString(undefined, …) with no timeZone — which is the exact defect
+     admin/js/rr-time.js exists to eliminate. Its header documents 127 such calls
+     and a calls_log row that rendered 10:12 PM for a 3:12 PM event. On a Pacific
+     machine it looks correct; the VA at UTC+8 saw a different time with nothing
+     on screen saying which, and two people working one record cannot talk about
+     it. It shipped that way on 2026-08-21 and this replaced it the same day.
+
+     RRTime is injected by auth-guard, so it can be absent for the first paint —
+     hence the guard. The FALLBACK PINS THE ZONE TOO rather than dropping back to
+     the viewer's, because a fallback that reintroduces the bug is how it comes
+     back. */
+  const PT = "America/Los_Angeles";
   const when = (iso) => {
     if (!iso) return null;
-    const d = new Date(iso);
-    if (isNaN(d)) return null;
-    const mins = Math.floor((Date.now() - d.getTime()) / 60000);
-    const rel = mins < 1 ? "just now"
-      : mins < 60 ? mins + "m ago"
-      : mins < 1440 ? Math.floor(mins / 60) + "h ago"
-      : Math.floor(mins / 1440) + "d ago";
-    // The year is part of the date, not a suffix after the time — appending it
-    // produced "May 4, 2:15 AM, 2025". Only shown when it is not this year.
-    const opts = { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
+    const T = window.RRTime;
+    const d = (T && T.toDate) ? T.toDate(iso) : new Date(iso);
+    if (!d || isNaN(d)) return null;
+    if (T && T.dateTime && T.relative) return { stamp: T.dateTime(d), rel: T.relative(d) };
+    const opts = { timeZone: PT, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
     if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
-    return { stamp: d.toLocaleString(undefined, opts), rel };
+    const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+    return {
+      stamp: d.toLocaleString("en-US", opts) + " PT",
+      rel: mins < 1 ? "Just now" : mins < 60 ? mins + "m ago"
+         : mins < 1440 ? Math.floor(mins / 60) + "h ago" : Math.floor(mins / 1440) + "d ago",
+    };
   };
 
   if (summ) summ.textContent = (c.can_resolve || 0) + " of " + (c.total || 0) + " can resolve"
