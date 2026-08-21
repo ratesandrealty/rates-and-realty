@@ -8,17 +8,24 @@ CREATE OR REPLACE FUNCTION public.email_signature_identity(p_mailbox text)
  STABLE SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
-declare r record; v_source text;
+declare r record; v_source text; v_is_service boolean := false;
 begin
   if not (public.is_admin() or coalesce(public.current_app_role(),'') in ('va','loa','agent','staff'))
     then raise exception 'not authorized'; end if;
 
-  /* SAME PRECEDENCE AS email_signature_get, and it has to be — this powers the
-     "Signing as <name> · <mailbox>" line the composer shows, and a line that
-     names a different person than the signature below it is worse than no line.
-     `stale` is read from WHICHEVER ROW SUPPLIED THE NAME, for the same reason:
-     a staleness warning computed against a different account describes someone
-     who is not being named. */
+  select coalesce(ur.is_service_account,false) into v_is_service
+  from auth_user_roles ur where ur.user_id = auth.uid();
+
+  if coalesce(v_is_service,false) then
+    /* Say it in the UI rather than rendering a blank. "Signing as" is the line
+       that caught the original mis-signing; a service account sending mail is
+       exactly as worth stating. */
+    return jsonb_build_object(
+      'mailbox', p_mailbox, 'display_name', null,
+      'display_name_updated_at', null, 'credentials_rotated_at', null,
+      'name_source', 'service_account', 'stale', false);
+  end if;
+
   select btrim(coalesce(ur.display_name,'')) as display_name,
          ur.display_name_updated_at, ur.credentials_rotated_at
   into r
@@ -39,12 +46,7 @@ begin
     'display_name', nullif(coalesce(r.display_name,''), ''),
     'display_name_updated_at', r.display_name_updated_at,
     'credentials_rotated_at', r.credentials_rotated_at,
-    /* 'user' = signed in as themselves; 'mailbox' = fell back to the account
-       that owns the address, which is what a server-side or nameless caller
-       gets. Exposed so the UI can say which without guessing. */
     'name_source', case when nullif(coalesce(r.display_name,''),'') is null then null else v_source end,
-    /* Stale = the name predates the last password reset on this login, i.e. it
-       may belong to whoever held the account before. */
     'stale', (coalesce(r.display_name,'') <> ''
               and r.credentials_rotated_at is not null
               and (r.display_name_updated_at is null
